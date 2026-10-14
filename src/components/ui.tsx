@@ -117,6 +117,11 @@ export function SessionBadges({ s }: { s: SessionSummary }) {
       ) : null}
       {s.branchCount > 1 ? <Badge tone="branch">{s.branchCount} 个分支</Badge> : null}
       {!s.formatSupported ? <Badge tone="danger">格式不支持</Badge> : null}
+      {!s.cwdExists ? (
+        <Badge tone="danger" title="记录的项目目录不存在">
+          目录不存在
+        </Badge>
+      ) : null}
     </>
   );
 }

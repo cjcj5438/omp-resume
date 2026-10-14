@@ -1,6 +1,8 @@
 /* omp-resume：macOS 原生风格，浅/深色跟随系统。 */
 
 :root {
+  /* 让 WKWebView 原生滚动条/表单跟随系统深浅色（否则深色下滚动条轨道发白）。 */
+  color-scheme: light dark;
   --bg: #ffffff;
   --bg-sidebar: #f2f2f4;
   --bg-hover: rgba(0, 0, 0, 0.05);

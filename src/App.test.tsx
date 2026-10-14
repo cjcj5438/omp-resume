@@ -203,3 +203,48 @@ describe("focus 刷新节流", () => {
     expect(counts.list).toBe(2);
   });
 });
+
+describe("缺 cwd 会话", () => {
+  it("行与详情头展示目录不存在徽章，正常会话没有", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    expect(within(rowOf(S7)).getByText("目录不存在")).toBeInTheDocument();
+    expect(within(rowOf(S1)).queryByText("目录不存在")).toBeNull();
+  });
+
+  it("在 iTerm 继续禁用，从此节点继续可用：标记追加后 iTerm 失败给出组合错误", async () => {
+    const mock = await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(rowOf(S7));
+    const itermBtn = screen.getByRole("button", { name: "在 iTerm 继续" });
+    expect(itermBtn).toBeDisabled();
+    expect(itermBtn).toHaveAttribute("title", "项目目录不存在");
+
+    fireEvent.click(screen.getByRole("tab", { name: "树" }));
+    await screen.findByText("当前位置");
+    // 缺 cwd 不再禁用：标记追加本身不受影响。
+    const contBtn = screen.getByRole("button", { name: "从此节点继续" });
+    expect(contBtn).toBeEnabled();
+
+    // 选一个非 leaf 节点（s7 树为两节点线性链，首个 treeitem 即根用户消息）。
+    const items = within(screen.getByRole("tree")).getAllByRole("treeitem");
+    expect(items).toHaveLength(2);
+    fireEvent.click(items[0]);
+
+    fireEvent.click(contBtn);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("从此节点继续？");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "追加标记并在 iTerm 打开" }),
+    );
+
+    await screen.findByText("标记已追加，但打开 iTerm 失败：项目目录不存在");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // iTerm 打开在 cwd 检查处失败，未实际启动。
+    expect(mock.itermCalls).toEqual([]);
+  });
+});
