@@ -100,7 +100,7 @@ git push origin v0.2.0
 ```
 
 随后在 Actions 里等 `check` 与 `release` 两个 job 变绿；到 Releases 页面核对草稿
-里的资产（`omp-resume_0.1.0_aarch64.dmg`、`omp-resume_aarch64.app.tar.gz`、
+里的资产（`omp-resume_<版本>_aarch64.dmg`、`omp-resume_aarch64.app.tar.gz`、
 `omp-resume_aarch64.app.tar.gz.sig`、`latest.json`），确认无误后点 **Publish release** 正式发布。
 应用内的更新端点指向 `releases/latest/download/latest.json`，只有**正式发布**
 （非草稿）后 `/latest` 才会解析到它。
