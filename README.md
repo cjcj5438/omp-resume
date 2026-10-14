@@ -4,8 +4,10 @@ macOS 原生桌面应用（Tauri 2 + React + TypeScript + Rust），用于管理
 `omp`（oh-my-pi）的编码会话：按项目浏览会话历史、只读回顾对话与会话树、
 一键在 iTerm 中继续、永久删除、从任意树节点分叉继续。
 
-**为什么做它**：omp 的会话是一棵 append-only 的 JSONL 树，现有开源会话管理
-工具都无法识别这一格式，更无法一键把真实 `omp --resume` 拉起到 iTerm 新标签页。
+**为什么做它**：omp 的会话是一棵 append-only 的 JSONL 树。现有开源工具要么在
+浏览器/Electron 里重做一遍聊天界面（omp-web、ompweb、oh-my-pi-gui），要么是
+pi 专用的 TUI 扩展（pi-session-manager）；没有一个能把会话交还给真正的
+`omp --resume` CLI，在 iTerm 新标签页里继续。
 UI 文案为中文。
 
 > 已针对 omp **v18.10.3** 验证（会话格式、占用租约、删除与分叉语义）。
@@ -27,7 +29,9 @@ UI 文案为中文。
 
 - **占用检测**：omp 的写进程持有 `~/.omp/run/session-owners/<会话id>.lock`
   上的 OS `flock`。本应用以非阻塞 `flock(LOCK_EX|LOCK_NB)` 探测：被持有 ⇒
-  拒绝写操作；探测失败 ⇒ 保守拒绝。**依赖 omp 内部实现**——锁文件路径与
+  拒绝写操作；探测失败 ⇒ 写操作（删除 / 分支标记）保守拒绝，
+  而「在 iTerm 继续」不受影响（只读打开不占租约，见 CONTRACT §4.8）。
+  **依赖 omp 内部实现**——锁文件路径与
   命名来自 omp 的 `session-storage`（租约按会话 id 建立），omp 升级可能改变，
   见「已知限制」。
 - **永久删除**：完全镜像 omp 自己的 `deleteSessionWithArtifacts`——删除
