@@ -15,6 +15,8 @@ pub mod model;
 
 pub mod config;
 pub mod lock;
+/// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
+pub mod ops;
 pub mod sessions;
 
 use crate::model::{AppError, ErrorCode};
@@ -105,6 +107,47 @@ async fn check_session(
     .map_err(io_join_error)?
 }
 
+/// CONTRACT §4.6：批量删除（逐路径独立结果，阻塞 IO 在后台线程）。
+#[tauri::command]
+async fn delete_sessions(
+    cfg: tauri::State<'_, config::Config>,
+    paths: Vec<String>,
+) -> Result<Vec<model::DeleteResult>, model::AppError> {
+    let cfg = cfg.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ops::commands::delete_sessions_impl(&cfg, &paths))
+        .await
+        .map_err(io_join_error)
+}
+
+/// CONTRACT §4.7：从树节点续聊（追加 marker 行）。
+#[tauri::command]
+async fn append_branch_marker(
+    cfg: tauri::State<'_, config::Config>,
+    path: String,
+    node_id: String,
+) -> Result<model::AppendBranchMarkerResult, model::AppError> {
+    let cfg = cfg.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ops::commands::append_branch_marker_impl(&cfg, &path, &node_id)
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
+/// CONTRACT §4.8：在 iTerm 开新 tab 续聊。
+#[tauri::command]
+async fn open_in_iterm(
+    cfg: tauri::State<'_, config::Config>,
+    path: String,
+) -> Result<(), model::AppError> {
+    let cfg = cfg.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab)
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let cfg = config::resolve(sessions_dir_arg());
@@ -116,7 +159,10 @@ pub fn run() {
             list_sessions,
             get_conversation,
             get_tree,
-            check_session
+            check_session,
+            delete_sessions,
+            append_branch_marker,
+            open_in_iterm
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

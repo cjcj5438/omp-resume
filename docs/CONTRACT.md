@@ -267,6 +267,11 @@ header `.title`、每个 `title_change` 的 `.title`。
   3. `unlink <file>.jsonl.*.bak`（best-effort，单个失败只告警不回滚）。
 - 不碰 `~/.omp/agent/history.db`（omp 自己也不碰）。
 - 永久删除，无回收站（v1 决定）。
+- 损坏会话（header 不可读）→ 无法确定会话 id 与占用状态，
+  单路径返回 `PROBE_FAILED`（不敢盲目删除），文件保留；
+  header 可读但 id 缺失同样走此路径。`NOT_FOUND` 则透出（路径本身不存在）。
+- 附加安全（比上游保守，单测锁定）：sibling 为符号链接时只删链接本身
+  （不跟随递归，绝不误删链接目标）；sibling 为普通文件时保持不动。
 
 ### 4.7 `append_branch_marker { path, nodeId } -> { markerId }`
 
@@ -284,6 +289,10 @@ header `.title`、每个 `title_change` 的 `.title`。
   被跳过的自定义节点，其子（新续聊内容）挂在其下——这正是「从该节点续聊」。
 - 追加后该文件 leaf 变为 marker（它是文件末行）；
   用 `omp --resume <path>` 打开即从该分支继续。
+- 实现：写入前**复探**一次占用（收窄"探测→写"竞态窗口）。残余竞态
+  无法完全消除：`O_APPEND` 保证单次写行级原子（文件不会坏行），
+  最坏是 marker 之后又多了 omp 的行（marker 不再是末行、分支被覆盖），
+  续聊前重查 leaf 即可发现。
 
 ### 4.8 `open_in_iterm { path } -> ()`
 
@@ -297,6 +306,9 @@ header `.title`、每个 `title_change` 的 `.title`。
   `omp` 用 bare 命令名（走用户 PATH，与 brief 一致）。
 - AppleScript 失败 → `ITERM_FAILED`（含系统信息）。
   需要的 `NSAppleEventsUsageDescription` 已随包发布（见 §10）。
+- 实现：纯逻辑层 `open_in_iterm_impl(cfg, path, opener)` 的终端打开器
+  可注入（`&dyn Fn(&str) -> Result<(), AppError>`；生产传 `ops::iterm::open_tab`），
+  测试注入桩以断言精确命令串而不启动 iTerm。
 
 ## 5. 建树算法（`list/get_conversation/get_tree` 共用）
 
