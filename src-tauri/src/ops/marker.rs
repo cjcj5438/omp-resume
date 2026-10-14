@@ -144,16 +144,43 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// 以 `O_APPEND` 单次 `write_all` 追加 marker 行。
 ///
-/// 先自卫：目标必须是常规文件；文件非空且最后一个字节必须是 `\n`
-///（否则报 `IO`："文件末尾不是换行，疑似写入未完成，已拒绝追加"，
-///与 CONTRACT §4.7 一致）；`line` 本身必须以 `\n` 结尾。
+/// 先自卫：目标必须是常规文件且**不是符号链接**；文件非空且最后一个字节
+/// 必须是 `\n`（否则报 `IO`："文件末尾不是换行，疑似写入未完成，已拒绝追加"，
+/// 与 CONTRACT §4.7 一致）；`line` 本身必须以 `\n` 结尾。
 /// 不存在 → `NOT_FOUND`，目录等 → `IO`。
+///
+/// 符号链接在此直接拒绝：`validate_session_path` 的 canonicalize 只保证校验
+/// 瞬间的位置合法，校验→追加之间文件若被换成指向根外的链接，跟随写入会把
+/// marker 追加到受害文件末尾。此处先 `symlink_metadata` 快拒，再以
+/// `O_NOFOLLOW` 打开（关闭“检查→打开”竞态窗口；见 safety 集成测试）。
 pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
     if !line.ends_with('\n') {
         return Err(AppError::new(
             ErrorCode::Io,
             "拒绝追加：marker 行必须以换行结尾",
         ));
+    }
+    // 快拒：最后一段是符号链接即拒绝（不跟随）。
+    match std::fs::symlink_metadata(path) {
+        Ok(md) if md.file_type().is_symlink() => {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                format!("拒绝追加：是符号链接：{}", path.display()),
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                format!("会话文件不存在：{}", path.display()),
+            ));
+        }
+        Err(e) => {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                format!("无法访问会话文件 {}：{e}", path.display()),
+            ));
+        }
     }
     let md = std::fs::metadata(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -177,12 +204,7 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
     if md.len() == 0 {
         return Err(unfinished_error(path));
     }
-    let mut f = std::fs::File::open(path).map_err(|e| {
-        AppError::new(
-            ErrorCode::Io,
-            format!("无法读取会话文件 {}：{e}", path.display()),
-        )
-    })?;
+    let mut f = open_no_follow_read(path)?;
     f.seek(SeekFrom::End(-1)).map_err(|e| {
         AppError::new(
             ErrorCode::Io,
@@ -199,15 +221,7 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
     if last[0] != b'\n' {
         return Err(unfinished_error(path));
     }
-    let mut app = std::fs::OpenOptions::new()
-        .append(true)
-        .open(path)
-        .map_err(|e| {
-            AppError::new(
-                ErrorCode::Io,
-                format!("无法追加会话文件 {}：{e}", path.display()),
-            )
-        })?;
+    let mut app = open_no_follow_append(path)?;
     app.write_all(line.as_bytes()).map_err(|e| {
         AppError::new(
             ErrorCode::Io,
@@ -215,6 +229,60 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
         )
     })?;
     Ok(())
+}
+/// 以 `O_NOFOLLOW` 只读打开：路径末段若在打开瞬间是符号链接则失败，
+/// 关闭 `symlink_metadata` 检查→`open` 之间的竞态窗口。
+#[cfg(unix)]
+fn open_no_follow_read(path: &Path) -> Result<std::fs::File, AppError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| {
+            AppError::new(
+                ErrorCode::Io,
+                format!("无法读取会话文件 {}：{e}", path.display()),
+            )
+        })
+}
+/// 以 `O_APPEND | O_NOFOLLOW` 打开追加：同上，末段链接即失败。
+#[cfg(unix)]
+fn open_no_follow_append(path: &Path) -> Result<std::fs::File, AppError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| {
+            AppError::new(
+                ErrorCode::Io,
+                format!("无法追加会话文件 {}：{e}", path.display()),
+            )
+        })
+}
+/// 非 unix 回退（本应用仅跑 macOS，此分支理论不可达）：与原来一样跟随打开，
+/// 但前面的 `symlink_metadata` 快拒仍有效。
+#[cfg(not(unix))]
+fn open_no_follow_read(path: &Path) -> Result<std::fs::File, AppError> {
+    std::fs::File::open(path).map_err(|e| {
+        AppError::new(
+            ErrorCode::Io,
+            format!("无法读取会话文件 {}：{e}", path.display()),
+        )
+    })
+}
+#[cfg(not(unix))]
+fn open_no_follow_append(path: &Path) -> Result<std::fs::File, AppError> {
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|e| {
+            AppError::new(
+                ErrorCode::Io,
+                format!("无法追加会话文件 {}：{e}", path.display()),
+            )
+        })
 }
 
 fn unfinished_error(path: &Path) -> AppError {

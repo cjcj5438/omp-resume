@@ -78,12 +78,21 @@ pub fn validate_session_path(cfg: &Config, path: &str) -> Result<PathBuf, AppErr
         )
     })?;
     let rel_parts: Vec<_> = rel.components().collect();
-    let [_, file] = rel_parts.as_slice() else {
+    let [dir, file] = rel_parts.as_slice() else {
         return Err(AppError::new(
             ErrorCode::OutsideRoot,
             format!("会话路径必须为 <项目>/<文件>.jsonl：{path}"),
         ));
     };
+    // 项目目录本身也不得是点目录（`--sessions-dir` 下的编码 cwd 恒以 `-` 开头，
+    // 点目录只可能是锁文件残留或手工构造；保守拒绝）。
+    let dir_name = dir.as_os_str().to_string_lossy();
+    if dir_name.starts_with('.') || dir_name.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::OutsideRoot,
+            format!("非法会话路径（项目目录）：{path}"),
+        ));
+    }
     let file_name = file.as_os_str().to_string_lossy();
     if !file_name.ends_with(".jsonl")
         || file_name.starts_with('.')
@@ -93,6 +102,31 @@ pub fn validate_session_path(cfg: &Config, path: &str) -> Result<PathBuf, AppErr
             ErrorCode::OutsideRoot,
             format!("非法会话文件名：{path}"),
         ));
+    }
+    // `x.jsonl` 命名的目录（或 FIFO/socket/设备）不得通过校验：
+    // 调用方只应读写常规文件；目录在此直接拒绝，避免下游以 PROBE_FAILED
+    // 等间接错误码兜底（见 safety 集成测试）。
+    match std::fs::metadata(&canon) {
+        Ok(md) if md.is_file() => {}
+        Ok(_) => {
+            return Err(AppError::new(
+                ErrorCode::OutsideRoot,
+                format!("非法会话路径（不是常规文件）：{path}"),
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // canonicalize 已成功却取不到 metadata：竞态删除，视为不存在。
+            return Err(AppError::new(
+                ErrorCode::NotFound,
+                format!("会话文件不存在：{path}"),
+            ));
+        }
+        Err(e) => {
+            return Err(AppError::new(
+                ErrorCode::Io,
+                format!("无法访问会话路径 {path}：{e}"),
+            ));
+        }
     }
     Ok(canon)
 }
