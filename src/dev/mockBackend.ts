@@ -8,6 +8,7 @@ import {
   FIXTURE_SESSIONS,
   buildListResult,
   conversationForPath,
+  generateLargeConversation,
   type FixtureSession,
 } from "./fixtures";
 
@@ -88,6 +89,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (!s) throw err("NOT_FOUND", "会话文件不存在");
         if (!s.summary.formatSupported)
           throw err("UNSUPPORTED_FORMAT", "该会话格式暂不支持预览");
+        if (params.has("big")) return generateLargeConversation(3000);
         try {
           return conversationForPath(
             s,

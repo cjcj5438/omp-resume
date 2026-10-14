@@ -1,4 +1,5 @@
 /** 应用外壳：左侧列表 + 右侧详情、刷新保持选择、删除与提示编排。 */
+import "./App.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendBranchMarker,

@@ -110,8 +110,10 @@ export function TreeView({
     });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const idx = visible.findIndex(
-      (r) => r.type === "node" && r.node.id === selectedId,
+    const idx = visible.findIndex((r) =>
+      r.type === "node"
+        ? r.node.id === selectedId
+        : r.nodes.some((n) => n.id === selectedId),
     );
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
@@ -129,8 +131,11 @@ export function TreeView({
       e.preventDefault();
       if (sel.type === "fold" && expanded.has(sel.key)) {
         toggleFold(sel.key);
-        setSelectedId(sel.nodes[0].id);
-      } else if (sel.type === "node") {
+      } else if (sel.type === "fold") {
+        // 已收起：回到父节点
+        const parent = sel.parentId;
+        if (parent) setSelectedId(parent);
+      } else {
         for (const r of rows) {
           if (r.type === "fold" && r.nodes.some((n) => n.id === sel.node.id)) {
             toggleFold(r.key);
@@ -200,7 +205,11 @@ export function TreeView({
               <TreeRow
                 key={r.key}
                 row={r}
-                selected={r.type === "node" && r.node.id === selectedId}
+                selected={
+                  r.type === "node"
+                    ? r.node.id === selectedId
+                    : !expanded.has(r.key) && r.nodes.some((n) => n.id === selectedId)
+                }
                 expanded={r.type === "fold" ? expanded.has(r.key) : false}
                 leafId={tree.data?.leafId ?? null}
                 onSelect={setSelectedId}
@@ -294,7 +303,13 @@ function TreeRow({ row, selected, expanded, leafId, onSelect, onToggleFold }: Tr
   if (row.type === "fold") {
     return (
       <div
-        className={row.onActivePath ? "tree-row tree-row-active" : "tree-row"}
+        className={
+          selected
+            ? "tree-row tree-row-selected"
+            : row.onActivePath
+              ? "tree-row tree-row-active"
+              : "tree-row"
+        }
         style={{ paddingLeft: 8 + indent }}
       >
         {depthMark ? <span className="depth-mark">{depthMark}</span> : null}

@@ -167,6 +167,7 @@ body {
 .row {
   display: flex;
   gap: 8px;
+  align-items: flex-start;
   padding: 6px 10px 6px 22px;
   cursor: default;
   border-left: 3px solid transparent;
@@ -199,17 +200,12 @@ body {
 
 .row-meta {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
-}
-
-.row-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
 }
 
 /* ---- 徽章 ---- */
@@ -412,6 +408,10 @@ body {
   padding: 24px 16px;
   color: var(--text-muted);
   text-align: center;
+}
+
+.detail > .pane-note {
+  margin: auto;
 }
 
 /* ---- 对话 ---- */

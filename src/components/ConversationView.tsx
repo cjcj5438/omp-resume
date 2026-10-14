@@ -187,9 +187,16 @@ export function ConversationView({
 }: ConversationViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (scrollToBottom && conversation && !loading && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const el = scrollRef.current;
+    if (!scrollToBottom || !conversation || loading || !el) return;
+    // content-visibility 的估算高度会在渲染后修正，逐帧重滚到真正的底部。
+    let frames = 0;
+    const settle = () => {
+      el.scrollTop = el.scrollHeight;
+      frames += 1;
+      if (frames < 10) requestAnimationFrame(settle);
+    };
+    settle();
   }, [scrollToBottom, conversation, loading]);
 
   if (error) {

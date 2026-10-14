@@ -103,7 +103,7 @@ export function foldTree(tree: TreeData): DisplayRow[] {
   return out;
 }
 
-/** 展开后的可见行：expanded 存放已展开的 fold key。 */
+/** 展开后的可见行：expanded 存放已展开的 fold key；折叠头保留为收起开关。 */
 export function flattenRows(
   rows: DisplayRow[],
   expanded: Set<string>,
@@ -111,6 +111,7 @@ export function flattenRows(
   const out: DisplayRow[] = [];
   for (const r of rows) {
     if (r.type === "fold" && expanded.has(r.key)) {
+      out.push(r);
       for (const n of r.nodes) {
         out.push({
           type: "node",

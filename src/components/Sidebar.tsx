@@ -147,8 +147,6 @@ function Row({ s, checked, selected, onToggleCheck, onSelect }: RowProps) {
           <span>{formatRelativeTime(s.modifiedAt)}</span>
           <span>{s.messageCount} 条消息</span>
           <span>{formatSize(s.sizeBytes)}</span>
-        </div>
-        <div className="row-badges">
           <SessionBadges s={s} />
         </div>
       </div>

@@ -258,15 +258,16 @@ describe("flattenRows：展开/收起", () => {
   );
   const rows = foldTree(tree);
 
-  it("展开折叠行显示其中各节点，可再收起", () => {
+  it("展开折叠行显示其中各节点，折叠头保留为收起开关", () => {
     expect(kinds(flattenRows(rows, new Set()))).toEqual(["a", "fold(b,c)", "d"]);
     expect(kinds(flattenRows(rows, new Set(["fold:b"])))).toEqual([
       "a",
+      "fold(b,c)",
       "b",
       "c",
       "d",
     ]);
-    expect(kinds(flattenRows(rows, new Set(["fold:b"]))).length).toBe(4);
+    // 收起后回到折叠行
     expect(kinds(flattenRows(rows, new Set()))).toEqual(["a", "fold(b,c)", "d"]);
   });
 });
