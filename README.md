@@ -1,7 +1,132 @@
-# Tauri + React + Typescript
+# omp-resume
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+macOS 原生桌面应用（Tauri 2 + React + TypeScript + Rust），用于管理
+`omp`（oh-my-pi）的编码会话：按项目浏览会话历史、只读回顾对话与会话树、
+一键在 iTerm 中继续、永久删除、从任意树节点分叉继续。
 
-## Recommended IDE Setup
+**为什么做它**：omp 的会话是一棵 append-only 的 JSONL 树，现有开源会话管理
+工具都无法识别这一格式，更无法一键把真实 `omp --resume` 拉起到 iTerm 新标签页。
+UI 文案为中文。
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+> 已针对 omp **v18.10.3** 验证（会话格式、占用租约、删除与分叉语义）。
+
+## 功能
+
+- **会话列表**：按项目（cwd）分组，组内按修改时间倒序；文本过滤；
+  徽章标注占用中 / cwd 已删除 / fork 血缘 / 分支数 / 非 v3 格式。
+- **只读对话预览**：user / assistant（thinking、text、工具调用）/
+  toolResult / bashExecution / 压缩摘要等逐条渲染，大输出自动截断。不回写。
+- **树视图**：omp 会话树的完整呈现——线性链折叠显示、当前位置（leaf）标记、
+  label 标签、压缩（compaction）与分支摘要节点，方向键浏览。
+- **在 iTerm 继续**：在 iTerm 当前窗口开新标签页执行
+  `cd '<cwd>' && omp --resume '<会话文件>'`（无窗口开新窗口，未运行先启动 iTerm）。
+- **批量永久删除**：多选后一次性删除，逐条独立失败。
+- **从此节点继续**：从树上任意节点（而非当前 leaf）继续对话，见下方安全规则。
+
+## 安全规则（如何保证不弄坏数据）
+
+- **占用检测**：omp 的写进程持有 `~/.omp/run/session-owners/<会话id>.lock`
+  上的 OS `flock`。本应用以非阻塞 `flock(LOCK_EX|LOCK_NB)` 探测：被持有 ⇒
+  拒绝写操作；探测失败 ⇒ 保守拒绝。**依赖 omp 内部实现**——锁文件路径与
+  命名来自 omp 的 `session-storage`（租约按会话 id 建立），omp 升级可能改变，
+  见「已知限制」。
+- **永久删除**：完全镜像 omp 自己的 `deleteSessionWithArtifacts`——删除
+  `<file>.jsonl`、同名 sibling 附件目录、`<file>.jsonl.*.bak` 残留；
+  **不进回收站**（与 omp 一致的永久删除）；`~/.omp/agent/history.db` 永不触碰
+  （omp 自己也不碰）。写路径前先 canonicalize 并强制限定在会话根目录内
+  `<项目>/<文件>.jsonl` 两段，符号链接逃逸一律拒绝。
+- **从此节点继续（分支标记）**：向会话文件末尾**只追加一行**
+  `{"type":"custom","customType":"omp-resume-branch",...,"parentId":<节点>,...}`，
+  单次 `O_APPEND` 写入。经真实 omp 18.10.3 TUI 实测：`omp --resume` 会把
+  leaf 重建为该标记并从 `parentId` 继续；`custom` 条目不进入模型上下文，
+  未知 `customType` 被完全容忍。注意 omp **不校验** `parentId`（错误 id 会静默
+  给出空分支），所以应用侧先把节点校验为保留节点，再写入。
+- **拒绝规则**：占用中（`IN_USE`）、探测失败（`PROBE_FAILED`）、
+  节点非法（`INVALID_NODE`）、路径逃出根（`OUTSIDE_ROOT`）、cwd 已删除时
+  打开 iTerm（`CWD_MISSING`）、文件末尾不完整（`IO`）——宁可拒绝也不猜。
+
+## 构建与安装
+
+前置：macOS（arm64/x86_64）、Rust（`rustup`，stable）、Node.js 22、
+Xcode Command Line Tools。国内网络慢时可配 crates 镜像（如
+`~/.cargo/config.toml` 指向 rsproxy/USTC 稀疏索引），构建无需其他依赖。
+
+```sh
+npm install
+npm run tauri build        # 无签名构建；产物在
+                           # src-tauri/target/release/bundle/macos/omp-resume.app
+cp -R src-tauri/target/release/bundle/macos/omp-resume.app /Applications
+```
+
+首次启动：本地构建未经公证（ad-hoc 签名）。若经 DMG/网络分发后被 Gatekeeper
+拦截，在「应用程序」中**右键 → 打开**即可。
+
+首次使用「在 iTerm 继续」时，macOS 会询问是否允许 omp-resume 控制 iTerm
+（Apple 事件）：在 **系统设置 → 隐私与安全性 → 自动化** 中勾选
+omp-resume → iTerm；拒绝后该功能会报 `ITERM_FAILED`，可随时在设置里补开。
+
+## 配置
+
+| 项 | 优先级（高→低） | 默认 |
+|---|---|---|
+| 会话根 `sessionsDir` | `--sessions-dir <path>` 参数 > `OMP_RESUME_SESSIONS_DIR` | `$HOME/.omp/agent/sessions` |
+| 租约目录 `ownersDir` | `OMP_RESUME_OWNERS_DIR` | `$HOME/.omp/run/session-owners` |
+
+带参数启动（GUI 的 argv 不易透传，可直接跑二进制）：
+
+```sh
+/Applications/omp-resume.app/Contents/MacOS/omp-resume \
+  --sessions-dir /path/to/sessions
+```
+
+## 开发
+
+仓库布局：
+
+- `src/`：React 前端（`api.ts` 命令封装、`types.ts` 类型镜像、
+  `components/` UI、`tree/` 链折叠、`dev/` 仅开发用 mock）。
+- `src-tauri/src/`：`config.rs`（配置 + 路径校验）、`lock.rs`（flock 探测）、
+  `sessions/`（解析 / 列表 / 对话 / 树）、`ops/`（删除 / 标记 / iTerm）、
+  `model.rs`（前后端共享类型）、`lib.rs`（命令注册）。
+- `docs/CONTRACT.md`：**权威规格**（数据格式、命令、语义、错误码）。
+- `scripts/fixtures/`：合成会话冒烟套件（详见其 README）。
+
+测试与检查：
+
+```sh
+cargo test                  # src-tauri 单元 + 集成（fixtures/真实数据用例默认 ignored）
+npm run test                # vitest + testing-library + @tauri-apps/api/mocks
+npm run typecheck           # tsc --noEmit
+cargo clippy --all-targets  # 0 warning
+cargo fmt --check
+```
+
+合成 fixture 冒烟（不触碰 `~/.omp`）：
+
+```sh
+node scripts/fixtures/make-fixtures.mjs /tmp/omp-resume-fixtures
+node scripts/fixtures/hold-lock.mjs /tmp/omp-resume-fixtures/owners <会话id> &
+cd src-tauri
+OMP_RESUME_SESSIONS_DIR=/tmp/omp-resume-fixtures/sessions \
+OMP_RESUME_OWNERS_DIR=/tmp/omp-resume-fixtures/owners \
+OMP_RESUME_MANIFEST=/tmp/omp-resume-fixtures/manifest.json \
+cargo test --test fixtures -- --ignored --nocapture   # 按 manifest 逐项断言
+kill %1
+```
+
+真实数据只读回归：`cargo test --test backend -- --ignored --nocapture`
+（扫描 `$HOME/.omp/agent/sessions`，只读，打印统计与耗时）。
+
+纯前端开发（无 Tauri）：`npm run dev` 后在 URL 加 `?mock=1`（或 `?mock`）
+启用开发用 mock 后端（内存态、全部命令可用；仅 dev 构建包含）。
+
+## 已知限制
+
+- 仅支持 **session version 3**：其他版本列表中可见（只读廉价字段），
+  不可预览/建树，但「在 iTerm 继续」与删除仍然可用。
+- 占用检测依赖 omp 的私有租约路径（`run/session-owners/<id>.lock`），
+  omp 改版可能变化；探测失败时一律保守拒绝写操作。
+- 删除是**永久**的，无回收站（镜像 omp 自身行为）。
+- 「在 iTerm 继续」按登录 shell 的 `PATH` 查找 `omp`；若未安装在 PATH 中，
+  需先保证 iTerm 的 shell 能找到它。
+- macOS 专用；应用未经签名/公证（本地构建即用）。

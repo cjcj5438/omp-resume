@@ -282,11 +282,14 @@ header `.title`、每个 `title_change` 的 `.title`。
 - 否则以 `O_APPEND` 单次写入追加恰好一行：
   `{"type":"custom","customType":"omp-resume-branch","id":<8位小写十六进制，文件内唯一>,"parentId":<nodeId>,"timestamp":<ISO-8601 UTC毫秒>,"data":{}}`
   末尾含 `\n`。id 碰撞则重抽（以 omp 的 8-hex / Snowflake 回退惯例为准）。
-- 安全性（已对 omp 文档验证）：
+- 安全性（已对 omp 文档验证，并经真实 omp 18.10.3 TUI 实测）：
   `customType:"omp-resume-branch"` 为命名空间值，
   核心重建视为不透明，不进入模型上下文（§2.4）；
   字段名与 `custom` 条目完全一致。resume 后该 marker 只是树上一个
   被跳过的自定义节点，其子（新续聊内容）挂在其下——这正是「从该节点续聊」。
+  实测：`omp --resume` 把 leaf 重建为该 marker 并从 `parentId` 继续，
+  未知 `customType` 完全容忍。**omp 不校验 `parentId`**（错误 id 静默给出
+  空分支），因此 `nodeId` 必须由本应用先校验为保留节点。
 - 追加后该文件 leaf 变为 marker（它是文件末行）；
   用 `omp --resume <path>` 打开即从该分支继续。
 - 实现：写入前**复探**一次占用（收窄"探测→写"竞态窗口）。残余竞态
