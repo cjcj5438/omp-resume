@@ -1,0 +1,63 @@
+name: Release
+
+# 仅当推送 v* 形式的 tag 时触发；不用 release-created / PR 触发。
+# 不提供 workflow_dispatch：没有 tag 时既无法跑版本比对，也没有 tagName 供 tauri-action 建 Release。
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 同一 ref（tag）重复推送时取消进行中的运行，避免并发写同一个 Release 资产。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 便宜的前置校验：三处版本号一致，且与本次 tag 匹配。
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # 脚本零依赖，无需 npm ci。
+      - run: node scripts/check-versions.mjs ${{ github.ref_name }}
+
+  release:
+    needs: check
+    # macOS 专用：仅构建 runner 原生架构（macos-latest 为 arm64），不做 x86_64 交叉构建。
+    runs-on: macos-latest
+    permissions:
+      contents: write # tauri-action 需要写权限来创建 Release 并上传资产
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # 构建 + 创建 Release + 上传资产（含 updater 的 latest.json，前提是 tauri.conf.json 已配 updater）。
+      # 先建草稿（releaseDraft: true），人工核对资产后再手动发布。
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'omp-resume ${{ github.ref_name }}'
+          releaseDraft: true
+          prerelease: false

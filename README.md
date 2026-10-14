@@ -58,9 +58,13 @@ Xcode Command Line Tools。国内网络慢时可配 crates 镜像（如
 
 ```sh
 npm install
-npm run tauri build        # 无签名构建；产物在
+npm run tauri build        # 普通本地构建（ad-hoc 签名，不含更新签名）；产物在
                            # src-tauri/target/release/bundle/macos/omp-resume.app
 cp -R src-tauri/target/release/bundle/macos/omp-resume.app /Applications
+
+# 需要 updater 产物（.app.tar.gz + .sig，供 latest.json 使用）时，先提供签名私钥（见「发版流程」）：
+# export TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/omp-resume.key"
+# npm run tauri build
 ```
 
 首次启动：本地构建未经公证（ad-hoc 签名）。若经 DMG/网络分发后被 Gatekeeper
@@ -69,6 +73,66 @@ cp -R src-tauri/target/release/bundle/macos/omp-resume.app /Applications
 首次使用「在 iTerm 继续」时，macOS 会询问是否允许 omp-resume 控制 iTerm
 （Apple 事件）：在 **系统设置 → 隐私与安全性 → 自动化** 中勾选
 omp-resume → iTerm；拒绝后该功能会报 `ITERM_FAILED`，可随时在设置里补开。
+
+## 发版流程
+
+发版由 GitHub Actions 自动完成：推送 `v*` 形式的 tag 会触发
+`.github/workflows/release.yml`，构建 macOS(arm64) 产物并创建 **草稿** Release
+（含 updater 的 `latest.json`），人工核对资产后再手动发布。
+
+### 版本号必须三处同步
+
+`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`
+（`[package].version`）三处版本号必须完全一致，且与 tag 一致。CI 在 tag 推送时先跑
+`node scripts/check-versions.mjs <tag>` 做校验（本地也可手动执行），不一致即失败。
+
+### 步骤
+
+```sh
+# 1. 同步三处版本号后提交
+node scripts/check-versions.mjs        # 本地先自检
+git add -A && git commit -m "chore(release): 0.2.0"
+# 2. 推送主分支
+git push origin main
+# 3. 打 tag 并推送（触发发版）
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+随后在 Actions 里等 `check` 与 `release` 两个 job 变绿；到 Releases 页面核对草稿
+里的资产（`.dmg`、`omp-resume.app.tar.gz`、`omp-resume.app.tar.gz.sig`、
+`latest.json`），确认无误后点 **Publish release** 正式发布。
+应用内的更新端点指向 `releases/latest/download/latest.json`，只有**正式发布**
+（非草稿）后 `/latest` 才会解析到它。
+
+### 签名密钥（CI 已配置）
+
+CI 需要仓库 secret `TAURI_SIGNING_PRIVATE_KEY`（updater 签名私钥，内容或路径）。
+本项目密钥无密码，因此**不设置** `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。该 secret
+已在 `cjcj5438/omp-resume` 上配置好。
+
+### 本地签名构建（生成 updater 产物）
+
+私钥位于 `~/.tauri/omp-resume.key`（仓库外，**绝不能提交**，也不要把内容写进任何文件）：
+
+```sh
+export TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/omp-resume.key"
+npm run tauri build        # 额外产出 .app.tar.gz + .sig
+```
+
+若私钥丢失，用 `npx tauri signer generate -w ~/.tauri/omp-resume.key` 重新生成，
+并同步更新 `src-tauri/tauri.conf.json` 里的 `plugins.updater.pubkey`；
+**丢失旧私钥后，已安装的旧版本将无法再收到更新**。
+
+### 更新行为
+
+应用启动时静默检查一次更新：有新版本则弹窗显示版本号/发布日期/更新说明，点
+「下载并安装」后再选「立即重启」或「稍后重启」；无手动检查按钮，重启后会再次检查。
+开发模式（DEV）跳过网络检查；所有失败均静默处理。
+
+### 架构
+
+仅构建 **arm64**（`macos-latest` 即 Apple Silicon runner），不构建、不发布 x86_64。
 
 ## 配置
 
