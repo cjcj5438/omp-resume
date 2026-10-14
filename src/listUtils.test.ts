@@ -21,6 +21,7 @@ function s(over: Partial<SessionSummary> & { path: string }): SessionSummary {
     branchCount: 1,
     inUse: false,
     probeOk: true,
+    occupant: null,
     fork: null,
     formatSupported: true,
     version: 3,

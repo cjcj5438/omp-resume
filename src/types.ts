@@ -43,6 +43,12 @@ export interface ForkInfo {
   parentPath: string | null;
 }
 
+export interface Occupant {
+  pid: number;
+  app: string | null;
+  appVersion: string | null;
+}
+
 export interface SessionSummary {
   id: string;
   path: string;
@@ -56,6 +62,7 @@ export interface SessionSummary {
   branchCount: number;
   inUse: boolean;
   probeOk: boolean;
+  occupant: Occupant | null;
   fork: ForkInfo | null;
   formatSupported: boolean;
   version: number | null;

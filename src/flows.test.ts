@@ -19,6 +19,7 @@ function summary(path: string, inUse: boolean): SessionSummary {
     branchCount: 1,
     inUse,
     probeOk: true,
+    occupant: null,
     fork: null,
     formatSupported: true,
     version: 3,

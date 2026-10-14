@@ -15,6 +15,7 @@ pub mod model;
 
 pub mod config;
 pub mod lock;
+pub mod occupant;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
 pub mod ops;
 pub mod sessions;

@@ -115,6 +115,19 @@ fn fixture_manifest_check() {
         );
         assert_eq!(s.in_use, want["inUse"].as_bool().unwrap(), "{id} inUse");
         assert!(s.probe_ok, "{id} probeOk");
+        if s.in_use {
+            match &s.occupant {
+                Some(o) => println!(
+                    "occupant: {id} pid={} app={} version={}",
+                    o.pid,
+                    o.app.as_deref().unwrap_or("-"),
+                    o.app_version.as_deref().unwrap_or("-"),
+                ),
+                None => println!("occupant: {id} None"),
+            }
+        } else {
+            assert!(s.occupant.is_none(), "{id} 非占用会话 occupant 应为 null");
+        }
         match (s.fork.as_ref(), want.get("fork")) {
             (None, None) | (None, Some(Value::Null)) => {}
             (Some(f), Some(w)) if !w.is_null() => {

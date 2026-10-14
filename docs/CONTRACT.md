@@ -164,6 +164,53 @@ assistant 与 toolResult 之间，不跳过它们树会断裂。
 - 只读打开（share/export/预览）不占租约——我们的读/探测都不写文件，
   唯二写操作是删除与 marker 追加，且都先拒绝 `inUse`。
 
+## 3.1 占用者识别（occupant，仅展示）
+
+> 尽力而为的展示信息：告诉用户**哪个应用**里的 omp 进程占着会话。
+> `inUse` / `probeOk` 与全部写门禁仍**只**来自 §3 的 flock 探测；
+> 本节任何失败都静默降级为"无占用者信息"（`occupant: null`），永不报错、
+> 永不改变 `inUse`。DeleteDialog 与错误码（`IN_USE` 等）行为不变。
+
+- `Occupant { pid: u32, app: string|null, appVersion: string|null }`
+  （JSON camelCase：`{pid, app, appVersion}`）；
+  `SessionSummary.occupant`：非占用或未找到 PID 时为 null；
+  找到 PID 但应用无法识别时为 `{pid, app:null, appVersion:null}`。
+- 解析时机：在 `list_sessions` 内同步进行，每次调用至多一次，
+  仅当 ≥1 可见会话 `inUse` 时才做；无占用会话时不调 `lsof`、不读环境。
+- 找 PID：系统 `lsof`（绝对路径 `/usr/sbin/lsof`，GUI 应用 PATH 极简），
+  `lsof -nP -F pn -- <lockfile>...` 一次查全部 in-use 会话的锁文件
+  （字段输出 `p<pid>` / `n<path>` 行）。硬超时 ~2s（超时杀子进程），
+  stdin 为 null；exit 1 无输出 = 无持有者（正常情况）。
+  按锁文件名 basename（`<id>.lock`）匹配会话 id；一锁多 PID 时取最低 pid。
+- 读环境：对持有者 PID 用 `sysctl([CTL_KERN, KERN_PROCARGS2, pid])` 原生读取
+  （`ps eww` 在 macOS 不显示环境，不用它；祖先链回溯不用——iTerm2 会话
+  父进程已消亡，实测验证）。同用户进程无需 root 即可读（~26ms/PID）；
+  EPERM/ESRCH/截断 → 无信息。**只提取白名单变量**
+  （`TERM_PROGRAM`、`TERM_PROGRAM_VERSION`、`__CFBundleIdentifier`、
+  `TMUX`、`TERMINAL_EMULATOR`），其余不保留、不日志、不传前端。
+- 分类（纯函数，优先级 tmux > bundle id > TERM_PROGRAM）：
+  - `TMUX` 非空或 `TERM_PROGRAM == "tmux"` → `tmux`（tmux 内底层窗口应用不可靠，无版本）。
+  - `__CFBundleIdentifier` 查表：com.googlecode.iterm2→`iTerm2`（已验证）、
+    com.microsoft.VSCode→`VS Code`（已验证）、com.microsoft.VSCodeInsiders→
+    `VS Code Insiders`、com.apple.Terminal→`Terminal`、com.mitchellh.ghostty→
+    `Ghostty`、com.todesktop.230313mzl4w4u92→`Cursor`、dev.zed.Zed→`Zed`、
+    dev.warp.Warp-Stable→`Warp`、com.github.wez.wezterm→`WezTerm`、
+    net.kovidgoyal.kitty→`kitty`、org.alacritty→`Alacritty`、co.zeit.hyper→
+    `Hyper`、`com.jetbrains.` 前缀或 `TERMINAL_EMULATOR=JetBrains-JediTerm`→
+    `JetBrains`。bundle id **优先于** `TERM_PROGRAM`（Cursor 等 VS Code
+    fork 会伪装 `TERM_PROGRAM=vscode`）。
+  - 否则 `TERM_PROGRAM` 查表：`iTerm.app`→iTerm2（已验证）、`Apple_Terminal`→
+    Terminal、`vscode`→`VS Code`（已验证）、`ghostty`→Ghostty、
+    `WarpTerminal`→Warp、`WezTerm`→WezTerm、`Hyper`→Hyper；其他非空值原样展示。
+  - 版本：仅当所选展示名与 `TERM_PROGRAM` 派生名一致时取
+    `TERM_PROGRAM_VERSION`（如 Cursor 进程带 VS Code 的版本号，不能算到
+    Cursor 头上）；tmux 永无版本。
+- 表中除 iTerm2 / VS Code 外均为**未验证**（tmux、Cursor、Ghostty、
+  Terminal.app、JetBrains、SSH/rpc 模式的无头进程大概率无应用名，
+  只显示 PID 或 null）。
+- 展示：列表徽章 `占用中 · <应用>`（应用未知时保持 `占用中` 原样）；
+  详情页显示 `<应用> <版本> · PID <n>`，应用未知但有 PID 时只显示 `PID <n>`。
+
 ## 4. 命令
 
 ### 4.1 `get_config() -> { sessionsDir, ownersDir }`
@@ -186,6 +233,8 @@ assistant 与 toolResult 之间，不跳过它们树会断裂。
   - `title`（§4.2.1）：最新标题 / 首用户消息 60 字 / `(无标题)`。
   - `messageCount`：**active 路径**上的 user + assistant 消息数。
   - `branchCount`：保留树的叶子数；仅 >1 时 UI 显示「N 个分支」。
+  - `occupant`（§3.1）：`null`（非占用 / 未找到 PID）或
+    `{pid, app: string|null, appVersion: string|null}`。
   - `fork`：header 有 `parentSession` 时为 `{ parentRaw,
     parentTitle: string|null, parentPath: string|null }`，
     否则 null。解析：字符串等于被扫会话的 id → 取其标题与路径；

@@ -106,7 +106,7 @@ export function SessionBadges({ s }: { s: SessionSummary }) {
   return (
     <>
       {s.inUse ? (
-        <Badge tone="accent">使用中</Badge>
+        <Badge tone="accent">使用中{s.occupant?.app ? ` · ${s.occupant.app}` : ""}</Badge>
       ) : !s.probeOk ? (
         <Badge tone="grey">占用未知</Badge>
       ) : null}

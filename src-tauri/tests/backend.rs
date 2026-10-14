@@ -682,7 +682,16 @@ fn real_data_validation() {
             }
             if s.in_use {
                 in_use += 1;
-                println!("inUse: {} {}", s.id, s.path);
+                match &s.occupant {
+                    Some(o) => println!(
+                        "inUse: {} pid={} app={} version={}",
+                        s.id,
+                        o.pid,
+                        o.app.as_deref().unwrap_or("-"),
+                        o.app_version.as_deref().unwrap_or("-"),
+                    ),
+                    None => println!("inUse: {} occupant=None", s.id),
+                }
             }
             paths.push(s.path.clone());
         }

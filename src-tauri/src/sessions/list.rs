@@ -107,11 +107,22 @@ pub fn list_sessions(cfg: &Config) -> Result<ListSessionsResult, AppError> {
     }
 
     // 补 fork 字段并分组（组内 modifiedAt 倒序；组按最新会话倒序）。
+    // 占用者回填：仅当 ≥1 可见 in-use 会话时做一次 lsof 批量查询（CONTRACT §3.1）；
+    // 失败静默降级（occupant 保持 None），不影响 in_use / probe_ok。
+    let in_use_ids: Vec<String> = rows
+        .iter()
+        .filter(|r| r.summary.as_ref().is_some_and(|s| s.in_use))
+        .map(|r| r.id.clone())
+        .collect();
+    let occupants = crate::occupant::resolve_occupants(&cfg.owners_dir, &in_use_ids);
     let mut groups: HashMap<String, Vec<SessionSummary>> = HashMap::new();
     for r in rows {
         let Some(mut s) = r.summary else { continue };
         if let Some(raw) = r.parent_raw {
             s.fork = Some(resolve_fork(&raw, &id_map));
+        }
+        if s.in_use {
+            s.occupant = occupants.get(&s.id).cloned();
         }
         groups.entry(r.dir_name).or_default().push(s);
     }
@@ -237,7 +248,8 @@ fn summarize(
         branch_count: 0,
         in_use: probe.in_use,
         probe_ok: probe.probe_ok,
-        fork: None, // 调用方统一补（需要全局 id 表）
+        occupant: None, // list_sessions 末尾统一回填（需一次 lsof 查全部 in-use 会话）
+        fork: None,     // 调用方统一补（需要全局 id 表）
         format_supported: version == Some(3),
         version,
         bad_lines: parsed.bad_lines,
@@ -376,6 +388,7 @@ fn resolve_title(parsed: &ParsedFile, first_user: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn top_jsonl_filter() {
@@ -384,5 +397,85 @@ mod tests {
         assert!(!is_top_jsonl("a.jsonl.123.bak"));
         assert!(!is_top_jsonl("a.json"));
         assert!(!is_top_jsonl(".jsonl"));
+    }
+
+    fn write_session(proj: &std::path::Path, name: &str, id: &str) {
+        std::fs::create_dir_all(proj).unwrap();
+        let lines = [
+            serde_json::json!({"type":"title","v":1,"title":"占用者测试","source":"auto","updatedAt":"2026-10-14T00:00:00.000Z","pad":"   "}).to_string(),
+            serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":"/tmp"}).to_string(),
+            serde_json::json!({"type":"message","id":"u1","parentId":null,"timestamp":"2026-10-14T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}).to_string(),
+        ];
+        std::fs::write(proj.join(name), lines.join("\n") + "\n").unwrap();
+    }
+
+    fn only_session(result: &ListSessionsResult) -> SessionSummary {
+        assert_eq!(result.hidden_empty, 0);
+        assert_eq!(result.groups.len(), 1);
+        assert_eq!(result.groups[0].sessions.len(), 1);
+        result.groups[0].sessions[0].clone()
+    }
+
+    #[test]
+    fn free_session_has_no_occupant() {
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        write_session(
+            &sessions.join("-p"),
+            "2026-10-14T00-00-00-000Z_sess-occ-free.jsonl",
+            "sess-occ-free",
+        );
+        let cfg = Config {
+            sessions_dir: sessions,
+            owners_dir: t.path().join("owners"),
+        };
+        let s = only_session(&list_sessions(&cfg).unwrap());
+        assert!(!s.in_use && s.probe_ok);
+        assert!(s.occupant.is_none());
+    }
+
+    /// 持锁（子线程 flock）→ `in_use` 仍为 true（占用者 machinery 不影响写门禁）；
+    /// `lsof` 若找到持锁者，PID 必为测试进程自身，否则降级为 None。
+    #[test]
+    fn held_lock_keeps_in_use_with_matching_or_absent_occupant() {
+        use std::os::unix::io::AsRawFd;
+        use std::sync::mpsc;
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        write_session(
+            &sessions.join("-p"),
+            "2026-10-14T00-00-00-000Z_sess-occ-held.jsonl",
+            "sess-occ-held",
+        );
+        let owners = t.path().join("owners");
+        std::fs::create_dir_all(&owners).unwrap();
+        let lock_path = owners.join("sess-occ-held.lock");
+        std::fs::write(&lock_path, "").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let f = std::fs::OpenOptions::new()
+                .read(true)
+                .open(&lock_path)
+                .unwrap();
+            let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+            assert_eq!(rc, 0);
+            tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            unsafe {
+                libc::flock(f.as_raw_fd(), libc::LOCK_UN);
+            }
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let cfg = Config {
+            sessions_dir: sessions,
+            owners_dir: owners,
+        };
+        let s = only_session(&list_sessions(&cfg).unwrap());
+        assert!(s.in_use && s.probe_ok);
+        if let Some(o) = &s.occupant {
+            // 持锁的正是本测试进程：lsof 必须指回自己，而非别的进程。
+            assert_eq!(o.pid, std::process::id());
+        }
+        std::mem::forget(holder);
     }
 }

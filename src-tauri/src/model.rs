@@ -105,6 +105,18 @@ pub struct ForkInfo {
     pub parent_path: Option<String>,
 }
 
+/// 占用者信息（CONTRACT §3.1）：持有锁文件的 omp 进程归属应用（尽力识别，仅展示）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Occupant {
+    /// 持有锁的进程 PID（`lsof` 所见最低 pid）。
+    pub pid: u32,
+    /// 归属应用展示名（如 `VS Code` / `iTerm2`）；无法识别时为 null。
+    pub app: Option<String>,
+    /// 应用版本（仅当与归属一致时填充）；未知时为 null。
+    pub app_version: Option<String>,
+}
+
 /// 单个会话的列表行。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,6 +145,9 @@ pub struct SessionSummary {
     pub in_use: bool,
     /// flock 探测本身是否成功。
     pub probe_ok: bool,
+    /// 占用者信息（CONTRACT §3.1）：非占用或未找到 PID 时为 null；
+    /// 找到 PID 但应用无法识别时为 `{pid, app:null, appVersion:null}`。
+    pub occupant: Option<Occupant>,
     /// fork 血缘；非 fork 会话为 null。
     pub fork: Option<ForkInfo>,
     /// 仅 v3 可预览 / 建树；非 v3 只填廉价字段。

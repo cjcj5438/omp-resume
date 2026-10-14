@@ -89,6 +89,14 @@ export function DetailPane({
             <span>修改 {formatFullTime(session.modifiedAt)}</span>
             <span>{formatSize(session.sizeBytes)}</span>
             <span>{session.messageCount} 条消息</span>
+            {session.occupant != null ? (
+              <span>
+                占用：
+                {session.occupant.app != null
+                  ? `${session.occupant.app}${session.occupant.appVersion != null ? ` ${session.occupant.appVersion}` : ""} · PID ${session.occupant.pid}`
+                  : `PID ${session.occupant.pid}`}
+              </span>
+            ) : null}
           </div>
           {!session.formatSupported ? (
             <div className="banner banner-warn">
