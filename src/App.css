@@ -1,0 +1,6 @@
+.container {
+  margin: 0 auto;
+  padding: 2rem;
+  max-width: 960px;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}

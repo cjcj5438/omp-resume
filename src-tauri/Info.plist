@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- open_in_iterm 通过 AppleScript 控制 iTerm：新建 tab 并执行 resume 命令。 -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>omp-resume 需要控制 iTerm 来打开 omp 会话</string>
+</dict>
+</plist>
