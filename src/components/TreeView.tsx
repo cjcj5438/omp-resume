@@ -150,8 +150,9 @@ export function TreeView({
   const previewNode = selectedId
     ? tree.data?.nodes.find((n) => n.id === selectedId) ?? null
     : null;
-  // 缺 cwd 时仍允许：标记追加不受影响，iTerm 打开失败会以组合错误提示（可保留分支意图）。
-  const continueDisabled = busy || session.inUse || selectedId === null;
+  // 缺 cwd 时禁用：续聊必然打不开 iTerm，不得改动会话文件（与“在 iTerm 继续”同规则）。
+  const continueDisabled =
+    busy || session.inUse || !session.cwdExists || selectedId === null;
   const continueTip = session.inUse
     ? "会话正在被另一个 omp 使用"
     : !session.cwdExists
