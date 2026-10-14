@@ -302,9 +302,11 @@ header `.title`、每个 `title_change` 的 `.title`。
 
 1. 逐行解析；坏行计数跳过。首行 `title` 与 `session` header 不入树。
 2. 无字符串 `id` 的行跳过（不计坏行——形状合法但无链接能力）。
-3. kept 判定与 label 收集（§2.7）；`parentId` 指向 kept 节点则挂载，
+3. kept 判定与 label 收集（§2.7）；`parentId` 指向 kept 节点则直接挂载
+   （kept 之间的链接原样保留，即使成环——与 omp 一致）；
    否则沿 `parentId` 链上溯找最近 kept 祖先（经跳过节点），
-   找不到 / 遇到 null / 环 → 根。
+   找不到 / 遇到 null / 上溯中成环 → 根。
+   走访（active 路径、会话展开）遇重复 id 即截断，防止死循环。
 4. `childIds` 按文件顺序；`leafId` = 从文件末有 id 条目向上找的
    最近 kept 节点（无则 null）。
 5. `branchCount` = 无 child 的 kept 节点数。
@@ -343,16 +345,19 @@ header `.title`、每个 `title_change` 的 `.title`。
   `u64/usize` → `number`，`Value` → `unknown`）。
 - `src/api.ts`：每命令一函数 + `normalizeError`。
   后端 `invoke` 拒绝值即 `AppError` 形状；未知形状降级 `UNKNOWN`。
+- 后端模块布局（`src-tauri/src/`）：`config.rs`（配置解析 + 路径校验）、
+  `lock.rs`（顶层，flock 占用探测）、`sessions/`（`parse` 解析 + 树索引、
+  `list` / `conversation` / `tree`）、`ops/`（删除 / 标记 / iTerm）。
 
 ## 9. 常量
 
 | 常量 | 值 | 用途 |
 |---|---|---|
 | `MAX_TEXT_BYTES` | 8000（UTF-8 字节，字符边界截断，尾加 `…[已截断]`） | toolResult / bashExecution 文本 |
-| `TITLE_FALLBACK_CHARS` | 60 | 无标题时首用户消息截断 |
-| `FIRST_USER_MESSAGE_CHARS` | 200 | `firstUserMessage` 字段 |
-| `OTHER_TEXT_CHARS` | 2000 | `other` 条目文本 |
-| `TREE_PREVIEW_CHARS` | 80 | 树节点 preview |
+| `TITLE_FALLBACK_CHARS` | 60（含尾 `…`，总长 ≤60） | 无标题时首用户消息截断 |
+| `FIRST_USER_MESSAGE_CHARS` | 200（含尾 `…`） | `firstUserMessage` 字段 |
+| `OTHER_TEXT_CHARS` | 2000（含尾 `…`） | `other` 条目文本 |
+| `TREE_PREVIEW_CHARS` | 80（含尾 `…`，总长 ≤80） | 树节点 preview |
 | `MARKER_CUSTOM_TYPE` | `omp-resume-branch` | 分支标记 customType |
 | `UNTITLED` | `(无标题)` | 无标题兜底 |
 
