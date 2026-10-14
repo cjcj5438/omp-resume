@@ -12,6 +12,9 @@
 /// 全局共享的数据模型：命令参数、返回值与错误类型。
 pub mod model;
 
+/// OPS 纯原语：删除 / iTerm / 分支标记（暂无 Tauri 命令装配）。
+pub mod ops;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
