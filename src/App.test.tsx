@@ -40,7 +40,7 @@ describe("列表：过滤与跨刷新保持", () => {
     await screen.findByText(S1);
 
     const input = screen.getByRole("searchbox", { name: "过滤会话" });
-    fireEvent.change(input, { target: { value: "ollama" } });
+    fireEvent.change(input, { target: { value: "demo3" } });
     expect(rowOf(S4)).toBeInTheDocument();
     expect(screen.queryByText(S1)).toBeNull();
 

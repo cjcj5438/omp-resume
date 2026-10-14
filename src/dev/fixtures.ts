@@ -250,7 +250,7 @@ const s3: FixtureSession = withPath(
 const s4id = "01a12ecf-77aa-88bb-99cc-0d528fc1cc03";
 const s4path = sessPath("-my-Obsidian-doc", "2026-10-12T06-31-48-446Z", s4id);
 const s4lin = linearTree("s4", [
-  { role: "user", preview: "用 Ollama 跑本地模型总结笔记", item: U("用 Ollama 跑本地模型总结这批笔记。") },
+  { role: "user", preview: "用 DEMO3 跑本地模型总结笔记", item: U("用 DEMO3 跑本地模型总结这批笔记。") },
   { role: "assistant", preview: "已连上 llama3，开始总结…", item: A("已连上 `llama3`，开始总结……") },
 ]);
 const s4: FixtureSession = withPath(
@@ -263,7 +263,7 @@ const s4: FixtureSession = withPath(
       fork: { parentRaw: "01a00000-dead-beef-0000-000000000000", parentTitle: null, parentPath: null },
       messageCount: 12,
       modifiedAt: iso(60 * 30),
-      firstUserMessage: "用 Ollama 跑本地模型总结笔记",
+      firstUserMessage: "用 DEMO3 跑本地模型总结笔记",
     }),
     ...s4lin,
   },

@@ -55,7 +55,7 @@ const groups: ProjectGroup[] = [
 
 describe("filterGroups", () => {
   it("按标题、cwd、首条用户消息做大小写不敏感子串匹配", () => {
-    expect(filterGroups(groups, "ompgui").map((g) => g.cwd)).toEqual([
+    expect(filterGroups(groups, "demo").map((g) => g.cwd)).toEqual([
       "/Users/chenjing/my/omp-resume",
     ]);
     expect(filterGroups(groups, "示例")[0].sessions.map((x) => x.path)).toEqual([
