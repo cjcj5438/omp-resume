@@ -41,9 +41,7 @@ pub struct DeleteReport {
 /// 调用方已做路径校验与占用探测；此处只做廉价自卫：
 /// 路径必须以小写 `.jsonl` 结尾且为已存在的常规文件，否则拒绝。
 pub fn delete_session_files(session_path: &Path) -> Result<DeleteReport, AppError> {
-    let is_jsonl = session_path
-        .extension()
-        .is_some_and(|ext| ext == "jsonl");
+    let is_jsonl = session_path.extension().is_some_and(|ext| ext == "jsonl");
     if !is_jsonl {
         return Err(AppError::new(
             ErrorCode::Io,
@@ -197,11 +195,13 @@ mod tests {
             "lock",
         );
         // 前缀碰撞：stem 仅以同前缀开头，但不是同一会话。
+        write_file(&root.join("2026-10-14T02-18-47-387Z_abc1234.jsonl"), "{}\n");
         write_file(
-            &root.join("2026-10-14T02-18-47-387Z_abc1234.jsonl"),
-            "{}\n",
+            &root
+                .join("2026-10-14T02-18-47-387Z_abc1234")
+                .join("keep.txt"),
+            "k",
         );
-        write_file(&root.join("2026-10-14T02-18-47-387Z_abc1234").join("keep.txt"), "k");
         write_file(&root.join("other.jsonl.9.bak"), "unrelated");
         session
     }
@@ -240,7 +240,10 @@ mod tests {
                 .exists(),
             "前缀碰撞的 sibling 目录必须保留"
         );
-        assert!(root.join("other.jsonl.9.bak").exists(), "无关 .bak 必须保留");
+        assert!(
+            root.join("other.jsonl.9.bak").exists(),
+            "无关 .bak 必须保留"
+        );
         assert!(root.join("abc-sibling-placeholder").exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -270,13 +273,11 @@ mod tests {
         assert!(report.bak_failed.is_empty());
         assert!(!session.exists());
         assert!(
-            !root.join("victim").exists() && std::fs::symlink_metadata(root.join("victim")).is_err(),
+            !root.join("victim").exists()
+                && std::fs::symlink_metadata(root.join("victim")).is_err(),
             "符号链接本身应被删除"
         );
-        assert!(
-            victim.join("precious.txt").exists(),
-            "链接目标目录必须完好"
-        );
+        assert!(victim.join("precious.txt").exists(), "链接目标目录必须完好");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -287,7 +288,10 @@ mod tests {
         write_file(&session, "{}\n");
         write_file(&root.join("a"), "i am a file, not a dir");
         delete_session_files(&session).unwrap();
-        assert_eq!(std::fs::read_to_string(root.join("a")).unwrap(), "i am a file, not a dir");
+        assert_eq!(
+            std::fs::read_to_string(root.join("a")).unwrap(),
+            "i am a file, not a dir"
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -325,7 +329,10 @@ mod tests {
         assert!(!session.exists());
         assert_eq!(report.bak_failed.len(), 1, "{report:?}");
         assert!(report.bak_failed[0].ends_with("a.jsonl.1.bak"));
-        assert!(bak_dir.join("inner.txt").exists(), "删不掉的 .bak 必须原样保留");
+        assert!(
+            bak_dir.join("inner.txt").exists(),
+            "删不掉的 .bak 必须原样保留"
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 

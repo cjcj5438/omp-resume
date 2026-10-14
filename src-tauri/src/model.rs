@@ -200,8 +200,12 @@ pub struct AssistantItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AssistantBlock {
-    Text { text: String },
-    Thinking { text: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -392,7 +396,7 @@ mod tests {
 
     #[test]
     fn tree_node_kind_uses_camel_case() {
-        let v = serde_json::to_value(&TreeNodeKind::BranchSummary).unwrap();
+        let v = serde_json::to_value(TreeNodeKind::BranchSummary).unwrap();
         assert_eq!(v, "branchSummary");
     }
 }

@@ -141,7 +141,10 @@ mod tests {
         // shell 元字符保持字面（由单引号保护）。
         assert_eq!(shell_quote("a$HOME`id`;rm"), "'a$HOME`id`;rm'");
         // unicode 原样保留。
-        assert_eq!(shell_quote("/Users/x/未命名文件夹"), "'/Users/x/未命名文件夹'");
+        assert_eq!(
+            shell_quote("/Users/x/未命名文件夹"),
+            "'/Users/x/未命名文件夹'"
+        );
     }
 
     #[test]
@@ -196,7 +199,10 @@ mod tests {
         assert!(tricky.contains("echo \\\"a\\\\b\\\""), "{tricky}");
         // 换行被剥离，脚本自身不跨行破裂。
         let multiline = build_script("echo a\necho b");
-        assert!(multiline.contains("write text \"echo aecho b\""), "{multiline}");
+        assert!(
+            multiline.contains("write text \"echo aecho b\""),
+            "{multiline}"
+        );
     }
 
     #[test]

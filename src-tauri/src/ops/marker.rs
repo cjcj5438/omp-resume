@@ -7,8 +7,8 @@
 //! omp **不校验** `parentId`（错 id 静默给出空分支），因此调用方必须先
 //! 把 `nodeId` 校验为保留节点——本模块只负责写，不负责验。
 
-use std::collections::HashSet;
 use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -98,8 +98,7 @@ pub fn build_marker_line(marker_id: &str, parent_id: &str, now_iso: &str) -> Str
         data: serde_json::Value::Object(Default::default()),
     };
     // struct 序列化不可能失败。
-    let mut s =
-        serde_json::to_string(&line).expect("marker line serialization is infallible");
+    let mut s = serde_json::to_string(&line).expect("marker line serialization is infallible");
     s.push('\n');
     s
 }
@@ -158,7 +157,10 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
     }
     let md = std::fs::metadata(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            AppError::new(ErrorCode::NotFound, format!("会话文件不存在：{}", path.display()))
+            AppError::new(
+                ErrorCode::NotFound,
+                format!("会话文件不存在：{}", path.display()),
+            )
         } else {
             AppError::new(
                 ErrorCode::Io,
@@ -176,14 +178,23 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
         return Err(unfinished_error(path));
     }
     let mut f = std::fs::File::open(path).map_err(|e| {
-        AppError::new(ErrorCode::Io, format!("无法读取会话文件 {}：{e}", path.display()))
+        AppError::new(
+            ErrorCode::Io,
+            format!("无法读取会话文件 {}：{e}", path.display()),
+        )
     })?;
     f.seek(SeekFrom::End(-1)).map_err(|e| {
-        AppError::new(ErrorCode::Io, format!("无法定位会话文件末尾 {}：{e}", path.display()))
+        AppError::new(
+            ErrorCode::Io,
+            format!("无法定位会话文件末尾 {}：{e}", path.display()),
+        )
     })?;
     let mut last = [0u8; 1];
     f.read_exact(&mut last).map_err(|e| {
-        AppError::new(ErrorCode::Io, format!("无法读取会话文件末尾 {}：{e}", path.display()))
+        AppError::new(
+            ErrorCode::Io,
+            format!("无法读取会话文件末尾 {}：{e}", path.display()),
+        )
     })?;
     if last[0] != b'\n' {
         return Err(unfinished_error(path));
@@ -192,10 +203,16 @@ pub fn append_marker_line(path: &Path, line: &str) -> Result<(), AppError> {
         .append(true)
         .open(path)
         .map_err(|e| {
-            AppError::new(ErrorCode::Io, format!("无法追加会话文件 {}：{e}", path.display()))
+            AppError::new(
+                ErrorCode::Io,
+                format!("无法追加会话文件 {}：{e}", path.display()),
+            )
         })?;
     app.write_all(line.as_bytes()).map_err(|e| {
-        AppError::new(ErrorCode::Io, format!("追加会话文件 {} 失败：{e}", path.display()))
+        AppError::new(
+            ErrorCode::Io,
+            format!("追加会话文件 {} 失败：{e}", path.display()),
+        )
     })?;
     Ok(())
 }
@@ -230,7 +247,9 @@ mod tests {
     }
 
     fn is_hex8(s: &str) -> bool {
-        s.len() == 8 && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        s.len() == 8
+            && s.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
     }
 
     #[test]
@@ -264,7 +283,9 @@ mod tests {
         let id = new_marker_id_with(&existing, &mut || "deadbeef".to_owned());
         assert_ne!(id, "deadbeef");
         assert_eq!(id.len(), 16);
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         assert!(!existing.contains(&id));
     }
 
@@ -294,7 +315,14 @@ mod tests {
     fn marker_line_field_order() {
         // 字段顺序固定（与 CONTRACT §4.7 示例一致）。
         let line = build_marker_line("id1", "p1", "t");
-        let order = ["\"type\"", "\"customType\"", "\"id\"", "\"parentId\"", "\"timestamp\"", "\"data\""];
+        let order = [
+            "\"type\"",
+            "\"customType\"",
+            "\"id\"",
+            "\"parentId\"",
+            "\"timestamp\"",
+            "\"data\"",
+        ];
         let mut last = 0;
         for key in order {
             let pos = line.find(key).unwrap();
@@ -429,7 +457,10 @@ mod tests {
         for line in lines {
             let v: serde_json::Value = serde_json::from_str(line).expect("断行/交错");
             assert_eq!(v["customType"], MARKER_CUSTOM_TYPE);
-            assert!(ids.insert(v["id"].as_str().unwrap().to_owned()), "重复/损坏");
+            assert!(
+                ids.insert(v["id"].as_str().unwrap().to_owned()),
+                "重复/损坏"
+            );
         }
         std::fs::remove_dir_all(&root).unwrap();
     }
