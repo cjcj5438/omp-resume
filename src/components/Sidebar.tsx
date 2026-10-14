@@ -14,6 +14,7 @@ interface SidebarProps {
   listError: AppError | null;
   onRetry: () => void;
   onRefresh: () => void;
+  onOpenCheatSheet: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   selectedPath: string | null;
@@ -30,6 +31,7 @@ export function Sidebar({
   listError,
   onRetry,
   onRefresh,
+  onOpenCheatSheet,
   checked,
   onToggleCheck,
   selectedPath,
@@ -47,6 +49,9 @@ export function Sidebar({
           onChange={(e) => onQuery(e.target.value)}
           aria-label="过滤会话"
         />
+        <button type="button" className="btn" onClick={onOpenCheatSheet}>
+          速查
+        </button>
         <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
           {loading ? <span className="spinner" aria-hidden="true" /> : null}
           刷新

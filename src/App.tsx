@@ -20,6 +20,7 @@ import { runContinueFromNode, type ContinueOutcome } from "./flows";
 import { Sidebar } from "./components/Sidebar";
 import { DetailPane } from "./components/DetailPane";
 import { DeleteDialog } from "./components/DeleteDialog";
+import { CheatSheetDialog } from "./components/CheatSheetDialog";
 
 interface Toast {
   id: number;
@@ -36,6 +37,7 @@ function App() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<SessionSummary[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [showCheatSheet, setShowCheatSheet] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const inFlight = useRef(false);
   const lastStart = useRef(0);
@@ -173,6 +175,7 @@ function App() {
         }
         selectedPath={selectedPath}
         onSelect={(path) => setSelectedPath(path)}
+        onOpenCheatSheet={() => setShowCheatSheet(true)}
       />
       <DetailPane
         session={selected}
@@ -198,6 +201,7 @@ function App() {
           onClose={() => setDeleteTargets(null)}
         />
       ) : null}
+      {showCheatSheet ? <CheatSheetDialog onClose={() => setShowCheatSheet(false)} /> : null}
       <div className="toast-area" role="status" aria-live="polite">
         {listError ? (
           <div className="banner banner-error">

@@ -849,3 +849,70 @@ pre.mono {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- 命令速查 ---- */
+
+.cheatsheet-head {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cheatsheet-filter {
+  width: 100%;
+  margin: 8px 0 4px;
+}
+
+.cheatsheet-list {
+  margin-top: 8px;
+}
+
+.cheatsheet-group-title {
+  font-size: 13px;
+  margin: 12px 0 4px;
+}
+
+.cheatsheet-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cheatsheet-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cheatsheet-row:last-child {
+  border-bottom: none;
+}
+
+.cheatsheet-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cheatsheet-alias {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-args {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: break-word;
+}
+
+.cheatsheet-zh {
+  flex: none;
+  max-width: 42%;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.cheatsheet-foot {
+  color: var(--text-muted);
+  font-size: 12px;
+}

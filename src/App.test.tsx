@@ -234,3 +234,23 @@ describe("缺 cwd 会话", () => {
     expect(mock.itermCalls).toEqual([]);
   });
 });
+
+describe("命令速查", () => {
+  it("点击速查打开对话框，过滤缩小行，关闭按钮关闭", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(screen.getByRole("button", { name: "速查" }));
+    const dialog = await screen.findByRole("dialog", { name: "命令速查" });
+    expect(within(dialog).getByText(/共 \d+ 条内置命令/)).toBeInTheDocument();
+
+    const filter = within(dialog).getByRole("searchbox", { name: "过滤命令" });
+    fireEvent.change(filter, { target: { value: "compact" } });
+    expect(within(dialog).getByText("/compact", { exact: false })).toBeInTheDocument();
+    expect(within(dialog).queryByText("/shake", { exact: false })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull();
+  });
+});
