@@ -154,6 +154,9 @@ pub fn run() {
     let cfg = config::resolve(sessions_dir_arg());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        // 自动更新：updater 负责检查/下载/安装，process 负责安装后重启。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(cfg)
         .invoke_handler(tauri::generate_handler![
             get_config,

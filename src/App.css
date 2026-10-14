@@ -814,6 +814,18 @@ pre.mono {
   padding: 8px 10px;
 }
 
+/* ---- 自动更新对话框 ---- */
+.update-notes {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 .delete-list {
   list-style: none;
   margin: 10px 0 0;

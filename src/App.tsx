@@ -21,6 +21,8 @@ import { Sidebar } from "./components/Sidebar";
 import { DetailPane } from "./components/DetailPane";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetDialog } from "./components/CheatSheetDialog";
+import { UpdateDialog } from "./components/UpdateDialog";
+import { checkForUpdate, type Update } from "./update";
 
 interface Toast {
   id: number;
@@ -38,6 +40,9 @@ function App() {
   const [deleteTargets, setDeleteTargets] = useState<SessionSummary[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
+  // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
+  // 手动重新检查：重启应用即可。
+  const [update, setUpdate] = useState<Update | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const inFlight = useRef(false);
   const lastStart = useRef(0);
@@ -73,6 +78,17 @@ function App() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 启动时检查一次更新（checkForUpdate 内部已处理 DEV 跳过与静默失败）。
+  useEffect(() => {
+    let cancelled = false;
+    void checkForUpdate().then((u) => {
+      if (!cancelled && u) setUpdate(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const refocus = () => {
@@ -202,6 +218,16 @@ function App() {
         />
       ) : null}
       {showCheatSheet ? <CheatSheetDialog onClose={() => setShowCheatSheet(false)} /> : null}
+      {update ? (
+        <UpdateDialog
+          update={update}
+          onClose={() => {
+            // 释放后端资源，失败忽略；对话框关闭与资源释放互不影响。
+            void update.close().catch(() => {});
+            setUpdate(null);
+          }}
+        />
+      ) : null}
       <div className="toast-area" role="status" aria-live="polite">
         {listError ? (
           <div className="banner banner-error">
