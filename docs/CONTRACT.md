@@ -942,7 +942,8 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 `cargo test --lib real_data_cleanup -- --ignored --nocapture`（只读，不改写 `~/.omp`）：
 
 - 68 个顶层会话，**18 个候选**：`empty` 4、`cwd_missing` 4、`large` 10、`stale` 0；
-  占用中 3、占用未知 0；可释放合计约 **271 MB**；耗时约 **0.4 秒**。
+  占用中 3、占用未知 0；可释放合计约 **271–273 MB**（两次运行间隔内仍在增长的线上会话会抬高该值）；
+  耗时约 **0.4 秒**。
 - 最大候选 73 MB（jsonl 2.49 MB + sibling 附件目录约 71 MB），与 `du` 核对一致
   ——印证体积必须把附件算进去。
 - 与立项时快照（68 个会话、附件 965 文件/53 MB）相比，sessions 目录已增长到
