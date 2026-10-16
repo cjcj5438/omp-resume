@@ -1074,7 +1074,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   contextWindow: number|null, reasoning: boolean,
   costInput: number|null, costOutput: number|null }`（camelCase）。
   无 selector 的条目跳过；缺字段容忍为 null/空。坏 JSON → `OMP_FAILED`。
-- 可能较慢（本机实测约 10.3 秒 / 65 个模型）：前端异步加载 + 进程内缓存
+- 可能较慢（耗时数秒到十几秒不等，随机器/网络波动）：前端异步加载 + 进程内缓存
   （模块级，跨挂载复用），「刷新模型列表」按钮只重跑本命令。
   模型选择器按 provider 分组、可搜索；当前值不在列表（别名 / 已下线）时
   原样显示并标「未知值 · 保留」，用户不动就不改写。
@@ -1369,7 +1369,12 @@ classify:
 `未找到占用进程` / `未找到终端`）；④分隔线；⑤「打开主窗口」；
 ⑥勾选项「完成时通知」（默认开）、「在 Dock 显示图标」（默认关）；
 ⑦分隔线；⑧「退出 omp-resume」。菜单项 id 编码会话 id（`session:<id>`）路由事件。
-菜单只在内容变化时 `set_menu`（模型整体 `PartialEq` 比对）。
+菜单刷新（`menu::refresh_decision`，纯函数 + 单测）：模型一致不动；
+**仅行内时长文字变化**时用已装配菜单项的 `set_text` **就地更新**
+（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
+**结构性变化**（会话增减 / 状态变化 / 排序变化 / 标题变化 / 设置勾选变化，
+任一都会改头部计数、图标标题或行形状）才 `set_menu` 整体重建
+（重建会关闭已展开的菜单，故仅限结构变化时发生）。
 聚焦失败（找不到 tty / iTerm 未运行 / 无 Automation 权限）以系统通知明示
 （文案含「系统设置 → 隐私与安全性 → 自动化」指引），不静默。
 
@@ -1424,11 +1429,12 @@ classify:
 ### 17.6 驻留与窗口行为
 
 - 关闭主窗口 = 拦截 `CloseRequested` → `hide()`，应用继续驻留菜单栏；
+  红钮与 ⌘W 等效（macOS 默认应用菜单自带 `Close Window` ⌘W，走同一拦截）；
   隐藏时若「在 Dock 显示图标」为关 → `ActivationPolicy::Accessory`（Dock 图标隐藏）；
   「打开主窗口」→ 切回 `Regular` + `show` + `set_focus`。
 - 真退出路径不拦截：菜单「退出」先置 quitting 标志再 `app.exit(0)`；
-  ⌘Q / Dock 退出 / 系统关机走的 `RunEvent::ExitRequested` / 进程终止
-  **不经** CloseRequested 拦截，正常退出（详见 README 已知限制）。
+  ⌘Q（默认应用菜单 `Quit omp-resume`）/ Dock 退出 / 系统关机走的
+  `RunEvent::ExitRequested` / 进程终止**不经** CloseRequested 拦截，正常退出（详见 README 已知限制）。
 
 ### 17.7 模块与命令
 
@@ -1449,3 +1455,9 @@ classify:
   计入未归属）；3 个「空闲」（iTerm 标题 `>`、数小时无有意义记录），
   1 个「工作中」（iTerm 旋转符、1 个子代理运行中——即本 worker），
   与 iTerm 实际标题逐一对齐。
+- 图标点击（2026-10-16 复测）：**左键与右键都能弹出下拉菜单**
+  （`show_menu_on_left_click(true)` 生效）。此前「左键不弹」的结论是
+  合成点击（CGEventPost 之外的注入路径）打不到 `TaoTrayTarget` 覆盖层的
+  测试假象；硬件级事件（`CGEventCreateMouseEvent` + `CGEventPost(kCGHIDEventTap)`，
+  先 mouseMoved 再 Down/Up）实测左键正常弹出，对照组（系统菜单栏 Apple 菜单）
+  同一手段可弹。
