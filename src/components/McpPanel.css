@@ -1,0 +1,130 @@
+/* MCP 配置面板：布局与行内 chips；配色沿用 App.css 自定义属性。 */
+
+.mcp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.mcp-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mcp-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mcp-scope select {
+  max-width: 100%;
+}
+
+.mcp-path {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.mcp-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mcp-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mcp-endpoint {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.mcp-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mcp-key-chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+}
+
+.mcp-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mcp-hint {
+  font-size: 12px;
+}
+
+.mcp-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.mcp-row-peer {
+  flex-direction: row;
+  align-items: center;
+}
+
+.mcp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.mcp-input,
+.mcp-textarea {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mcp-input:disabled,
+.mcp-textarea:disabled {
+  opacity: 0.6;
+}
+
+.mcp-textarea {
+  min-height: 220px;
+  min-width: min(420px, 100%);
+  resize: vertical;
+}

@@ -1,6 +1,7 @@
 /** 左侧会话列表：过滤、分组折叠、批量勾选、刷新。 */
 import { useState } from "react";
 import type { AppError, ProjectGroup, SessionSummary } from "../types";
+import type { PinKind, Pins } from "../pins";
 import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
 import { SessionBadges } from "./ui";
 
@@ -15,10 +16,17 @@ interface SidebarProps {
   onRetry: () => void;
   onRefresh: () => void;
   onOpenCheatSheet: () => void;
+  manageActive: boolean;
+  onToggleManage: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   selectedPath: string | null;
   onSelect: (path: string) => void;
+  pins: Pins;
+  onTogglePin: (kind: PinKind, key: string) => void;
+  ompVersion: string | null;
+  ompChecking: boolean;
+  onCheckOmp: () => void;
 }
 
 export function Sidebar({
@@ -32,10 +40,17 @@ export function Sidebar({
   onRetry,
   onRefresh,
   onOpenCheatSheet,
+  manageActive,
+  onToggleManage,
   checked,
   onToggleCheck,
   selectedPath,
   onSelect,
+  pins,
+  onTogglePin,
+  ompVersion,
+  ompChecking,
+  onCheckOmp,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   return (
@@ -49,6 +64,9 @@ export function Sidebar({
           onChange={(e) => onQuery(e.target.value)}
           aria-label="过滤会话"
         />
+        <button type="button" className="btn" aria-pressed={manageActive} onClick={onToggleManage}>
+          管理
+        </button>
         <button type="button" className="btn" onClick={onOpenCheatSheet}>
           速查
         </button>
@@ -72,31 +90,39 @@ export function Sidebar({
         {groups.map((g) => {
           const open = !collapsed.has(g.cwd);
           const dirMissing = g.sessions.every((s) => !s.cwdExists);
+          const name = g.cwd.split("/").filter(Boolean).pop() ?? g.cwd;
+          const pinnedProject = pins.projects.includes(g.cwd);
           return (
             <section className="group" key={g.cwd}>
-              <button
-                type="button"
-                className="group-header"
-                aria-expanded={open}
-                onClick={() =>
-                  setCollapsed((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(g.cwd)) next.delete(g.cwd);
-                    else next.add(g.cwd);
-                    return next;
-                  })
-                }
-              >
-                <span className="group-arrow" aria-hidden="true">
-                  {open ? "▾" : "▸"}
-                </span>
-                <span className="group-name">
-                  {g.cwd.split("/").filter(Boolean).pop() ?? g.cwd}
-                </span>
-                <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
-                {dirMissing ? <span className="badge badge-danger">目录不存在</span> : null}
-                <span className="group-count">{g.sessions.length}</span>
-              </button>
+              <div className="group-header-row">
+                <button
+                  type="button"
+                  className="group-header"
+                  aria-expanded={open}
+                  onClick={() =>
+                    setCollapsed((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(g.cwd)) next.delete(g.cwd);
+                      else next.add(g.cwd);
+                      return next;
+                    })
+                  }
+                >
+                  <span className="group-arrow" aria-hidden="true">
+                    {open ? "▾" : "▸"}
+                  </span>
+                  <span className="group-name">{name}</span>
+                  <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
+                  {dirMissing ? <span className="badge badge-danger">目录不存在</span> : null}
+                  <span className="group-count">{g.sessions.length}</span>
+                </button>
+                <PinToggle
+                  pinned={pinnedProject}
+                  kindLabel="项目"
+                  name={name}
+                  onToggle={() => onTogglePin("project", g.cwd)}
+                />
+              </div>
               {open ? (
                 <div className="group-rows">
                   {g.sessions.map((s) => (
@@ -107,6 +133,8 @@ export function Sidebar({
                       selected={s.path === selectedPath}
                       onToggleCheck={onToggleCheck}
                       onSelect={onSelect}
+                      pinned={pins.sessions.includes(s.id)}
+                      onTogglePin={() => onTogglePin("session", s.id)}
                     />
                   ))}
                 </div>
@@ -117,6 +145,20 @@ export function Sidebar({
       </div>
       <footer className="sidebar-footer">
         共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
+        {ompVersion !== null ? (
+          <div className="omp-row">
+            <span className="mono muted">omp {ompVersion}</span>
+            <button
+              type="button"
+              className="btn btn-small"
+              disabled={ompChecking}
+              onClick={onCheckOmp}
+            >
+              {ompChecking ? <span className="spinner" aria-hidden="true" /> : null}
+              检查 omp 更新
+            </button>
+          </div>
+        ) : null}
       </footer>
     </aside>
   );
@@ -128,9 +170,11 @@ interface RowProps {
   selected: boolean;
   onToggleCheck: (path: string, on: boolean) => void;
   onSelect: (path: string) => void;
+  pinned: boolean;
+  onTogglePin: () => void;
 }
 
-function Row({ s, checked, selected, onToggleCheck, onSelect }: RowProps) {
+function Row({ s, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin }: RowProps) {
   return (
     <div
       className={selected ? "row row-selected" : "row"}
@@ -155,6 +199,40 @@ function Row({ s, checked, selected, onToggleCheck, onSelect }: RowProps) {
           <SessionBadges s={s} />
         </div>
       </div>
+        <PinToggle
+          pinned={pinned}
+          kindLabel="会话"
+          name={s.title}
+          onToggle={onTogglePin}
+        />
     </div>
+  );
+}
+
+interface PinToggleProps {
+  pinned: boolean;
+  kindLabel: "项目" | "会话";
+  name: string;
+  onToggle: () => void;
+}
+
+/** 置顶按钮：已置顶时常显；未置顶时仅在所在行 hover/focus 时显示（见 App.css）。 */
+function PinToggle({ pinned, kindLabel, name, onToggle }: PinToggleProps) {
+  const action = pinned ? "取消置顶" : "置顶";
+  return (
+    <button
+      type="button"
+      className={pinned ? "pin-toggle pin-toggle-on" : "pin-toggle"}
+      aria-pressed={pinned}
+      aria-label={`${action}${kindLabel} ${name}`}
+      title={action}
+      onClick={(e) => {
+        // 置顶按钮位于会话行内：阻止冒泡，避免点击置顶时选中该行。
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      📌
+    </button>
   );
 }

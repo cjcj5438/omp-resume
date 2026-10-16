@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectGroup, SessionSummary } from "./types";
 import {
   FOCUS_REFRESH_MIN_INTERVAL_MS,
+  applyPins,
   canFocusRefresh,
   filterGroups,
   retainExisting,
@@ -94,5 +95,49 @@ describe("canFocusRefresh", () => {
     expect(canFocusRefresh(false, t0, t0 + FOCUS_REFRESH_MIN_INTERVAL_MS - 1)).toBe(false);
     expect(canFocusRefresh(false, t0, t0 + FOCUS_REFRESH_MIN_INTERVAL_MS)).toBe(true);
     expect(canFocusRefresh(false, t0, t0 + 5_000)).toBe(true);
+  });
+});
+
+describe("applyPins", () => {
+  const group = (cwd: string, paths: string[]): ProjectGroup => ({
+    cwd,
+    dirName: cwd,
+    sessions: paths.map((p) => s({ path: p, cwd })),
+  });
+  const order = (gs: ProjectGroup[]) => gs.map((g) => [g.cwd, ...g.sessions.map((x) => x.path)]);
+  const base = [
+    group("/w/a", ["/p/a1", "/p/a2"]),
+    group("/w/b", ["/p/b1", "/p/b2"]),
+    group("/w/c", ["/p/c1", "/p/c2"]),
+  ];
+
+  it("置顶项之间保持后端顺序（不按置顶先后排序），其余保持原顺序", () => {
+    const out = applyPins(base, { projects: ["/w/c", "/w/a"], sessions: [] });
+    expect(out.map((g) => g.cwd)).toEqual(["/w/a", "/w/c", "/w/b"]);
+  });
+
+  it("两级排序：会话置顶只在其所属项目组内上浮，不改变项目顺序", () => {
+    const out = applyPins(base, { projects: [], sessions: ["/p/b2"] });
+    expect(order(out)).toEqual([
+      ["/w/a", "/p/a1", "/p/a2"],
+      ["/w/b", "/p/b2", "/p/b1"],
+      ["/w/c", "/p/c1", "/p/c2"],
+    ]);
+  });
+
+  it("不修改入参", () => {
+    const snapshot = order(base);
+    const out = applyPins(base, { projects: ["/w/c"], sessions: ["/p/a2"] });
+    expect(out).not.toBe(base);
+    expect(order(base)).toEqual(snapshot);
+  });
+
+  it("空置顶保持原有顺序", () => {
+    expect(applyPins(base, { projects: [], sessions: [] })).toEqual(base);
+  });
+
+  it("忽略无对应项的置顶键", () => {
+    const out = applyPins(base, { projects: ["/w/none"], sessions: ["/p/none"] });
+    expect(out).toEqual(base);
   });
 });

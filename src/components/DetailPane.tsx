@@ -4,6 +4,7 @@ import { getConversation } from "../api";
 import type { AppError, Conversation, SessionSummary } from "../types";
 import { displayCwd, formatFullTime, formatSize } from "../format";
 import type { ContinueOutcome } from "../flows";
+import { copyText } from "../clipboard";
 import { ConversationView } from "./ConversationView";
 import { TreeView } from "./TreeView";
 import { SessionBadges } from "./ui";
@@ -19,6 +20,8 @@ interface DetailPaneProps {
   onDelete: () => void;
   onContinue: (nodeId: string) => Promise<ContinueOutcome>;
   onToast: (text: string, kind: "info" | "error") => void;
+  pinned: boolean;
+  onTogglePin: () => void;
 }
 
 type Tab = "conv" | "tree";
@@ -32,6 +35,8 @@ export function DetailPane({
   onDelete,
   onContinue,
   onToast,
+  pinned,
+  onTogglePin,
 }: DetailPaneProps) {
   const [tab, setTab] = useState<Tab>("conv");
   const [conv, setConv] = useState<{
@@ -74,6 +79,11 @@ export function DetailPane({
       ? "项目目录不存在"
       : undefined;
 
+  async function copySessionId(id: string) {
+    if (await copyText(id)) onToast("已复制会话 ID", "info");
+    else onToast("复制失败，请手动选择复制", "error");
+  }
+
   return (
     <main className="detail">
       {session ? (
@@ -84,7 +94,15 @@ export function DetailPane({
           </div>
           <div className="detail-meta mono">{displayCwd(session.cwd)}</div>
           <div className="detail-meta">
-            <span className="mono muted">{session.id}</span>
+            <button
+              type="button"
+              className="id-copy mono"
+              title="点击复制会话 ID"
+              aria-label="复制会话 ID"
+              onClick={() => void copySessionId(session.id)}
+            >
+              {session.id}
+            </button>
             <span>创建 {formatFullTime(session.createdAt)}</span>
             <span>修改 {formatFullTime(session.modifiedAt)}</span>
             <span>{formatSize(session.sizeBytes)}</span>
@@ -120,6 +138,11 @@ export function DetailPane({
               onClick={() => onOpenIterm(session)}
             >
               在 iTerm 继续
+            </button>
+          ) : null}
+          {session ? (
+            <button type="button" className="btn" onClick={onTogglePin}>
+              {pinned ? "取消置顶" : "置顶"}
             </button>
           ) : null}
           <button type="button" className="btn btn-danger" onClick={onDelete}>

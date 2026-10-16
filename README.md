@@ -1,8 +1,9 @@
 # omp-resume
 
 macOS 原生桌面应用（Tauri 2 + React + TypeScript + Rust），用于管理
-`omp`（oh-my-pi）的编码会话：按项目浏览会话历史、只读回顾对话与会话树、
-一键在 iTerm 中继续、永久删除、从任意树节点分叉继续。
+`omp`（oh-my-pi）的编码会话与本地环境：按项目浏览会话历史、只读回顾对话
+与会话树、一键在 iTerm 中继续、永久删除、从任意树节点分叉继续，以及
+omp 版本、插件、技能与 MCP 配置。
 
 **为什么做它**：omp 的会话是一棵 append-only 的 JSONL 树。现有开源工具要么在
 浏览器/Electron 里重做一遍聊天界面（omp-web、ompweb、oh-my-pi-gui），要么是
@@ -25,6 +26,20 @@ UI 文案为中文。
 - **批量永久删除**：多选后一次性删除，逐条独立失败。
 - **命令速查**：侧栏「速查」按钮打开 omp 18.10.3 内置斜杠命令中文速查（85 条，分组 + 过滤，只读）。
 - **从此节点继续**：从树上任意节点（而非当前 leaf）继续对话，见下方安全规则。
+- **置顶**：项目（按 cwd）与会话两级置顶，置顶项排在各自列表最前；仅存于本机界面偏好，不修改会话文件。
+- **omp 版本与更新**：侧栏底部显示本机 omp 版本，可手动「检查 omp 更新」并一键更新（仅以版本号变化判定成功；已打开的 omp 会话需重启后生效；包管理器托管的安装会提示去其管理器更新）。
+- **复制会话 ID**：点击详情头里的会话 ID 即可复制。
+- **管理视图**：侧栏「管理」按钮打开插件 / Skills / MCP 三个标签页。
+  插件（仅 user scope）：已安装列表的启用 / 禁用 / 升级 / 卸载，
+  marketplace 的添加 / 移除 / 刷新 / 浏览安装；Skills：registry 技能列表
+  与一键更新（`~/.agents/skills` 下的技能由其他工具管理，不受影响）；
+  MCP：用户级 `~/.omp/agent/mcp.json` 与项目级 `<cwd>/.omp/mcp.json` 的
+  服务器列表 / 启停 / 新增 / 编辑 / 删除——列表只显示 env/headers 键名
+  不显示值，编辑框才取真实值，保存前校验输入并以 revision 做冲突保护，
+  原子写入（新文件权限 `0600`）；已运行的 omp 会话需 `/mcp reload` 或重启后生效。
+- **全部更新**：按 marketplace 目录 → 插件 → registry skills → 检查 omp
+  的顺序执行，首个失败即停并点名；有新版 omp 时只打开更新对话框，
+  不自动执行 `omp update`。
 
 ## 安全规则（如何保证不弄坏数据）
 
@@ -126,8 +141,10 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 
 ### 更新行为
 
-应用启动时静默检查一次更新：有新版本则弹窗显示版本号/发布日期/更新说明，点
-「下载并安装」后再选「立即重启」或「稍后重启」；无手动检查按钮，重启后会再次检查。
+应用启动时静默检查一次**本应用自身**的更新：有新版本则弹窗显示版本号/
+发布日期/更新说明，点「下载并安装」后再选「立即重启」或「稍后重启」；
+自身更新无手动检查按钮（与侧栏的「检查 omp 更新」无关，那是 omp CLI 的更新），
+重启后会再次检查。
 开发模式（DEV）跳过网络检查；所有失败均静默处理。
 
 ### 架构
@@ -140,6 +157,7 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 |---|---|---|
 | 会话根 `sessionsDir` | `--sessions-dir <path>` 参数 > `OMP_RESUME_SESSIONS_DIR` | `$HOME/.omp/agent/sessions` |
 | 租约目录 `ownersDir` | `OMP_RESUME_OWNERS_DIR` | `$HOME/.omp/run/session-owners` |
+| omp 二进制 | `OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` > `~/.bun/bin/omp` | 逐项检查存在性，不依赖 PATH |
 
 带参数启动（GUI 的 argv 不易透传，可直接跑二进制）：
 
@@ -153,10 +171,15 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 仓库布局：
 
 - `src/`：React 前端（`api.ts` 命令封装、`types.ts` 类型镜像、
-  `components/` UI、`tree/` 链折叠、`dev/` 仅开发用 mock）。
+  `components/` UI（含 `ManageView` / `PluginsPanel` / `SkillsPanel` /
+  `McpPanel` / `OmpUpdateDialog`）、`tree/` 链折叠、`pins.ts`（置顶偏好）、
+  `clipboard.ts`（复制）、`dev/` 仅开发用 mock）。
 - `src-tauri/src/`：`config.rs`（配置 + 路径校验）、`lock.rs`（flock 探测）、
-  `sessions/`（解析 / 列表 / 对话 / 树）、`ops/`（删除 / 标记 / iTerm）、
-  `model.rs`（前后端共享类型）、`lib.rs`（命令注册）。
+  `occupant.rs`（占用归属识别）、`sessions/`（解析 / 列表 / 对话 / 树）、
+  `ops/`（删除 / 标记 / iTerm）、`omp_cli.rs`（omp 路径解析 / 安全 runner /
+  版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
+  `mcp_config.rs`（MCP 原生配置读写）、`model.rs`（前后端共享类型）、
+  `lib.rs`（命令注册）。
 - `docs/CONTRACT.md`：**权威规格**（数据格式、命令、语义、错误码）。
 - `scripts/fixtures/`：合成会话冒烟套件（详见其 README）。
 
@@ -187,7 +210,13 @@ kill %1
 （扫描 `$HOME/.omp/agent/sessions`，只读，打印统计与耗时）。
 
 纯前端开发（无 Tauri）：`npm run dev` 后在 URL 加 `?mock=1`（或 `?mock`）
-启用开发用 mock 后端（内存态、全部命令可用；仅 dev 构建包含）。
+启用开发用 mock 后端（内存态，会话 / omp / 插件 / 技能 / MCP 命令全覆盖；
+仅 dev 构建包含）。可用参数：`?omp=new`（模拟有新版 omp）/
+`?omp=managed`（模拟包管理器托管）、`?fail=<命令名>`（强制该命令失败）、
+`?latency=<毫秒>`（所有命令延迟）。
+
+开发者注意：omp 收到绝对路径形式的 `PI_CONFIG_DIR` 时会把状态写到 `$HOME`
+下的重复路径；沙箱测试只用 HOME 隔离，不要用它指向临时目录。
 
 ## 已知限制
 
@@ -202,3 +231,15 @@ kill %1
 - 「在 iTerm 继续」按登录 shell 的 `PATH` 查找 `omp`；若未安装在 PATH 中，
   需先保证 iTerm 的 shell 能找到它。
 - macOS 专用；应用未经签名/公证（本地构建即用）。
+- 置顶存于 WebView 的 localStorage，开发模式（localhost:1420）与打包后的 .app 是不同来源，互不共享；在 dev 里置顶的项目不会出现在 .app 里。
+- 版本显示与更新所用的 omp 路径解析顺序：`OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > Homebrew（`/opt/homebrew/bin/omp`）> `/usr/local/bin/omp` > `~/.bun/bin/omp`，不依赖 PATH。
+- 管理功能仅 user scope（插件与技能均为用户级）；MCP 仅默认 profile，
+  不读 `PI_CONFIG_DIR` / `PI_CODING_AGENT_DIR` 覆盖，不做 endpoint 等价去重，
+  也不对 `mcp.enableProjectConfig` 建模。
+- npm 插件只读展示，不提供安装与启停。
+- `omp plugin upgrade` 没有 dry-run，本应用不猜测可升级项，故没有「可升级」徽章。
+- marketplace 列表来自 `omp plugin marketplace list` 纯文本输出的解析，
+  omp 升级后若文案变化会退化为空列表（不报错）。
+- 并发执行 plugin upgrade / skill 命令的行为未经实测，应用内同一时间
+  只允许一个 omp 写操作，多余的报 `BUSY`。
+- omp 更新/升级期间若把窗口放到后台或其他桌面空间，WKWebView 可能延迟投递完成事件，对话框要等窗口回到前台才显示完成（后端已完成，最长受 15 分钟超时约束）；请保持窗口在前台。

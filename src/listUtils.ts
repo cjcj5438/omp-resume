@@ -1,5 +1,6 @@
 /** 列表过滤 / 选择保持 / focus 刷新节流：纯函数。 */
 import type { ProjectGroup } from "./types";
+import type { Pins } from "./pins";
 
 export const FOCUS_REFRESH_MIN_INTERVAL_MS = 800;
 
@@ -38,4 +39,19 @@ export function canFocusRefresh(
 ): boolean {
   if (inFlight) return false;
   return nowMs - lastStartMs >= FOCUS_REFRESH_MIN_INTERVAL_MS;
+}
+
+/** 稳定分区：置顶项在前，其余保持原相对顺序。 */
+function pinnedFirst<T>(items: T[], isPinned: (item: T) => boolean): T[] {
+  return [...items.filter(isPinned), ...items.filter((item) => !isPinned(item))];
+}
+
+/** 置顶排序：项目与组内会话各自稳定分区（置顶在前）；不修改入参，未知键忽略。 */
+export function applyPins(groups: ProjectGroup[], pins: Pins): ProjectGroup[] {
+  const pinnedProjects = new Set(pins.projects);
+  const pinnedSessions = new Set(pins.sessions);
+  return pinnedFirst(groups, (g) => pinnedProjects.has(g.cwd)).map((g) => ({
+    ...g,
+    sessions: pinnedFirst(g.sessions, (s) => pinnedSessions.has(s.id)),
+  }));
 }

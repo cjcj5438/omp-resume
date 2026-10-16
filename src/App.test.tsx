@@ -2,7 +2,7 @@
  * App 集成测试（mockIPC + DEV 夹具）：
  * 列表过滤、选择/勾选跨刷新保持、删除流程、从节点继续 UI、focus 刷新节流。
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
@@ -252,5 +252,181 @@ describe("命令速查", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull();
+  });
+});
+
+const PINS_KEY = "omp-resume:pins:v1";
+
+function idOf(title: string): string {
+  const found = FIXTURE_SESSIONS.find((f) => f.summary.title === title);
+  if (!found) throw new Error(`夹具缺少会话：${title}`);
+  return found.summary.id;
+}
+
+function storedPins(): { projects: string[]; sessions: string[] } {
+  return JSON.parse(localStorage.getItem(PINS_KEY) ?? "{}") as {
+    projects: string[];
+    sessions: string[];
+  };
+}
+
+function groupOf(title: string): HTMLElement {
+  const section = rowOf(title).closest(".group");
+  if (!(section instanceof HTMLElement)) throw new Error(`未找到分组：${title}`);
+  return section;
+}
+
+function rowTitlesIn(section: HTMLElement): string[] {
+  return Array.from(section.querySelectorAll(".row-title"), (el) => el.textContent ?? "");
+}
+
+function groupNames(): string[] {
+  return Array.from(document.querySelectorAll(".group-name"), (el) => el.textContent ?? "");
+}
+
+describe("置顶", () => {
+  it("置顶项目排到最前，重新挂载后顺序保持", async () => {
+    await installMockBackend();
+    const first = render(<App />);
+    await screen.findByText(S1);
+    const names = groupNames();
+    const target = names[names.length - 1];
+
+    fireEvent.click(screen.getByRole("button", { name: `置顶项目 ${target}` }));
+    expect(groupNames()[0]).toBe(target);
+
+    first.unmount();
+    render(<App />);
+    await screen.findByText(S1);
+    expect(groupNames()[0]).toBe(target);
+    expect(storedPins().projects).toHaveLength(1);
+  });
+
+  it("置顶会话只在所属项目组内上浮，项目顺序不变", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const namesBefore = groupNames();
+    const titles = rowTitlesIn(groupOf(S1));
+    const target = titles[titles.length - 1];
+
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${target}` }));
+
+    expect(rowTitlesIn(groupOf(S1))[0]).toBe(target);
+    expect(groupNames()).toEqual(namesBefore);
+  });
+
+  it("过滤后仍保持置顶顺序", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const titles = rowTitlesIn(groupOf(S1));
+    const target = titles[titles.length - 1];
+
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${target}` }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "过滤会话" }), {
+      target: { value: "omp-resume" },
+    });
+
+    expect(rowTitlesIn(groupOf(target))).toEqual([target, ...titles.slice(0, -1)]);
+  });
+
+  it("详情工具栏的置顶与列表同步", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(rowOf(S1));
+    fireEvent.click(screen.getByRole("button", { name: "置顶" }));
+
+    expect(storedPins().sessions).toEqual([idOf(S1)]);
+    expect(screen.getByRole("button", { name: `取消置顶会话 ${S1}` })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "取消置顶" }));
+    expect(storedPins().sessions).toEqual([]);
+  });
+
+  it("删除成功的会话清理其置顶，其余置顶保留", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S1}` }));
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S2}` }));
+    fireEvent.click(checkOf(S1));
+    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+
+    await screen.findByText(/成功删除 1 个会话/);
+    expect(storedPins().sessions).toEqual([idOf(S2)]);
+  });
+
+  it("删除失败的会话保留置顶", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    // s9 探测失败：后端返回 PROBE_FAILED，删除不成功。
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S9}` }));
+    fireEvent.click(checkOf(S9));
+    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+
+    await waitFor(() =>
+      expect(document.querySelector(".delete-results")).toHaveTextContent("占用探测失败"),
+    );
+    expect(storedPins().sessions).toEqual([idOf(S9)]);
+  });
+});
+
+describe("omp 版本与更新", () => {
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("侧栏显示本机 omp 版本并提供检查按钮", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    expect(await screen.findByText("omp 18.11.1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "检查 omp 更新" })).toBeEnabled();
+  });
+
+  it("有新版时对话框提示可更新，一键更新后显示已更新", async () => {
+    window.history.replaceState(null, "", "/?omp=new");
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText("omp 18.11.1");
+
+    fireEvent.click(screen.getByRole("button", { name: "检查 omp 更新" }));
+    const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
+    expect(within(dialog).getByText("可更新到 18.12.0")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "更新 omp" }));
+    expect(await within(dialog).findByText(/已更新到 18\.12\.0/)).toBeInTheDocument();
+  });
+
+  it("已是最新版本时对话框显示最新状态", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText("omp 18.11.1");
+
+    fireEvent.click(screen.getByRole("button", { name: "检查 omp 更新" }));
+    const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
+    expect(within(dialog).getByText("已是最新版本")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "更新 omp" })).toBeNull();
+  });
+
+  it("检查失败时弹出错误提示且不打开对话框", async () => {
+    window.history.replaceState(null, "", "/?fail=omp_update_check");
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText("omp 18.11.1");
+
+    fireEvent.click(screen.getByRole("button", { name: "检查 omp 更新" }));
+    expect(await screen.findByText("mock 强制失败：omp_update_check")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
