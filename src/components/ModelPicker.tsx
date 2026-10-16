@@ -1,11 +1,12 @@
 /**
  * 模型选择器：按 provider 分组、可搜索的下拉选择。
- * 当前值不在模型列表（别名 / 已下线模型）时原样显示并保留为可选项；
+ * 显示友好名 + provider 徽章 + 上下文/价格提示；当前值不在模型列表
+ * （别名 / 已下线模型）时原样显示「未知值 · 保留」；
  * `allowUnset` 提供「未设置 / 不覆盖」（保存时删除该条目）。
  */
 import { useEffect, useRef, useState } from "react";
 import type { ModelInfo } from "../types";
-
+import { formatContextWindow, formatCost } from "../roleCards";
 interface ModelPickerProps {
   models: ModelInfo[];
   /** 当前 selector；null 表示未设置（不覆盖）。 */
@@ -32,6 +33,19 @@ function groupByProvider(models: ModelInfo[]): ProviderGroup[] {
   return groups;
 }
 
+/** 下拉项第二行：上下文窗口与目录价（缺失不显示）。 */
+function ModelMeta(props: { model: ModelInfo }) {
+  const { model } = props;
+  const context = formatContextWindow(model.contextWindow);
+  const cost = formatCost(model.costInput, model.costOutput);
+  if (context === null && cost === null) return null;
+  return (
+    <span className="muted model-picker-meta">
+      {[context, cost].filter((part) => part !== null).join(" · ")}
+    </span>
+  );
+}
+
 export function ModelPicker(props: ModelPickerProps) {
   const { models, value, onChange, unsetLabel, allowUnset, disabled, label } = props;
   const [open, setOpen] = useState(false);
@@ -52,11 +66,12 @@ export function ModelPicker(props: ModelPickerProps) {
     ? models.filter(
         (m) =>
           m.name.toLowerCase().includes(needle) ||
-          m.selector.toLowerCase().includes(needle),
+          m.selector.toLowerCase().includes(needle) ||
+          m.provider.toLowerCase().includes(needle),
       )
     : models;
   const groups = groupByProvider(visible);
-  const known = value !== null && models.some((m) => m.selector === value);
+  const current = value !== null ? models.find((m) => m.selector === value) ?? null : null;
 
   return (
     <div className="model-picker" ref={rootRef}>
@@ -73,10 +88,15 @@ export function ModelPicker(props: ModelPickerProps) {
       >
         {value === null ? (
           <span className="muted">{unsetLabel}</span>
+        ) : current !== null ? (
+          <>
+            <span>{current.name}</span>
+            <span className="badge badge-grey">{current.provider}</span>
+          </>
         ) : (
           <>
             <span className="mono">{value}</span>
-            {known ? null : <span className="badge badge-grey">未知值 · 保留</span>}
+            <span className="badge badge-grey">未知值 · 保留</span>
           </>
         )}
       </button>
@@ -105,7 +125,7 @@ export function ModelPicker(props: ModelPickerProps) {
                 </button>
               </li>
             ) : null}
-            {value !== null && !known ? (
+            {value !== null && current === null ? (
               <li>
                 <button
                   type="button"
@@ -137,8 +157,10 @@ export function ModelPicker(props: ModelPickerProps) {
                           setOpen(false);
                         }}
                       >
-                        <span>{m.name}</span>
-                        <span className="mono muted">{m.selector}</span>
+                        <span className="model-picker-name">{m.name}</span>
+                        <span className="badge badge-grey">{m.provider}</span>
+                        <span className="mono muted model-picker-selector">{m.selector}</span>
+                        <ModelMeta model={m} />
                       </button>
                     </li>
                   ))}

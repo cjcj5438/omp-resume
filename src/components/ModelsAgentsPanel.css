@@ -1,4 +1,5 @@
-/* 「模型与 Agent」面板专用样式；通用管理类沿用 App.css。 */
+/* 「模型与 Agent」面板专用样式；通用类（btn/banner/badge/muted/mono）沿用 App.css。
+ * 取色一律用 :root 变量（浅色/深色/强调色由全局主题切换），禁止字面量颜色。 */
 
 .models-agents .block-section {
   border-top: 1px solid var(--border);
@@ -17,79 +18,196 @@
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+  flex-wrap: wrap;
 }
 
-.models-agents .agent-desc {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 顶栏：一句话说明 + 状态行。 */
+.models-agents .ma-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
-.models-agents .agent-thinking {
-  margin-left: 8px;
+.models-agents .ma-intro {
+  margin: 0;
 }
 
-.selector-cell {
+.models-agents .ma-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
 }
 
-.thinking-select {
-  min-width: 88px;
+/* 弱危险按钮：描边 + 危险色文字，不抢视觉（删除兜底/条目用）。 */
+.models-agents .btn-quiet-danger {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--danger);
 }
 
-.model-picker {
-  position: relative;
-  display: inline-block;
+.models-agents .btn-quiet-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
-.model-picker-btn {
+/* 表单小件：纵向 label + 控件；check 为横向勾选。 */
+.models-agents .field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.models-agents .field-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.models-agents .check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 320px;
+  white-space: nowrap;
+}
+
+/* 角色卡：整宽一行，主模型与兜底同卡。 */
+.models-agents .role-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 12px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.models-agents .role-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.models-agents .role-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 行编辑单元：模型选择 + 思考强度，窄屏自动换行。 */
+.models-agents .selector-cell {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 思考强度分段控件。 */
+.models-agents .segment {
+  display: inline-flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--bg);
+}
+
+.models-agents .segment-item {
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.models-agents .segment-item:disabled {
+  opacity: 0.45;
+}
+
+.models-agents .segment-item-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 模型选择器。 */
+.models-agents .model-picker {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.models-agents .model-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  cursor: default;
+}
+
+.models-agents .model-picker-btn > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 4px 8px;
 }
 
-.model-picker-pop {
+.models-agents .model-picker-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.models-agents .model-picker-btn:disabled {
+  opacity: 0.45;
+}
+
+.models-agents .model-picker-pop {
   position: absolute;
   z-index: 30;
   top: 100%;
   left: 0;
   margin-top: 4px;
-  width: 340px;
+  width: 380px;
+  max-width: 80vw;
   max-height: 320px;
   overflow: auto;
   padding: 8px;
-  background: var(--bg);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
 
-.model-picker-list,
-.model-picker-list ul {
+.models-agents .model-picker-list,
+.models-agents .model-picker-list ul {
   list-style: none;
   margin: 6px 0 0;
   padding: 0;
 }
 
-.model-picker-group {
+.models-agents .model-picker-group {
   font-size: 12px;
   color: var(--text-muted);
   padding: 6px 4px 2px;
 }
 
-.model-picker-item {
+.models-agents .model-picker-item {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
   width: 100%;
   text-align: left;
   padding: 5px 6px;
@@ -100,54 +218,155 @@
   color: inherit;
 }
 
-.model-picker-item:hover {
+.models-agents .model-picker-item:hover {
   background: var(--bg-hover);
 }
 
-.model-picker-item-active {
+.models-agents .model-picker-item-active {
   background: var(--bg-selected);
 }
 
-.chain-row {
+.models-agents .model-picker-name {
+  font-weight: 600;
+}
+
+.models-agents .model-picker-selector {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-agents .model-picker-meta {
+  font-size: 11px;
+  flex-basis: 100%;
+}
+
+/* 兜底块：标题行 + 有序 chip + 添加行。 */
+.models-agents .chain-block {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.models-agents .chain-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.models-agents .chain-block-title {
+  font-weight: 600;
+}
+
+.models-agents .chain-note {
+  font-size: 12px;
+}
+
+.models-agents .chain-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.models-agents .chain-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px 10px;
-  margin: 8px 0;
+  background: var(--bg);
+  padding: 5px 8px;
+  min-width: 0;
 }
 
-.chain-key {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.models-agents .chain-order {
+  color: var(--accent);
+  font-weight: 700;
 }
 
-.chain-entries {
-  margin: 6px 0;
-  padding-left: 20px;
-}
-
-.chain-entries li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 2px 0;
-}
-
-.chain-entry-actions {
+.models-agents .chain-chip-actions {
   display: inline-flex;
-  gap: 4px;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
 }
 
-.chain-add {
+.models-agents .chain-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.models-agents .chain-add .filter-input {
+  max-width: 320px;
+  flex: 1 1 200px;
+}
+
+.models-agents .chain-manual summary {
+  cursor: default;
+  font-size: 12px;
+}
+
+/* 添加角色。 */
+.models-agents .add-roles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* Agent：先看当前使用，再改配置。 */
+.models-agents .agent-effective {
+  margin-top: 10px;
+}
+
+.models-agents .agent-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  padding: 10px 12px;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.models-agents .agent-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 6px 0;
+  flex-wrap: wrap;
 }
 
-.chain-add .filter-input,
-.chain-add select {
-  max-width: 320px;
+.models-agents .agent-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 其他模型的兜底（折叠）。 */
+.models-agents .others-details {
+  margin-top: 4px;
+}
+
+.models-agents .others-details summary {
+  cursor: default;
+  padding: 4px 0;
+}
+
+.models-agents .others-details > p {
+  margin: 6px 0;
 }

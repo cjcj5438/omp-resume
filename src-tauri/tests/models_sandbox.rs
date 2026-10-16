@@ -39,6 +39,13 @@ fn real_home_readonly_summary_then_sandbox_write_smoke() {
             .map(|a| format!("{}({:?})", a.name, a.source))
             .collect::<Vec<_>>()
     );
+    // 兜底开关是布尔/枚举，无凭据，可打印。
+    println!(
+        "真实 HOME 兜底状态：modelFallback={:?} fallbackOn={:?} revertPolicy={:?}",
+        config.retry_status.model_fallback,
+        config.retry_status.fallback_on,
+        config.retry_status.fallback_revert_policy,
+    );
 
     // 2) 沙箱 HOME：写入 5 个 key 并核对 config.yml 与复读。
     let sandbox = tempfile::tempdir().expect("临时 HOME");
@@ -86,6 +93,13 @@ fn real_home_readonly_summary_then_sandbox_write_smoke() {
     assert_eq!(Value::Array(after.disabled_agents.clone()), writes[2].1);
     assert_eq!(Value::Object(after.agent_advisor.clone()), writes[3].1);
     assert_eq!(Value::Object(after.fallback_chains.clone()), writes[4].1);
+    // 沙箱空配置的兜底默认：开 / any / cooldown-expiry（沙箱验证过的值）。
+    assert_eq!(after.retry_status.model_fallback, Some(true));
+    assert_eq!(after.retry_status.fallback_on.as_deref(), Some("any"));
+    assert_eq!(
+        after.retry_status.fallback_revert_policy.as_deref(),
+        Some("cooldown-expiry")
+    );
 
     // config.yml 落盘内容核对（真实 omp 的 YAML 序列化）。
     let yaml = std::fs::read_to_string(sandbox.path().join(".omp/agent/config.yml")).unwrap();

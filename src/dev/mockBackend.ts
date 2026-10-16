@@ -291,9 +291,10 @@ const MOCK_AGENTS: AgentDefinition[] = [
   { name: "deployer", description: "自定义：发布与部署", source: "user", defaultModel: ["@smol"], defaultThinkingLevel: null },
 ];
 
-/** 模型与 Agent 配置 mock：白名单 5 键的读-比-写 + 模型列表。 */
-function createModelMock(forceConflict: boolean) {
-  // 与后端一致的原始值（unknown 保留）；含别名 @smol 与未知 selector 演示。
+/** 模型与 Agent 配置 mock：白名单 5 键的读-比-写 + 模型列表 + 只读兜底状态。 */
+function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
+  // 与后端一致的原始值（unknown 保留）；含别名 @smol、未知 selector、
+  // 按角色/按模型/通配/未知 key 四种兜底演示。
   const state: Record<string, unknown> = {
     modelRoles: {
       judge: "typesafe/jev-latest",
@@ -313,14 +314,25 @@ function createModelMock(forceConflict: boolean) {
       scout: "5438/deepseek-v4.1-flash",
       reviewer: "5438/mimo-v2.6-pro",
       "security-reviewer": "5438/mimo-v2.6-pro",
+      deployer: "@smol",
     },
-    "task.disabledAgents": [],
+    "task.disabledAgents": ["reviewer"],
     "task.agentAdvisor": { sonic: "on", task: "on" },
     "retry.fallbackChains": {
       default: ["5438/muse-spark-1.3-contributor:max"],
       task: ["5438/mimo-v2.6-pro", "factory-droid/gpt-6.1-sol"],
+      "5438/muse-spark-1.3-contributor": ["5438/mimo-v2.6-pro"],
+      "5438-claude/*": ["factory-droid/claude-sonnet-5-5"],
       "5438/mimo-v2.6-pro": ["5438/muse-spark-1.3-contributor:max"],
+      "retired/old-model": ["5438/deepseek-v4.1-flash", "retired/older"],
+      sonic: ["5438/glm-5.3-flash"],
     },
+  };
+  // 只读兜底状态（不可写）；`?fallback=off` 模拟总开关关闭。
+  const retryStatus = {
+    modelFallback: !fallbackOff,
+    fallbackOn: "any",
+    fallbackRevertPolicy: "cooldown-expiry",
   };
 
   return (cmd: string, args: Record<string, unknown>) => {
@@ -333,6 +345,7 @@ function createModelMock(forceConflict: boolean) {
         agentAdvisor: structuredClone(state["task.agentAdvisor"]) as Record<string, unknown>,
         fallbackChains: structuredClone(state["retry.fallbackChains"]) as Record<string, unknown>,
         agents: structuredClone(MOCK_AGENTS),
+        retryStatus: structuredClone(retryStatus),
       } satisfies ModelConfig;
     }
     const key = args["key"];
@@ -365,6 +378,7 @@ export async function installMockBackend(): Promise<MockHandle> {
   const mcp = createMcpMock();
   const model = createModelMock(
     (params.get("conflict") ?? "").split(",").includes("update_model_config"),
+    params.get("fallback") === "off",
   );
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [

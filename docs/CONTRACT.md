@@ -1032,13 +1032,19 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 16.1 白名单与安全规则
 
-- **只允许读写 5 个 key**，其他 key 一律 `INVALID_KEY` 且**绝不调用 omp**：
+- **只允许写 5 个 key**，其他 key 一律 `INVALID_KEY` 且**绝不调用 omp**：
   `modelRoles`（record：角色 → `provider/model[:thinking]`）、
   `task.agentModelOverrides`（record：agent → selector，值同上可带 `:thinking`）、
   `task.disabledAgents`（array：agent 名）、
   `task.agentAdvisor`（record：agent → `"on"` / `"off"`）、
   `retry.fallbackChains`（record：角色或 selector（可含 `provider/*` 通配） →
   有序 selector 字符串数组）。
+- 另有 **3 个只读白名单 key**（仅布尔/枚举，无凭据，供全局兜底状态展示）：
+  `retry.modelFallback`（boolean）、`retry.fallbackOn`（enum）、
+  `retry.fallbackRevertPolicy`（enum）。可经 `omp config get <key> --json` 读取；
+  **写入这 3 个 key 同样报 `INVALID_KEY`**（`update_model_config` 不接受），
+  其他一切 key（含这三个的写入）都被拒绝且不调用 omp。读不到或形状异常时
+  `ModelConfig.retryStatus` 对应字段为 null（UI 显示「未知」），不让读取失败。
 - 绝不读取凭据文件（`~/.omp/agent/models.yml` / `models.json` 等，含明文 apiKey），
   绝不运行 `omp config list`（会输出 token 类设置）；`omp models --json` 本身
   不含凭据。任何 omp 输出都不写日志、测试输出不打印配置值。
@@ -1121,25 +1127,50 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 错误码：`INVALID_KEY`（新）、`INVALID_INPUT`、`CONFLICT`、`BUSY`、`OMP_FAILED`、
   `TIMEOUT`、`OMP_NOT_FOUND`、`IO`（语义同 §7）。`INVALID_KEY` 仅本命令产生。
 
-### 16.6 前端形态（无新命令）
+### 16.6 前端形态（无新命令；2026-10-16 重设计）
 
-- 管理视图新增「模型与 Agent」标签页并作为**默认页**。
-- 模型角色行：default 排最前，其后为已有角色（record 顺序）+ 常见角色
-  （default/task/plan/judge/commit/advisor/slow/smol/tiny/memory）；
-  每行 = 模型选择（provider 分组、可搜索，另有「未设置」= 保存时删除该键）
-  + thinking 档位（取所选模型的 `thinkingLevels`，另有「默认」= 无后缀；
-  当前后缀不在档位表时原样保留为额外选项）。值格式 `provider/model[:thinking]`：
-  仅末段为 `[A-Za-z0-9_-]+` 才拆为 thinking 后缀，否则 selector 原样保留。
-- Agent 行：名称（自定义标「自定义」）、内置默认（只读）、模型覆盖
-  （选择器同上，另有「不覆盖」= 保存时删除 `task.agentModelOverrides[name]`）、
-  禁用开关（`task.disabledAgents` 成员）、advisor 三态（默认 = 删键 /
-  on / off）。不在 agent 列表中的旧覆盖 / 禁用 / advisor 条目原样保留。
-- 回退链行：按 key 列出有序 selector，支持添加 / 删除 / 上移 / 下移（按钮），
-  可删除整条链、可新增链（key 从角色或模型 selector 里选）；空链拒绝保存。
-- 页脚提示：「新开的 omp 会话使用新配置；已运行的会话可能需重启后生效」。
+- 管理视图「模型与 Agent」标签页为**默认页**。自上而下：
+  顶栏（一句话说明 + 模型列表状态/刷新 + 全局兜底状态只读一行）→
+  「主要模型」（角色卡）→「Agent」→「其他模型的兜底」（折叠）。
+- **角色卡**（每角色一张卡）：角色中文名 + 一句话用途 + 主模型选择
+  （provider 分组、可搜索、友好名 + provider 徽章 + 上下文/价格提示；
+  另有「未设置」= 保存时删除该键）+ thinking 分段控件（取所选模型的
+  `thinkingLevels`，另有「默认」= 无后缀；当前后缀不在档位表时原样保留为
+  额外选项）+ **同卡内的有序「兜底模型」**（chain key = 角色名的那条）：
+  ①②③ 顺序 chip，可添加 / 删除 / 上移 / 下移，读作
+  「主模型出错时，按顺序改用」。
+- **按模型的兜底融合**：chain key 与角色当前主模型 base 一致（忽略
+  `:thinking` 后缀）或为命中主模型 provider 的 `provider/*` 通配时，
+  吸附进该角色卡，标题「「<模型名>」的兜底」，说明
+  「不管哪个角色在用这个模型，出错时都按顺序改用（优先于上面的按角色兜底）」。
+  没被任何角色收走的 chain（含没被吸附的按模型 key、不认识的角色 key）在
+  「其他模型的兜底」折叠区列出，同样可编辑；不认识的角色 key 附说明
+  「没有同名的模型角色，omp 可能不会使用这条配置（原样保留）」。
+  **所有 chain 无损保留与可编辑**；空链拒绝保存（点名，不发请求）。
+- 角色集合 = 已配置的 `modelRoles` 键（default 首位、其余保持配置原顺序）
+  + 有 chain 的常见角色（主模型待配）；常见角色可随时「添加角色」，
+  未配置且无兜底的角色卡可「移除此角色」（只影响展示）。
+- **Agent 行**：名称（自定义标「自定义」）+ 说明 + 「当前使用」（行内：
+  覆盖模型 / 内置默认解析结果 / 跟随当前会话模型；`@角色` 别名解析成
+  该角色的当前模型，如「内置默认 @smol → 轻快任务角色」；未知值标
+  「未知值 · 保留」）+ 改用模型（「不改用」= 保存时删除覆盖条目）+
+  thinking 分段 + 停用开关 + 顾问三态（默认 = 删键 / 开 / 关）。
+  不在 agent 列表中的旧覆盖 / 禁用 / advisor 条目原样保留。
+- 全局兜底状态行（只读）：`retry.modelFallback` / `retry.fallbackOn` /
+  `retry.fallbackRevertPolicy` 译成人话（枚举值见 §16.8）；
+  总开关关闭时显示醒目提示「兜底已关闭，下面的兜底配置不会生效」。
+- 值格式 `provider/model[:thinking]`：仅末段为 `[A-Za-z0-9_-]+` 才拆为
+  thinking 后缀，否则 selector 原样保留。手动输入支持通配 key（如 `p1/*`）。
+- 保存：分区按钮（主要模型区块一次可写 `modelRoles` 与 `retry.fallbackChains`
+  两个 key；Agent 区块最多写 3 个 key；其他兜底写 `retry.fallbackChains`），
+  逐 key CONFLICT 复读比对 + 写后复读校验 + `OmpBusy` 单写门禁；
+  **前一个 key 已写、后一个失败**时提示「「<已保存键>」已保存，但「<失败键>」
+  保存失败：<原因>（已重新载入最新配置，请检查后重试）」并重新载入，
+  不假装成功也不回滚。CONFLICT 提示「配置已被外部修改，请刷新」并重新载入。
+  页脚提示：「新开的 omp 会话使用新配置；已运行的会话可能需重启后生效」。
 - `?mock=1` 下 `dev/mockBackend.ts` 实现三个命令：白名单外 `INVALID_KEY`、
   expected 不匹配 `CONFLICT`、`?conflict=update_model_config` 强制冲突、
-  `?fail=` / `?latency=` 沿用（慢加载与强制失败）。
+  `?fallback=off` 模拟兜底总开关关闭、`?fail=` / `?latency=` 沿用。
 
 ### 16.7 实测记录（omp 18.11.1，2026-10-16）
 
@@ -1160,7 +1191,61 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   `modelRoles` 的 `:thinking` 后缀、`retry.fallbackChains` 数组值、
   `task.disabledAgents` 数组），断言 `$HOME/.omp/agent/config.yml` 落盘内容
   与复读结果一致，并验证旧 expected 写入报 `CONFLICT`。
-- 已知限制：回退链的 key 只能从角色 / 模型 selector 里选，无法新建
-  `provider/*` 通配 key（已有通配 key 正常显示与保存）；一个块里存在
-  脏值（非字符串条目）时该块保存会被 `INVALID_INPUT` 拒绝（点名 key，
-  需在 omp 侧手动修复）；新增角色只能来自常见角色列表。
+- 已知限制：一个 chain 里存在脏值（非字符串条目）时该 chain 保存会被
+  `INVALID_INPUT` 拒绝（点名，需在 omp 侧手动修复）；新增角色只能来自
+  常见角色列表；`provider/*` 通配 key 可经手动输入新建（与旧限制不同）。
+
+### 16.8 兜底语义调研（2026-10-16，omp 18.11.2；UI 文案依据）
+
+> 方法：`omp config get <key> --json` 读白名单 key 的完整 description 与值
+> （只读；未运行 `omp config list`、未读 models.yml/models.json）；
+> 从 omp 二进制字符串（`strings`）反编译出配置 schema 与
+> `retry-fallback-chains.ts` 的匹配逻辑；`HOME=<临时目录>` + 真实 omp 验证
+> 枚举值校验。**不修改用户真实配置。**
+
+**已验证：**
+
+- **角色清单**（模型浏览器固定列表）：`default / smol / slow / vision / plan /
+  commit / tiny / memory / task / advisor`（对话类）+ `image / web / speech /
+  dictation / judge`（能力类，需专用模型）。内置中文名与用途：
+  主对话（平时主力）、轻快任务（提交信息/标题等轻量活）、深度思考、图片理解、
+  方案设计（plan，Architect）、提交信息（commit，生成 git 提交信息）、极简任务
+  （tiny，标题生成等）、记忆助手（memory）、子任务（task，子代理未指定模型时）、
+  顾问（advisor，每轮被动评审）；能力类：图片生成 / 联网搜索 / 语音合成 /
+  语音听写 / 裁判（judge）。
+- **别名**：`@role[:thinking]` / `pi/role[:thinking]` 解析到角色的 `modelRoles`
+  值；未配置时按角色回退链（advisor→slow→default、memory→tiny→smol→…、
+  tiny→smol→default，源码 `abe` 表）或内置默认（如 smol 的内置候选表）。
+  `@smol` 等值不在模型列表时 UI 原样保留显示。
+- **`retry.fallbackChains` 的 key** 三种（description 原文 + 匹配代码）：
+  ① 角色名（无 `/`）——该角色的模型出错时用；② 模型 selector
+  （`provider/model`，匹配忽略 `:thinking` 后缀）——**不管哪个角色在用**，
+  该模型出错时用；③ provider 通配（`provider/*` 或 `id/prefix/*`）——保留出错
+  模型的 id 换 provider，`a/b/*` 只匹配 `a` 下 `b/` 开头的 id。
+- **匹配优先级**（源码 `Qv`）：模型 key 精确（含 thinking）→ 模型 key base
+  （忽略 thinking）→ 通配 key（长 id 前缀优先）→ 会话钉住的角色 →
+  角色 key（仅「effort 不同」的弱匹配，能完全匹配直接命中）→ `default`。
+  一个失败回合可能同时挂多条链：钉住的角色链在前、解析出的角色链在后。
+- **`:thinking` 后缀**：chain **key** 匹配时忽略（base 比较）；chain **条目**
+  带后缀（`:low/:high/:max/:off`）显式指定档位，裸条目继承出错回合的档位；
+  通配条目恒继承。§16.7 曾记「thinking level 不同则链被跳过」的 bug 已被
+  omp 修复（changelog #13789），匹配照常。
+- **`retry.fallbackOn`** 枚举（沙箱 set 有效值 + 非法值被拒并列出全集）：
+  `any`（任何错误都切换，默认）/ `usage-limit`（仅用尽额度时切换）/
+  `except-usage-limit`（除用尽额度外都切换）。
+- **`retry.fallbackRevertPolicy`** 枚举（同上验证）：`cooldown-expiry`
+  （主模型抑制窗口结束后自动切回，默认）/ `never`（切走后不自动切回）。
+- **`retry.modelFallback`**（boolean，默认 true）：兜底总开关，关掉后
+  `retry.fallbackChains` 全部不生效（changelog #15636 明确）。
+  `retry.usageAwareFallback`（boolean，默认 false）：额度感知兜底，
+  本 UI 不展示（另有 `usageReservePct/Policy` 相关设置，超出本页范围）。
+
+**未验证（UI 用保守措辞）：**
+
+- agent 名（如 `task`/`sonic`）作为 chain key 的行为：按匹配代码，非角色名的
+  key 无法命中（`getModelRole(name)` 为空则不匹配），但子代理带 roleHint（如
+  `@task`）时按角色 key 处理；UI 对「没有同名角色的 key」只提示
+  「omp 可能不会使用这条配置」，原样保留。
+- `default` 链的「自动补全」语义（`wL`：default 链会临时补给没有链的
+  常见角色）只在运行时验证过方向、未做端到端实验。
+- 压制/冷却窗口的具体时长（`suppressSelector` 默认 5 分钟或按错误类型）未逐一验证。

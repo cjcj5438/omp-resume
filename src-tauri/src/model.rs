@@ -782,7 +782,19 @@ pub struct AgentDefinition {
     pub default_thinking_level: Option<String>,
 }
 
-/// `get_model_config` 返回：白名单 5 个 config key 的原始值 + agent 默认值。
+/// 全局兜底开关（只读展示）：`retry.modelFallback` / `retry.fallbackOn` /
+/// `retry.fallbackRevertPolicy`。读不到或形状异常时对应字段为 None（前端显示「未知」），
+/// 不让整个 `get_model_config` 失败。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryStatus {
+    pub model_fallback: Option<bool>,
+    pub fallback_on: Option<String>,
+    pub fallback_revert_policy: Option<String>,
+}
+
+/// `get_model_config` 返回：白名单 5 个可写 config key 的原始值 + agent 默认值 +
+/// 只读兜底状态。
 /// record / 数组内单个条目的值原样保留（可能不是字符串，前端只展示不改写）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -793,6 +805,7 @@ pub struct ModelConfig {
     pub agent_advisor: serde_json::Map<String, serde_json::Value>,
     pub fallback_chains: serde_json::Map<String, serde_json::Value>,
     pub agents: Vec<AgentDefinition>,
+    pub retry_status: RetryStatus,
 }
 
 /// `update_model_config` 返回：写后复读的新值。
@@ -934,6 +947,17 @@ mod tests {
             agent,
             serde_json::json!({"name": "scout", "description": "调研", "source": "builtin",
                 "defaultModel": ["@smol"], "defaultThinkingLevel": null})
+        );
+        let retry = serde_json::to_value(RetryStatus {
+            model_fallback: Some(false),
+            fallback_on: Some("any".into()),
+            fallback_revert_policy: None,
+        })
+        .unwrap();
+        assert_eq!(
+            retry,
+            serde_json::json!({"modelFallback": false, "fallbackOn": "any",
+                "fallbackRevertPolicy": null})
         );
     }
 

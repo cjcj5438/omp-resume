@@ -30,10 +30,18 @@ UI 文案为中文。
 - **omp 版本与更新**：侧栏底部显示本机 omp 版本，可手动「检查 omp 更新」并一键更新（仅以版本号变化判定成功；已打开的 omp 会话需重启后生效；包管理器托管的安装会提示去其管理器更新）。
 - **复制会话 ID**：点击详情头里的会话 ID 即可复制。
 - **管理视图**：侧栏「管理」按钮打开模型与 Agent（默认首页）/ 插件 / Skills / MCP 四个标签页。
-  模型与 Agent：模型角色、agent 模型覆盖 / 禁用 / advisor 与模型回退链集中管理，
-  经 `omp config set` 只写 5 个白名单配置键，不读 models.yml/models.json、不碰凭据；
-  模型选择按 provider 分组可搜索，未知值（`@smol` 别名、已下线模型）原样保留；
-  逐块保存/还原并带冲突保护；agent 内置默认读取顺序：`~/.omp/agent/agents/<name>.md`
+  模型与 Agent：每个角色一张卡（主模型 + 同卡内的有序「兜底模型」，读作
+  「主模型出错时按顺序改用」），按模型的兜底融进正在用它的角色卡
+  （「不管哪个角色在用这个模型，出错时都按顺序改用」），
+  没被使用的收在底部折叠区「其他模型的兜底」；顶部只读一行展示全局兜底状态
+  （总开关关闭时有醒目提示）。Agent 每行先看「当前使用」（`@角色` 别名解析成
+  该角色当前模型），可改用模型 / 停用 / 顾问三态。
+  经 `omp config set` 只写 5 个白名单配置键（另 3 个兜底开关键只读展示），
+  不读 models.yml/models.json、不碰凭据；
+  模型选择按 provider 分组可搜索（友好名 + 上下文/价格提示），未知值
+  （`@smol` 别名、已下线模型）原样保留；
+  分区保存/还原并带冲突保护，部分失败会点名已保存的键并重新载入；
+  agent 内置默认读取顺序：`~/.omp/agent/agents/<name>.md`
   存在则以它为准，否则取 `omp agents unpack` 的内置定义。
   插件（仅 user scope）：已安装列表的启用 / 禁用 / 升级 / 卸载，
   marketplace 的添加 / 移除 / 刷新 / 浏览安装；Skills：registry 技能列表
@@ -84,9 +92,11 @@ UI 文案为中文。
 - **拒绝规则**：占用中（`IN_USE`）、探测失败（`PROBE_FAILED`）、
   节点非法（`INVALID_NODE`）、路径逃出根（`OUTSIDE_ROOT`）、cwd 已删除时
   打开 iTerm（`CWD_MISSING`）、文件末尾不完整（`IO`）——宁可拒绝也不猜。
-- **模型配置**：只读写 5 个白名单键（`modelRoles`、`task.agentModelOverrides`、
+- **模型配置**：只写 5 个白名单键（`modelRoles`、`task.agentModelOverrides`、
   `task.disabledAgents`、`task.agentAdvisor`、`retry.fallbackChains`），经 `omp config set`
-  写入；不读 models.yml/models.json、不运行 `omp config list`，不碰凭据。
+  写入；另有 3 个兜底开关键（`retry.modelFallback`/`retry.fallbackOn`/
+  `retry.fallbackRevertPolicy`）只读展示、写入一律拒绝；不读 models.yml/models.json、
+  不运行 `omp config list`，不碰凭据。
 - **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
   原子写入；孤儿条目（会话已删）惰性保留不自动修剪，仅本应用删除成功时联动清理。
 
@@ -243,7 +253,7 @@ kill %1
 仅 dev 构建包含）。可用参数：`?omp=new`（模拟有新版 omp）/
 `?omp=managed`（模拟包管理器托管）、`?fail=<命令名>`（强制该命令失败）、
 `?conflict=<命令名>`（强制该命令报 CONFLICT）、`?pick=cancel`（模拟取消选目录）、
-`?latency=<毫秒>`（所有命令延迟）。
+`?fallback=off`（模拟兜底总开关关闭）、`?latency=<毫秒>`（所有命令延迟）。
 
 开发者注意：omp 收到绝对路径形式的 `PI_CONFIG_DIR` 时会把状态写到 `$HOME`
 下的重复路径；沙箱测试只用 HOME 隔离，不要用它指向临时目录。
@@ -278,6 +288,7 @@ kill %1
 - 统计是逐文件扫描的瞬时快照；fork 归属仅在条目完全一致时认定复制，无法确认则计入自身。
 - 提示词历史大小写不敏感仅 ASCII、子串匹配；「跳到来源会话」仅在会话已加载时可用；
   history.db 结构变化时功能静默消失。
-- `omp models --json` 约 10 秒，缓存只在进程内；回退链无法新建 `provider/*` 通配 key，
-  不支持任意新增角色键；Agent 表一次保存串行写多个 key，中途失败不回滚。
+- `omp models --json` 约 10 秒，缓存只在进程内；新增角色只能来自常见角色列表；
+  一个区块保存串行写多个 key，中途失败**不回滚**（会点名已保存的键并重新载入最新配置）；
+  没有同名角色的兜底 key 会原样保留但可能不被 omp 使用（见 CONTRACT §16.8）。
 - 目录选择对话框在应用未激活时可能出现在窗口后方。

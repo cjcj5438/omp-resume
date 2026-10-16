@@ -1,6 +1,6 @@
 /**
- * ModelsAgentsPanel 测试：未知值保留、删除条目语义、冲突重载、回退链排序。
- * 有状态场景走 installMockBackend，保存载荷断言用直连 mockIPC 桩。
+ * ModelsAgentsPanel 测试：角色卡融合、Agent 实际使用、其他兜底、未知值保留、
+ * 部分失败与冲突。保存载荷断言用直连 mockIPC 桩。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -70,8 +70,8 @@ const AGENTS: AgentDefinition[] = [
 
 const BASE_CONFIG: ModelConfig = {
   roles: {
-    judge: "typesafe/jev-latest",
     default: "5438/mimo-v2.6-pro:high",
+    judge: "typesafe/jev-latest",
   },
   agentOverrides: {
     task: "5438/mimo-v2.6-pro:max",
@@ -82,8 +82,12 @@ const BASE_CONFIG: ModelConfig = {
   fallbackChains: {
     default: ["5438/mimo-v2.6-pro", "factory-droid/gpt-6.1-sol"],
     task: ["5438/deepseek-v4.1-flash"],
+    "5438/mimo-v2.6-pro": ["factory-droid/gpt-6.1-sol"],
+    "retired/old": ["5438/deepseek-v4.1-flash"],
+    sonic: ["5438/deepseek-v4.1-flash"],
   },
   agents: AGENTS,
+  retryStatus: { modelFallback: true, fallbackOn: "any", fallbackRevertPolicy: "cooldown-expiry" },
 };
 
 interface SaveCall {
@@ -92,13 +96,14 @@ interface SaveCall {
   expected: unknown;
 }
 
-/** 直连桩：可让 update_model_config 报 CONFLICT，并记录保存载荷。 */
+/** 直连桩：记录保存载荷；可让指定 key 首次写入失败，或全部冲突。 */
 function stubConfig(
   saves: SaveCall[],
-  options: { config?: ModelConfig; conflictFirst?: boolean } = {},
+  options: { config?: ModelConfig; conflictFirst?: boolean; failKeys?: string[] } = {},
 ) {
-  let config = structuredClone(options.config ?? BASE_CONFIG);
+  const config = structuredClone(options.config ?? BASE_CONFIG);
   let conflictLeft = options.conflictFirst ? 1 : 0;
+  const failKeys = new Set(options.failKeys ?? []);
   let configReads = 0;
   mockIPC(async (cmd: string, payload?: unknown) => {
     if (cmd === "list_models") return structuredClone(MODELS);
@@ -113,7 +118,13 @@ function stubConfig(
         conflictLeft -= 1;
         throw { code: "CONFLICT", message: "配置已被外部修改，请刷新后重试" };
       }
-      (config as unknown as Record<string, unknown>)[
+      if (failKeys.has(call.key)) {
+        failKeys.delete(call.key);
+        throw { code: "OMP_FAILED", message: "模拟写入失败" };
+      }
+      (
+        config as unknown as Record<string, unknown>
+      )[
         {
           modelRoles: "roles",
           "task.agentModelOverrides": "agentOverrides",
@@ -140,142 +151,266 @@ function blockOf(name: string): HTMLElement {
   return screen.getByRole("region", { name });
 }
 
+function roleCard(role: string): HTMLElement {
+  return screen.getByTestId(`role-card-${role}`);
+}
+
 beforeEach(() => {
   clearMocks();
   window.history.replaceState({}, "", "/");
 });
 
-describe("模型角色", () => {
-  it("未知值原样保留：只改其他角色时写回不认识的键与值", async () => {
+describe("主要模型（角色卡融合）", () => {
+  it("主模型、按角色兜底、按模型兜底在同一张卡里", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
-    await screen.findByText("模型角色");
+    await screen.findByRole("region", { name: "主要模型" });
 
-    // 未知值带标记展示，用户不动就不改写。
-    expect(within(blockOf("模型角色")).getByText("typesafe/jev-latest")).toBeInTheDocument();
-    expect(within(blockOf("模型角色")).getAllByText(/未知值/).length).toBeGreaterThan(0);
+    const card = roleCard("default");
+    // 主模型 + thinking。
+    expect(within(card).getByRole("button", { name: "主对话的主模型" })).toHaveTextContent(
+      "MiMo v2.6 Pro (5438)",
+    );
+    expect(within(card).getByRole("radio", { name: "high" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    // 按角色兜底。
+    expect(within(card).getByTestId("chain-default")).toBeInTheDocument();
+    // 按模型兜底吸附进卡（主模型 base 命中 chain key）。
+    const attached = within(card).getByTestId("chain-5438/mimo-v2.6-pro");
+    expect(attached).toHaveTextContent("不管哪个角色在用这个模型");
+    // 未吸附的 chain 不在卡里。
+    expect(within(card).queryByTestId("chain-retired/old")).not.toBeInTheDocument();
+  });
 
-    // 只给 memory 行选一个模型。
-    fireEvent.click(screen.getByRole("button", { name: "memory 的模型" }));
-    fireEvent.click(screen.getByRole("button", { name: /MiMo v2\.6 Pro/ }));
-    fireEvent.click(within(blockOf("模型角色")).getByRole("button", { name: "保存" }));
+  it("未知主模型原样保留，加角色后只写 modelRoles", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    const judge = roleCard("judge");
+    expect(within(judge).getByText("typesafe/jev-latest")).toBeInTheDocument();
+    expect(within(judge).getByText("未知值 · 保留")).toBeInTheDocument();
+
+    // task 只有兜底也有卡（主模型待配）。
+    expect(roleCard("task")).toHaveTextContent("未配置");
+    expect(within(roleCard("task")).getByTestId("chain-task")).toBeInTheDocument();
+
+    // 添加 vision 角色并选模型。
+    fireEvent.click(screen.getByTestId("add-role-vision"));
+    const vision = roleCard("vision");
+    fireEvent.click(within(vision).getByRole("button", { name: "图片理解的主模型" }));
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }));
 
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0].key).toBe("modelRoles");
     expect(saves[0].value).toEqual({
-      judge: "typesafe/jev-latest",
       default: "5438/mimo-v2.6-pro:high",
-      memory: "5438/mimo-v2.6-pro",
+      judge: "typesafe/jev-latest",
+      vision: "5438/deepseek-v4.1-flash",
     });
     expect(saves[0].expected).toEqual(BASE_CONFIG.roles);
-    // 保存后重载：未触碰的 `:thinking` 后缀保留在 thinking 档位里。
-    await waitFor(() =>
-      expect(
-        within(blockOf("模型角色")).getByRole("button", { name: "保存" }),
-      ).toBeDisabled(),
-    );
-    expect(
-      within(blockOf("模型角色")).getByRole("button", { name: "default 的模型" }),
-    ).toHaveTextContent("5438/mimo-v2.6-pro");
-    expect(
-      within(blockOf("模型角色")).getByRole("combobox", {
-        name: "default 的模型 thinking 档位",
-      }),
-    ).toHaveValue("high");
   });
-});
 
-describe("Agent 表", () => {
-  it("「不覆盖」删除该 agent 的覆盖条目，其余条目原样保留", async () => {
+  it("角色卡改兜底只写兜底，且只改对应 key", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
-    await screen.findByRole("region", { name: "Agent 配置" });
+    await screen.findByRole("region", { name: "主要模型" });
 
-    fireEvent.click(screen.getByRole("button", { name: "scout 的模型覆盖" }));
-    fireEvent.click(screen.getByRole("button", { name: "不覆盖" }));
-    fireEvent.click(within(blockOf("Agent 配置")).getByRole("button", { name: "保存" }));
+    const chain = within(roleCard("default")).getByTestId("chain-default");
+    fireEvent.click(within(chain).getByRole("button", { name: "下移 5438/mimo-v2.6-pro" }));
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存兜底" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0].key).toBe("retry.fallbackChains");
+    expect(saves[0].value).toEqual({
+      ...BASE_CONFIG.fallbackChains,
+      default: ["factory-droid/gpt-6.1-sol", "5438/mimo-v2.6-pro"],
+    });
+  });
+
+  it("兜底为空时点名报错，不发请求", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    fireEvent.click(
+      within(within(roleCard("judge")).getByTestId("chain-judge")).getByRole("button", {
+        name: "添加兜底",
+      }),
+    );
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存兜底" }));
+    expect(
+      await screen.findByText("「裁判」的兜底还没有兜底模型：请添加，或删除这条兜底"),
+    ).toBeInTheDocument();
+    expect(saves).toHaveLength(0);
+  });
+
+  it("前一个 key 已写、后一个失败：点名已保存并重载", async () => {
+    const saves: SaveCall[] = [];
+    const stub = stubConfig(saves, { failKeys: ["retry.fallbackChains"] });
+    const onToast = vi.fn();
+    render(<ModelsAgentsPanel onToast={onToast} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    // 同时改主模型与兜底：两个 key 都要写。
+    fireEvent.click(
+      within(roleCard("judge")).getByRole("button", { name: "裁判的主模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
+    const chain = within(roleCard("default")).getByTestId("chain-default");
+    fireEvent.click(within(chain).getByRole("button", { name: "下移 5438/mimo-v2.6-pro" }));
+    fireEvent.click(
+      within(blockOf("主要模型")).getByRole("button", { name: "保存主模型与兜底" }),
+    );
+
+    expect(await screen.findByText(/「主模型」已保存/)).toHaveTextContent("兜底");
+    expect(saves.map((s) => s.key)).toEqual(["modelRoles", "retry.fallbackChains"]);
+    // 失败后重新载入（首次 + 失败后）。
+    await waitFor(() => expect(stub.configReads).toBeGreaterThanOrEqual(2));
+    expect(onToast).not.toHaveBeenCalledWith(expect.stringContaining("已保存"), "info");
+  });
+});
+
+describe("Agent", () => {
+  it("每行先看当前实际使用的模型", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "Agent" });
+
+    // task：覆盖生效。
+    const taskEffective = screen.getByTestId("agent-effective-task");
+    expect(taskEffective).toHaveTextContent("MiMo v2.6 Pro (5438)");
+    expect(taskEffective).toHaveTextContent("来自「改用模型」");
+    // deployer：无默认，跟随会话。
+    expect(screen.getByTestId("agent-effective-deployer")).toHaveTextContent(
+      "跟随当前会话模型",
+    );
+  });
+
+  it("「不改用」删除覆盖条目，未改动的 key 不重写", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "Agent" });
+
+    fireEvent.click(screen.getByRole("button", { name: "scout 改用的模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "不改用" }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(saves.length).toBeGreaterThan(0));
     const overrides = saves.find((s) => s.key === "task.agentModelOverrides");
     expect(overrides?.value).toEqual({ task: "5438/mimo-v2.6-pro:max" });
-    // 未改动的 key 不重写（只写有变化的配置键）。
     expect(saves.map((s) => s.key)).toEqual(["task.agentModelOverrides"]);
+    // 保存重载后，scout 回到 @smol（smol 未配置，如实说明）。
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-effective-scout")).toHaveTextContent("用 omp 内置默认"),
+    );
   });
 
-  it("禁用与 advisor 只写各自配置键", async () => {
+  it("停用与顾问只写各自配置键", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
-    await screen.findByRole("region", { name: "Agent 配置" });
+    await screen.findByRole("region", { name: "Agent" });
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "禁用 deployer" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "task 的 advisor" }), {
+    fireEvent.click(screen.getByRole("checkbox", { name: "停用 deployer" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "task 的顾问" }), {
       target: { value: "off" },
     });
-    fireEvent.click(within(blockOf("Agent 配置")).getByRole("button", { name: "保存" }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(saves).toHaveLength(2));
-    expect(saves.map((s) => s.key)).toEqual([
-      "task.disabledAgents",
-      "task.agentAdvisor",
-    ]);
+    expect(saves.map((s) => s.key)).toEqual(["task.disabledAgents", "task.agentAdvisor"]);
     expect(saves[0].value).toEqual(["deployer"]);
     expect(saves[1].value).toEqual({ task: "off" });
   });
 });
 
-describe("回退链", () => {
-  it("上移/删除直接反映在保存载荷（删除即不含该项）", async () => {
+describe("其他模型的兜底", () => {
+  it("折叠展示未吸附 chain，不认识的 key 有说明", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
-    await screen.findByText("回退链");
+    await screen.findByRole("region", { name: "其他模型的兜底" });
 
-    fireEvent.click(screen.getByRole("button", { name: "下移 5438/mimo-v2.6-pro" }));
-    fireEvent.click(within(blockOf("回退链")).getByRole("button", { name: "保存" }));
+    // 默认折叠：只见条数（details 收起）。
+    expect(screen.getByText(/共 2 条/)).toBeInTheDocument();
+    const details = screen.getByTestId("others-details");
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText(/共 2 条/));
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByTestId("chain-retired/old")).toBeInTheDocument();
+    const sonic = screen.getByTestId("chain-sonic");
+    expect(sonic).toHaveTextContent("omp 可能不会使用这条配置");
+    // 已吸附的不在这里。
+    expect(screen.queryAllByTestId("chain-5438/mimo-v2.6-pro")).toHaveLength(1);
+  });
+
+  it("改完保存只写兜底", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "其他模型的兜底" });
+    fireEvent.click(screen.getByText(/共 2 条/));
+
+    const chain = screen.getByTestId("chain-sonic");
+    fireEvent.click(
+      within(chain).getByRole("button", { name: "删除 5438/deepseek-v4.1-flash" }),
+    );
+    const manual = within(chain).getByLabelText(/手动输入/);
+    fireEvent.change(manual, { target: { value: "p1/extra" } });
+    fireEvent.keyDown(manual, { key: "Enter" });
+    fireEvent.click(within(blockOf("其他模型的兜底")).getByRole("button", { name: "保存兜底" }));
+
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0].key).toBe("retry.fallbackChains");
-    expect(saves[0].value).toEqual({
-      default: ["factory-droid/gpt-6.1-sol", "5438/mimo-v2.6-pro"],
-      task: ["5438/deepseek-v4.1-flash"],
-    });
-
-    // 删除某项 = 写不含该项的 record。
-    await waitFor(() =>
-      expect(
-        within(blockOf("回退链")).getByRole("button", { name: "保存" }),
-      ).toBeDisabled(),
+    expect((saves[0].value as Record<string, unknown>)["sonic"]).toEqual(["p1/extra"]);
+    // 其他 chain 原样保留。
+    expect((saves[0].value as Record<string, unknown>)["retired/old"]).toEqual(
+      BASE_CONFIG.fallbackChains["retired/old"],
     );
-    fireEvent.click(screen.getByRole("button", { name: "删除 factory-droid/gpt-6.1-sol" }));
-    fireEvent.click(within(blockOf("回退链")).getByRole("button", { name: "保存" }));
-    await waitFor(() => expect(saves).toHaveLength(2));
-    expect(saves[1].value).toEqual({
-      default: ["5438/mimo-v2.6-pro"],
-      task: ["5438/deepseek-v4.1-flash"],
-    });
   });
 });
 
-describe("冲突处理", () => {
+describe("兜底总开关与冲突", () => {
+  it("兜底关闭时有醒目提示", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves, {
+      config: {
+        ...structuredClone(BASE_CONFIG),
+        retryStatus: { modelFallback: false, fallbackOn: "usage-limit", fallbackRevertPolicy: "never" },
+      },
+    });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+    expect(screen.getByText(/兜底已关闭/)).toHaveTextContent("不会生效");
+    expect(screen.getByText(/兜底：关/)).toHaveTextContent("仅用尽额度时切换");
+  });
+
   it("CONFLICT 提示并重新载入最新配置", async () => {
     const saves: SaveCall[] = [];
     const stub = stubConfig(saves, { conflictFirst: true });
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
-    await screen.findByText("模型角色");
+    await screen.findByRole("region", { name: "主要模型" });
 
-    fireEvent.click(screen.getByRole("button", { name: "memory 的模型" }));
+    fireEvent.click(screen.getByTestId("add-role-vision"));
+    fireEvent.click(within(roleCard("vision")).getByRole("button", { name: "图片理解的主模型" }));
     fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
-    fireEvent.click(within(blockOf("模型角色")).getByRole("button", { name: "保存" }));
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }));
 
     expect(await screen.findByText(/配置已被外部修改/)).toBeInTheDocument();
-    // 冲突后重新读取配置（首次 + 冲突后各一次）。
     await waitFor(() => expect(stub.configReads).toBeGreaterThanOrEqual(2));
-    // 草稿已还原到后端最新值：dirty 消失、保存按钮回到禁用。
     await waitFor(() =>
       expect(
-        within(blockOf("模型角色")).getByRole("button", { name: "保存" }),
+        within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }),
       ).toBeDisabled(),
     );
   });

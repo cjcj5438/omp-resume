@@ -91,7 +91,7 @@ describe("ManageView 页签", () => {
 
     expect(screen.getByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "模型与 Agent", selected: true })).toBeInTheDocument();
-    expect(await screen.findByText("模型角色")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "主要模型" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("已安装插件");

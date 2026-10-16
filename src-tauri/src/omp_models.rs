@@ -2,7 +2,8 @@
 //! agent 内置默认值。
 //!
 //! SECURITY：
-//! - 只允许读写 5 个白名单 key，其余一律 `INVALID_KEY`，且绝不调用 omp；
+//! - 只允许写 5 个白名单 key，另有 3 个只读白名单 key（兜底开关展示用）；
+//!   其余一律 `INVALID_KEY`，且绝不调用 omp；
 //! - 绝不读取 `~/.omp/agent/models.yml` / `models.json` 等含凭据文件，
 //!   绝不运行 `omp config list`（会输出 token 类设置）；
 //! - 任何 omp 输出都不写日志。
@@ -13,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value};
 
 use crate::model::{
-    AgentDefinition, AgentSource, AppError, ErrorCode, ModelConfig, ModelInfo,
+    AgentDefinition, AgentSource, AppError, ErrorCode, ModelConfig, ModelInfo, RetryStatus,
     UpdateModelConfigResult,
 };
 use crate::omp_cli::{
@@ -25,8 +26,12 @@ pub const KEY_AGENT_OVERRIDES: &str = "task.agentModelOverrides";
 pub const KEY_DISABLED_AGENTS: &str = "task.disabledAgents";
 pub const KEY_AGENT_ADVISOR: &str = "task.agentAdvisor";
 pub const KEY_FALLBACK_CHAINS: &str = "retry.fallbackChains";
+/// 只读白名单 key（全局兜底状态展示）：可读不可写，写入同样报 `INVALID_KEY`。
+pub const KEY_MODEL_FALLBACK: &str = "retry.modelFallback";
+pub const KEY_FALLBACK_ON: &str = "retry.fallbackOn";
+pub const KEY_FALLBACK_REVERT_POLICY: &str = "retry.fallbackRevertPolicy";
 
-/// 白名单 5 个 key 与各自的值形状（写入校验按此执行；读取只校验外层形状）。
+/// 可写白名单 5 个 key 与各自的值形状（写入校验按此执行；读取只校验外层形状）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigKind {
     /// `角色|agent → provider/model[:thinking]` 字符串对象。
@@ -39,7 +44,8 @@ pub enum ConfigKind {
     StringListRecord,
 }
 
-/// 白名单校验：不在表内的 key 一律 `INVALID_KEY`，调用方不得触碰 omp。
+/// 可写白名单校验：不在 5 个可写 key 内的（含 3 个只读 key）一律 `INVALID_KEY`，
+/// 调用方不得触碰 omp。
 pub fn config_kind(key: &str) -> Result<ConfigKind, AppError> {
     match key {
         KEY_MODEL_ROLES | KEY_AGENT_OVERRIDES => Ok(ConfigKind::StringRecord),
@@ -48,7 +54,7 @@ pub fn config_kind(key: &str) -> Result<ConfigKind, AppError> {
         KEY_FALLBACK_CHAINS => Ok(ConfigKind::StringListRecord),
         _ => Err(AppError::new(
             ErrorCode::InvalidKey,
-            format!("不支持的配置键：{key}（只允许读写白名单的 5 个模型配置键）"),
+            format!("不支持的配置键：{key}（只允许写白名单的 5 个模型配置键）"),
         )),
     }
 }
@@ -161,6 +167,18 @@ fn read_object(bin: &Path, key: &str) -> Result<Map<String, Value>, AppError> {
 fn read_array(bin: &Path, key: &str) -> Result<Vec<Value>, AppError> {
     let value = get_shaped_value(bin, key, ConfigKind::StringArray)?;
     Ok(value.as_array().cloned().unwrap_or_default())
+}
+
+/// 只读兜底状态的宽容读取：读不到或类型不符时返回 None（前端显示「未知」），
+/// 不让整个 `get_model_config` 失败。
+fn read_retry_status(bin: &Path) -> RetryStatus {
+    let get = |key: &str| get_raw_value(bin, key).ok();
+    RetryStatus {
+        model_fallback: get(KEY_MODEL_FALLBACK).and_then(|v| v.as_bool()),
+        fallback_on: get(KEY_FALLBACK_ON).and_then(|v| v.as_str().map(str::to_owned)),
+        fallback_revert_policy: get(KEY_FALLBACK_REVERT_POLICY)
+            .and_then(|v| v.as_str().map(str::to_owned)),
+    }
 }
 
 /// record 类型整体覆盖写入（omp 不支持点号子键）：`omp config set <key> <紧凑 JSON>`。
@@ -501,13 +519,15 @@ fn builtin_agents(bin: &Path) -> Result<Vec<AgentDef>, AppError> {
 // 命令实现
 // ---------------------------------------------------------------------------
 
-/// CONTRACT §4.37：白名单 5 个 key 逐个 `omp config get` + agent 默认值。
+/// CONTRACT §4.37：白名单 5 个可写 key 逐个 `omp config get` + agent 默认值 +
+/// 3 个只读兜底状态 key。
 pub fn get_model_config_impl(bin: &Path, home: &Path) -> Result<ModelConfig, AppError> {
     let roles = read_object(bin, KEY_MODEL_ROLES)?;
     let agent_overrides = read_object(bin, KEY_AGENT_OVERRIDES)?;
     let disabled_agents = read_array(bin, KEY_DISABLED_AGENTS)?;
     let agent_advisor = read_object(bin, KEY_AGENT_ADVISOR)?;
     let fallback_chains = read_object(bin, KEY_FALLBACK_CHAINS)?;
+    let retry_status = read_retry_status(bin);
     let agents = merge_agents(&builtin_agents(bin)?, &user_agents(home));
     Ok(ModelConfig {
         roles,
@@ -515,6 +535,7 @@ pub fn get_model_config_impl(bin: &Path, home: &Path) -> Result<ModelConfig, App
         disabled_agents,
         agent_advisor,
         fallback_chains,
+        retry_status,
         agents,
     })
 }
@@ -680,7 +701,17 @@ exit 1"#,
             assert!(config_kind(key).is_ok(), "{key}");
         }
         let (_tmp, bin, marker) = fake_with_marker();
-        for key in ["nope.key", "modelRoles.plan", "apiKey", ""] {
+        for key in [
+            "nope.key",
+            "modelRoles.plan",
+            "apiKey",
+            "",
+            // 只读白名单 key：可读不可写，写入同样拒绝且不触碰 omp。
+            KEY_MODEL_FALLBACK,
+            KEY_FALLBACK_ON,
+            KEY_FALLBACK_REVERT_POLICY,
+        ] {
+            assert!(config_kind(key).is_err(), "{key}");
             let err = update_model_config_impl(
                 &bin,
                 &OmpBusy::default(),
@@ -694,6 +725,47 @@ exit 1"#,
         assert!(!marker.exists(), "白名单拒绝后不得调用 omp");
     }
 
+    #[test]
+    fn get_model_config_reads_retry_status_leniently() {
+        let (tmp, bin) = fake_stateful();
+        seed(tmp.path(), KEY_DISABLED_AGENTS, &serde_json::json!([]));
+        seed(tmp.path(), KEY_MODEL_FALLBACK, &serde_json::json!(false));
+        seed(
+            tmp.path(),
+            KEY_FALLBACK_ON,
+            &serde_json::json!("usage-limit"),
+        );
+        seed(
+            tmp.path(),
+            KEY_FALLBACK_REVERT_POLICY,
+            &serde_json::json!("never"),
+        );
+        let home = tempfile::tempdir().unwrap();
+        let config = get_model_config_impl(&bin, home.path()).unwrap();
+        assert_eq!(config.retry_status.model_fallback, Some(false));
+        assert_eq!(
+            config.retry_status.fallback_on.as_deref(),
+            Some("usage-limit")
+        );
+        assert_eq!(
+            config.retry_status.fallback_revert_policy.as_deref(),
+            Some("never")
+        );
+
+        // 类型不符 → None，不让整个读取失败。
+        seed(tmp.path(), KEY_MODEL_FALLBACK, &serde_json::json!("yes"));
+        seed(tmp.path(), KEY_FALLBACK_ON, &serde_json::json!(42));
+        let config = get_model_config_impl(&bin, home.path()).unwrap();
+        assert_eq!(config.retry_status.model_fallback, None);
+        assert_eq!(config.retry_status.fallback_on, None);
+        // 未 seed 的 key 按假 omp 默认返回空对象 → None。
+        let (tmp2, bin2) = fake_stateful();
+        seed(tmp2.path(), KEY_DISABLED_AGENTS, &serde_json::json!([]));
+        let config = get_model_config_impl(&bin2, tmp2.path()).unwrap();
+        assert_eq!(config.retry_status.model_fallback, None);
+        assert_eq!(config.retry_status.fallback_on, None);
+        assert_eq!(config.retry_status.fallback_revert_policy, None);
+    }
     #[test]
     fn update_detects_conflict_and_preserves_unknown_record_keys() {
         let (tmp, bin) = fake_stateful();

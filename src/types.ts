@@ -452,6 +452,13 @@ export interface AgentDefinition {
   defaultThinkingLevel: string | null;
 }
 
+/** 全局兜底状态（只读）；读不到或形状异常时对应字段为 null（显示「未知」）。 */
+export interface RetryStatus {
+  modelFallback: boolean | null;
+  fallbackOn: string | null;
+  fallbackRevertPolicy: string | null;
+}
+
 /** 白名单 config key 的原始值；条目值保持 unknown，未识别的键/值原样保留。 */
 export interface ModelConfig {
   roles: Record<string, unknown>;
@@ -460,6 +467,7 @@ export interface ModelConfig {
   agentAdvisor: Record<string, unknown>;
   fallbackChains: Record<string, unknown>;
   agents: AgentDefinition[];
+  retryStatus: RetryStatus;
 }
 
 /** `update_model_config` 返回：写后复读的新值。 */
