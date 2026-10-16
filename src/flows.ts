@@ -2,7 +2,20 @@
  * 删除计划 + 从节点继续的编排：纯逻辑，便于单测，UI 层注入后端调用。
  */
 import { normalizeError } from "./api";
-import type { SessionSummary } from "./types";
+
+/**
+ * 删除对话框的目标：会话列表行与清理候选共用的最小形状。
+ * `messageCount` 仅会话列表有值（清理候选为 null，不展示消息数）。
+ */
+export interface DeleteTarget {
+  path: string;
+  id: string;
+  title: string;
+  cwd: string;
+  sizeBytes: number;
+  messageCount: number | null;
+  inUse: boolean;
+}
 
 export interface DeletePlan {
   deletable: string[];
@@ -11,7 +24,7 @@ export interface DeletePlan {
 
 /** only 非 inUse 的 path 才提交删除；在用会话列为"将被跳过"。 */
 export function planDelete(
-  byPath: Map<string, SessionSummary>,
+  byPath: Map<string, { inUse: boolean }>,
   paths: string[],
 ): DeletePlan {
   const deletable: string[] = [];

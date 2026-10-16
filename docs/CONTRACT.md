@@ -880,3 +880,70 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   「复制」（`clipboard.ts`）、「跳到来源会话」（**仅当 sessionId 命中当前已加载
   会话列表时可用**，否则禁用，选中该会话）、「在该目录新会话」
   （调用 §13.0 `new_session_in_iterm`；`cwd` 为 null 时禁用；**绝不携带 prompt**）。
+
+## 14. 清理候选（只读，`list_cleanup_candidates`）
+
+> 目标：帮用户找出**可以安全清理**的历史会话。本命令**纯只读**——
+> 不删除、不修改、不移动任何文件，也不写 omp 自己的库。
+> 真正删除仍然只有一条路径：§4.6 `delete_sessions` + 前端 DeleteDialog
+> （占用拒绝、逐条独立失败、路径限定在会话根目录内）。
+
+### 14.1 命令与类型
+
+`list_cleanup_candidates { olderThanDays, topN } -> CleanupCandidate[]`
+
+- `olderThanDays: u32`（`stale` 阈值，天）；`topN: u32`（`large` 名额）。
+  `olderThanDays < 1` → `INVALID_INPUT`。阻塞 IO 在 `spawn_blocking` 内。
+- `CleanupCandidate { path, id, title, cwd, mtime, bytes, reasons, inUse, probeOk }`
+  （camelCase）：`mtime` 为文件 mtime（ISO-8601）；`bytes` 为**删除将释放的
+  总字节**；`reasons: CleanupReason[]`；`inUse` / `probeOk` 来自 §3 的 flock 探测。
+- `CleanupReason`（snake_case）：`empty` | `cwd_missing` | `large` | `stale`。
+- 结果**按 `bytes` 降序**（同值按 path 升序）。无候选时返回空数组（不报错）。
+
+### 14.2 判定规则（命中任一即候选；原因可叠加，顺序固定为 empty → cwd_missing → large → stale）
+
+| 原因 | 判定 | 说明 |
+|---|---|---|
+| `empty` | 整个文件没有任何 `message.role == "user"` 条目 | **仅 v3 可判定**；非 v3 不标 |
+| `cwd_missing` | header 的 `cwd` 缺失或不是可进入目录 | 与列表 `cwdExists` 同一判定 |
+| `large` | 总字节跨全部会话排名前 `topN` **且** ≥ 5 MiB（`LARGE_MIN_BYTES`） | 先按字节排序再取前 N，不足 N 或低于下限的不标 |
+| `stale` | 文件 mtime 早于 `now - olderThanDays` 天 | mtime 取文件系统值 |
+
+- `bytes` = `<file>.jsonl` + 同 stem sibling 目录（**递归**，不跟随符号链接）
+  + `<file>.jsonl.*.bak`（与 §4.6 的删除集合一致）。sibling 若是普通文件则
+  **不计入**（删除时不动它）；不可读的子目录按 0 计（尽力而为，不让整个列表失败）。
+- 扫描范围与列表一致（§2.1：各项目目录顶层非点文件 `*.jsonl`；符号链接目录/
+  文件一律忽略），因此 `path` 恒在会话根目录内。
+- 解析为**流式单遍**：逐行反序列化到只含所需字段的结构体（serde 跳过其余字段），
+  不构造整文件 `Value` 树；仅首个 user 消息文本会额外解析一次。坏行跳过。
+- 标题取 `title` 记录 → header → `title_change` 的最后非空值，全空则用首个
+  user 消息文本（截断 `TITLE_FALLBACK_CHARS`），仍无可用的为 `(无标题)`。
+  简化点：不走 active 路径（与 §4.2.1 在「有 fork 分支」时理论上可能不同）。
+
+### 14.3 占用语义（与写操作门禁一致）
+
+- 被 flock 持有的会话**仍然列出**，但标 `inUse: true`；探测失败标 `probeOk: false`。
+- 二者在 UI 中**都不可勾选**（分别显示「占用中」「占用未知」），
+  与 §4.6 的 `IN_USE` / `PROBE_FAILED` 拒绝规则一致：宁可拒绝也不猜。
+
+### 14.4 前端
+
+- 侧栏「清理」按钮（与「管理」「统计」同风格）→ 主区域 `CleanupView`：
+  「超过 N 天 / 体积前 N 名」两个数字输入、候选表格（标题、cwd 末段、原因标签、
+  体积、修改时间、复选框、「查看」）、顶部「已选 X 个，可释放 Y」、
+  「全选可勾选项」与「删除所选…」。
+- 「删除所选…」**复用** App 的既有批量删除编排与 DeleteDialog：
+  清理视图不新增任何删除路径；删除后刷新会话列表与候选（`refreshToken`）。
+- 「查看」仅在会话出现在当前已加载列表时可点（否则禁用并说明原因——
+  例如「无标题且零用户消息」的会话被 §4.2 隐藏）。
+
+### 14.5 真实数据只读回归（2026-10-16）
+
+`cargo test --lib real_data_cleanup -- --ignored --nocapture`（只读，不改写 `~/.omp`）：
+
+- 68 个顶层会话，**18 个候选**：`empty` 4、`cwd_missing` 4、`large` 10、`stale` 0；
+  占用中 3、占用未知 0；可释放合计约 **271 MB**；耗时约 **0.4 秒**。
+- 最大候选 73 MB（jsonl 2.49 MB + sibling 附件目录约 71 MB），与 `du` 核对一致
+  ——印证体积必须把附件算进去。
+- 与立项时快照（68 个会话、附件 965 文件/53 MB）相比，sessions 目录已增长到
+  约 325 MB（附件 1181 文件），故「可释放合计」远大于快照值。

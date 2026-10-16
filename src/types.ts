@@ -162,6 +162,24 @@ export interface DeleteResult {
   error: AppError | null;
 }
 
+/** 清理候选原因（可叠加）；与 model.rs `CleanupReason` 对应。 */
+export type CleanupReason = "empty" | "cwd_missing" | "large" | "stale";
+
+/** 清理候选（CONTRACT §14）：只读列出，删除仍走 delete_sessions。 */
+export interface CleanupCandidate {
+  path: string;
+  id: string;
+  title: string;
+  cwd: string;
+  /** 文件 mtime（ISO-8601）。 */
+  mtime: string;
+  /** 删除时将释放的总字节（jsonl + 附属目录 + .bak）。 */
+  bytes: number;
+  reasons: CleanupReason[];
+  inUse: boolean;
+  probeOk: boolean;
+}
+
 export interface AppendBranchMarkerRequest {
   path: string;
   nodeId: string;

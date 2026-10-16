@@ -20,6 +20,8 @@ interface SidebarProps {
   onToggleManage: () => void;
   statsActive: boolean;
   onToggleStats: () => void;
+  cleanupActive: boolean;
+  onToggleCleanup: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   selectedPath: string | null;
@@ -50,6 +52,8 @@ export function Sidebar({
   onToggleManage,
   statsActive,
   onToggleStats,
+  cleanupActive,
+  onToggleCleanup,
   checked,
   onToggleCheck,
   selectedPath,
@@ -81,6 +85,9 @@ export function Sidebar({
         </button>
         <button type="button" className="btn" aria-pressed={statsActive} onClick={onToggleStats}>
           统计
+        </button>
+        <button type="button" className="btn" aria-pressed={cleanupActive} onClick={onToggleCleanup}>
+          清理
         </button>
         <button type="button" className="btn" onClick={onOpenCheatSheet}>
           速查

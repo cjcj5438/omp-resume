@@ -667,6 +667,44 @@ pub struct PromptHistoryEntry {
     pub use_count: i64,
 }
 
+// ---------------------------------------------------------------------------
+// list_cleanup_candidates（CONTRACT §14）
+// ---------------------------------------------------------------------------
+
+/// 清理候选原因（可叠加）；序列化为 snake_case。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupReason {
+    /// 整个文件没有任何 user 消息（仅 v3 可判定）。
+    Empty,
+    /// header 记录的 cwd 目录已不存在。
+    CwdMissing,
+    /// 总字节排名前 N 且 ≥ 5 MiB。
+    Large,
+    /// mtime 超过 N 天。
+    Stale,
+}
+
+/// 单个清理候选（只读；删除仍走 `delete_sessions`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupCandidate {
+    pub path: String,
+    pub id: String,
+    /// 同 list 的标题规则（简化：不走活动路径）。
+    pub title: String,
+    pub cwd: String,
+    /// 文件 mtime（ISO-8601）。
+    pub mtime: String,
+    /// 删除时将释放的总字节：jsonl + sibling 目录（递归，不跟随符号链接）+ `.bak`。
+    pub bytes: u64,
+    pub reasons: Vec<CleanupReason>,
+    /// flock 探测：正被 omp 占用。
+    pub in_use: bool,
+    /// flock 探测是否成功；false 时按保守规则不可删除（标注「占用未知」）。
+    pub probe_ok: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

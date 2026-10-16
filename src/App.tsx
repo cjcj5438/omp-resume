@@ -21,13 +21,14 @@ import type {
 } from "./types";
 import { errorText } from "./format";
 import { applyPins, canFocusRefresh, filterGroups, retainExisting } from "./listUtils";
-import { runContinueFromNode, type ContinueOutcome } from "./flows";
+import { runContinueFromNode, type ContinueOutcome, type DeleteTarget } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
 import { Sidebar } from "./components/Sidebar";
 import { DetailPane } from "./components/DetailPane";
 import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
 import { StatsView } from "./components/StatsView";
+import { CleanupView } from "./components/CleanupView";
 import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetDialog } from "./components/CheatSheetDialog";
@@ -47,10 +48,12 @@ function App() {
   const [query, setQuery] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [deleteTargets, setDeleteTargets] = useState<SessionSummary[] | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<DeleteTarget[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
-  const [view, setView] = useState<"sessions" | "manage" | "stats" | "history">("sessions");
+  const [view, setView] = useState<"sessions" | "manage" | "stats" | "history" | "cleanup">("sessions");
+  // 清理候选项在每次删除后要重新扫描（只读命令，代价可接受）。
+  const [cleanupVersion, setCleanupVersion] = useState(0);
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
   // 手动重新检查：重启应用即可。
   const [update, setUpdate] = useState<Update | null>(null);
@@ -228,16 +231,19 @@ function App() {
   const requestDelete = useCallback(
     async (paths: string[]): Promise<DeleteResult[]> => {
       const results = await deleteSessions({ paths });
-      // 删除成功的会话同时清理其置顶；id 取自刷新前的 byPath 快照。
+      // 删除成功的会话同时清理其置顶；id 优先取当前删除目标的快照
+      // （清理候选中可能有未出现在会话列表里的会话），再回退 byPath。
+      const targetIds = new Map((deleteTargets ?? []).map((t) => [t.path, t.id]));
       const deletedIds = results
         .filter((r) => r.ok)
-        .map((r) => byPath.get(r.path)?.id)
+        .map((r) => targetIds.get(r.path) ?? byPath.get(r.path)?.id)
         .filter((id): id is string => id != null);
       if (deletedIds.length > 0) setPins((prev) => removeSessionPins(prev, deletedIds));
       await load();
+      setCleanupVersion((v) => v + 1);
       return results;
     },
-    [byPath, load],
+    [byPath, load, deleteTargets],
   );
 
   const handleTogglePin = useCallback(
@@ -284,6 +290,10 @@ function App() {
         onToggleStats={() => setView((v) => (v === "stats" ? "sessions" : "stats"))}
         historyActive={view === "history"}
         onToggleHistory={() => setView((v) => (v === "history" ? "sessions" : "history"))}
+        cleanupActive={view === "cleanup"}
+        onToggleCleanup={() =>
+          setView((v) => (v === "cleanup" ? "sessions" : "cleanup"))
+        }
         checked={checked}
         onToggleCheck={(path, on) =>
           setChecked((prev) => {
@@ -321,7 +331,18 @@ function App() {
           onBack={() => setView("sessions")}
           onCheckOmp={handleCheckOmp}
         />
-      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} /> : (
+      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} /> : view === "cleanup" ? (
+        <CleanupView
+          onBack={() => setView("sessions")}
+          canView={(path) => byPath.has(path)}
+          onView={(path) => {
+            setView("sessions");
+            setSelectedPath(path);
+          }}
+          onDelete={setDeleteTargets}
+          refreshToken={cleanupVersion}
+        />
+      ) : (
         <DetailPane
           session={selected}
           gone={selectedGone}

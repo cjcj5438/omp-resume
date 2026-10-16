@@ -1,12 +1,12 @@
 /** 删除确认对话框：列出目标、跳过在用会话、展示逐条结果。 */
 import { useState } from "react";
-import type { DeleteResult, SessionSummary } from "../types";
+import type { DeleteResult } from "../types";
 import { displayCwd, formatSize } from "../format";
-import { planDelete } from "../flows";
+import { planDelete, type DeleteTarget } from "../flows";
 import { Modal } from "./ui";
 
 interface DeleteDialogProps {
-  targets: SessionSummary[];
+  targets: DeleteTarget[];
   /** 仅提交可删除路径；App 侧负责刷新与清理选择。 */
   requestDelete: (paths: string[]) => Promise<DeleteResult[]>;
   onClose: () => void;
@@ -87,7 +87,7 @@ export function DeleteDialog({ targets, requestDelete, onClose }: DeleteDialogPr
             <div className="row-meta">
               <span className="mono">{displayCwd(t.cwd)}</span>
               <span>{formatSize(t.sizeBytes)}</span>
-              <span>{t.messageCount} 条消息</span>
+              {t.messageCount != null ? <span>{t.messageCount} 条消息</span> : null}
               {t.inUse ? <span className="badge badge-accent">使用中，将被跳过</span> : null}
             </div>
           </li>

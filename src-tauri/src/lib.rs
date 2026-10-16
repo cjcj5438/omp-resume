@@ -13,6 +13,8 @@
 /// 全局共享的数据模型：命令参数、返回值与错误类型。
 pub mod model;
 
+/// 清理候选（只读扫描；删除仍走 `delete_sessions`，见 CONTRACT §14）。
+pub mod cleanup;
 pub mod config;
 pub mod history;
 pub mod lock;
@@ -123,6 +125,21 @@ async fn delete_sessions(
     tauri::async_runtime::spawn_blocking(move || ops::commands::delete_sessions_impl(&cfg, &paths))
         .await
         .map_err(io_join_error)
+}
+
+/// CONTRACT §14：只读清理候选（阻塞 IO 在后台线程；不删除任何文件）。
+#[tauri::command]
+async fn list_cleanup_candidates(
+    cfg: tauri::State<'_, config::Config>,
+    older_than_days: u32,
+    top_n: u32,
+) -> Result<Vec<model::CleanupCandidate>, model::AppError> {
+    let cfg = cfg.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cleanup::list_candidates(&cfg, std::time::SystemTime::now(), older_than_days, top_n)
+    })
+    .await
+    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.7：从树节点续聊（追加 marker 行）。
@@ -263,6 +280,7 @@ pub fn run() {
             get_tree,
             check_session,
             delete_sessions,
+            list_cleanup_candidates,
             append_branch_marker,
             open_in_iterm,
             new_session_in_iterm,

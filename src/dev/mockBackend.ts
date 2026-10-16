@@ -5,10 +5,12 @@
  * 已知与真后端的分歧：
  * - user scope 的 `project` 参数在 mock 中不校验（真后端按 CONTRACT §4.30 返回 INVALID_INPUT）。
  * - mock 的 revision 是规范 JSON 的 SHA（真后端是原始文件 bytes 的 SHA），且永不为 "unreadable"。
+ * - `list_cleanup_candidates` 的 `bytes` 直接用夹具的 `sizeBytes`（真后端会额外递归统计
+ *   sibling 附件目录与 `.bak`）；夹具里把几个会话的 `sizeBytes` 调大以覆盖 `large` 原因。
  */
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
-import type { AppError, MarketplaceSummary, OmpOpResult, PluginSummary, PluginUpgradeChange, SkillSummary } from "../types";
+import type { AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, OmpOpResult, PluginSummary, PluginUpgradeChange, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry } from "../types";
 import {
@@ -330,6 +332,45 @@ export async function installMockBackend(): Promise<MockHandle> {
           sessionsDir: "/Users/chenjing/.omp/agent/sessions",
           ownersDir: "/Users/chenjing/.omp/run/session-owners",
         };
+      case "list_cleanup_candidates": {
+        const olderThanDays = Number(args["olderThanDays"]);
+        const topN = Number(args["topN"]);
+        if (!Number.isFinite(olderThanDays) || olderThanDays < 1) {
+          throw err("INVALID_INPUT", "超过天数须为 ≥1 的整数");
+        }
+        const LARGE_MIN = 5 * 1024 * 1024;
+        // large 与真后端同义：跨全部会话按总字节排名前 topN 且 ≥5 MiB。
+        const largePaths = new Set(
+          [...sessions]
+            .sort((a, b) => b.summary.sizeBytes - a.summary.sizeBytes)
+            .slice(0, Number.isFinite(topN) ? Math.max(0, Math.floor(topN)) : 0)
+            .filter((s) => s.summary.sizeBytes >= LARGE_MIN)
+            .map((s) => s.summary.path),
+        );
+        const staleCut = Date.now() - olderThanDays * 86400000;
+        return sessions
+          .map((s): CleanupCandidate => {
+            const summary = s.summary;
+            const reasons: CleanupReason[] = [];
+            if (summary.formatSupported && summary.messageCount === 0) reasons.push("empty");
+            if (!summary.cwdExists) reasons.push("cwd_missing");
+            if (largePaths.has(summary.path)) reasons.push("large");
+            if (Date.parse(summary.modifiedAt) < staleCut) reasons.push("stale");
+            return {
+              path: summary.path,
+              id: summary.id,
+              title: summary.title,
+              cwd: summary.cwd,
+              mtime: summary.modifiedAt,
+              bytes: summary.sizeBytes,
+              reasons,
+              inUse: summary.inUse,
+              probeOk: summary.probeOk,
+            };
+          })
+          .filter((c) => c.reasons.length > 0)
+          .sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path));
+      }
       case "list_sessions":
         return buildListResult(sessions);
       case "get_session_usage": {

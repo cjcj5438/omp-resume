@@ -204,7 +204,7 @@ const s2: FixtureSession = withPath(
       inUse: true,
       occupant: { pid: 3074, app: "VS Code", appVersion: "1.138.0" },
       messageCount: 31,
-      sizeBytes: 2097152,
+      sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
       modifiedAt: iso(1),
       firstUserMessage: "修复示例代理连接失败",
     }),
@@ -361,7 +361,7 @@ const s5: FixtureSession = {
     title: "🔀 分支很多的会话：鉴权方案 A/B 对比",
     messageCount: 9,
     branchCount: 3,
-    sizeBytes: 4194304,
+    sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
     modifiedAt: iso(60 * 20),
     firstUserMessage: "帮我看看这个项目的结构",
   }),
@@ -449,7 +449,7 @@ const s8: FixtureSession = withPath(
       cwd: "/Users/chenjing/work/secret-project",
       title: LONG_TITLE,
       messageCount: 5,
-      sizeBytes: 512000,
+      sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
       modifiedAt: iso(60 * 50),
       badLines: 3,
       firstUserMessage: "标题很长",
@@ -486,6 +486,7 @@ const s9: FixtureSession = withPath(
       cwd: "/Users/chenjing/work/secret-project",
       title: "🔒 权限问题排查",
       probeOk: false,
+      sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
       messageCount: 7,
       modifiedAt: iso(60 * 55),
       firstUserMessage: "权限问题排查",
@@ -519,7 +520,29 @@ const s10: FixtureSession = withPath(
   s10path,
 );
 
-export const FIXTURE_SESSIONS: FixtureSession[] = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10];
+// ---- 会话 11：空会话（v3，有标题但零用户消息）→ 清理候选 `empty` ----
+const s11id = "01a18888-4444-5555-6666-33528fc10009";
+const s11path = sessPath("-work-secret-project", "2026-10-15T09-00-00-000Z", s11id);
+const s11lin = linearTree("s11", []);
+const s11: FixtureSession = withPath(
+  {
+    summary: baseSummary({
+      id: s11id,
+      path: s11path,
+      cwd: "/Users/chenjing/work/secret-project",
+      title: "🧹 空会话：只有系统提示，没有用户消息",
+      messageCount: 0,
+      branchCount: 0,
+      sizeBytes: 65536,
+      modifiedAt: iso(90),
+      firstUserMessage: null,
+    }),
+    ...s11lin,
+  },
+  s11path,
+);
+
+export const FIXTURE_SESSIONS: FixtureSession[] = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11];
 
 export function buildListResult(sessions: FixtureSession[]): ListSessionsResult {
   const byCwd = new Map<string, FixtureSession[]>();

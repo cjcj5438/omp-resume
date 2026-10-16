@@ -3,6 +3,7 @@
  * 命令名 snake_case，参数/返回值 JSON camelCase（见 docs/CONTRACT.md）。
  */
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { CleanupCandidate } from "./types";
 import type {
   AppendBranchMarkerRequest,
   AppendBranchMarkerResult,
@@ -114,6 +115,14 @@ export function deleteSessions(
   req: DeleteSessionsRequest,
 ): Promise<DeleteResult[]> {
   return call("delete_sessions", { paths: req.paths });
+}
+
+/** 只读清理候选（CONTRACT §14）；不删除任何文件。 */
+export function listCleanupCandidates(
+  olderThanDays: number,
+  topN: number,
+): Promise<CleanupCandidate[]> {
+  return call("list_cleanup_candidates", { olderThanDays, topN });
 }
 
 export function appendBranchMarker(

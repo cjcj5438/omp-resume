@@ -18,15 +18,16 @@ fn is_top_jsonl(name: &str) -> bool {
     name.ends_with(".jsonl") && !name.starts_with('.') && name.len() > ".jsonl".len()
 }
 
-/// 列出全部会话（每个文件只解析一次）。
-pub fn list_sessions(cfg: &Config) -> Result<ListSessionsResult, AppError> {
-    let root = std::fs::canonicalize(&cfg.sessions_dir).map_err(|e| {
+/// 扫描会话根：canonicalize 后列出各项目目录顶层的 `*.jsonl`（CONTRACT §2.1）。
+/// 返回 `(规范化根, [(编码目录名, 文件路径)])`；符号链接目录/文件、点文件、
+/// 嵌套目录与 `.bak` 一律忽略。
+pub fn scan_top_level(sessions_dir: &Path) -> Result<(PathBuf, Vec<(String, PathBuf)>), AppError> {
+    let root = std::fs::canonicalize(sessions_dir).map_err(|e| {
         AppError::new(
             ErrorCode::Io,
-            format!("会话根目录不可用：{}：{e}", cfg.sessions_dir.display()),
+            format!("会话根目录不可用：{}：{e}", sessions_dir.display()),
         )
     })?;
-    // 第一遍：各项目目录顶层 .jsonl（忽略点文件、嵌套目录、.bak）。
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     let dirs = std::fs::read_dir(&root)
         .map_err(|e| AppError::new(ErrorCode::Io, format!("无法扫描 {}：{e}", root.display())))?;
@@ -60,6 +61,12 @@ pub fn list_sessions(cfg: &Config) -> Result<ListSessionsResult, AppError> {
             files.push((dir_name.clone(), ent.path()));
         }
     }
+    Ok((root, files))
+}
+
+/// 列出全部会话（每个文件只解析一次）。
+pub fn list_sessions(cfg: &Config) -> Result<ListSessionsResult, AppError> {
+    let (root, files) = scan_top_level(&cfg.sessions_dir)?;
 
     // 第二遍：逐文件一次解析 → 摘要；同时建 fork 用全局表。
     struct Row {
