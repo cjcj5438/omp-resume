@@ -5,10 +5,11 @@
 > 后端实现时**不得**另起一套命名或语义，只能填充本文规定的行为。
 
 产品：macOS-only 原生桌面应用（Tauri 2 + React + TS + Vite + Rust），中文 UI。
-管理 `omp`（oh-my-pi，`~/.local/bin/omp`，v18.10.3）的会话。v1 仅含：
+管理 `omp`（oh-my-pi）的会话、CLI 版本、用户级插件与技能。功能包括：
 会话浏览（按项目分组）、只读会话预览、树视图、iTerm 一键续聊、
-永久删除、从树节点续聊。无重命名、无 fork 建文件、无导出、无统计、
-无监控、无全文搜索、无多 profile、无回收站。
+永久删除、从树节点续聊、omp 版本查询与更新、插件/marketplace 管理、技能查询/更新、
+MCP 原生配置管理。无会话重命名、无 fork 建文件、无导出、无统计、无监控、
+无全文搜索、无多 profile、无回收站。
 
 ## 0. 一致性规则（给后续 worker）
 
@@ -30,6 +31,9 @@
   `$HOME/.omp/run/session-owners`。
 - `get_config() -> { sessionsDir, ownersDir }` 返回解析后的绝对路径。
 - 启动参数由 `main.rs` 解析后存入 Tauri `State`（实现细节，后续 worker 定）。
+- omp 二进制：存在的 `OMP_RESUME_OMP_BIN` 环境变量路径 >
+  `$HOME/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` >
+  `$HOME/.bun/bin/omp`；逐项检查存在性，不依赖 GUI 进程的 PATH 查找。
 
 ## 2. 会话文件格式（实测，已验证）
 
@@ -362,6 +366,214 @@ header `.title`、每个 `title_change` 的 `.title`。
   可注入（`&dyn Fn(&str) -> Result<(), AppError>`；生产传 `ops::iterm::open_tab`），
   测试注入桩以断言精确命令串而不启动 iTerm。
 
+### 4.9 `omp_version() -> { version, path }`
+
+- 按 §1 解析 omp，运行 `--version`（10 秒超时），本地只读、不联网。
+- `version` 为 `omp/18.11.1` 中的版本字符串（含预发布后缀）；无法解析为 null。
+  `path` 为解析到的二进制路径；未找到时两个字段均为 null，不报错，UI 隐藏徽章。
+
+### 4.10 `omp_update_check() -> { current, latest, upToDate, raw }`
+
+- 运行 `omp update --check`（60 秒超时），只检查、不安装；未找到 → `OMP_NOT_FOUND`，
+  非零退出 → `OMP_FAILED`。查询与 §4.9 不占用写操作门禁。
+- `Current version: X` → `current`，`New version available: Y` → `latest`；
+  无对应输出时为 null。仅含 `Already up to date`（忽略大小写）且没有新版提示时
+  `upToDate:true`。不从未识别文本猜测状态。
+- `raw` 是去除 ANSI 控制序列后的完整合并输出。包管理器托管等未识别输出原样展示，
+  提示「未识别的输出，可能由包管理器托管；请在其管理器中更新」，不提供更新按钮。
+
+### 4.11 `omp_update_run { onLine } -> { before, after, changed, output }`
+
+- 全局 `OmpBusy` 写操作门禁（RAII 自动释放）；已占用 → `BUSY`，
+  文案「另一个 omp 操作正在进行」。本命令只暴露固定参数，不接受任意 CLI 参数。
+- 查询更新前版本 → `omp update`（15 分钟超时）→ 查询更新后版本；
+  `before` / `after` 无法解析为 null，`changed = before != after && after != null`。
+  非零退出 → `OMP_FAILED`；退出 0 不代表升级成功（包管理器托管可不做修改），
+  `changed:false` 时只显示「版本未变化」与输出，不宣称成功。
+- `onLine` 为 `Channel<string>`，每行去除 ANSI 后实时发送；`output` 为合并完整输出。
+  更新中不可关闭对话框；版本改变时提示已打开的 omp 会话需重启后使用新版本。
+- 所有阻塞工作在 `spawn_blocking` 中执行。runner 使用绝对路径、不经过 shell，
+  stdin 为 null，stdout/stderr 由 reader 线程经通道按到达顺序逐行合并；
+  `NO_COLOR=1`，PATH 为 `/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:` +
+  继承 PATH + `:/usr/bin:/bin:/usr/sbin:/sbin`。超时杀进程并回收子进程与 reader 线程，
+  返回 `TIMEOUT`；超时与非零退出错误文案保留输出末约 500 字。
+
+### 4.12 `omp_plugins_list() -> { plugins, npm, marketplaces, warnings }`
+
+- 仅管理 user scope。运行 `omp plugin list --json --scope user` 与
+  `omp plugin marketplace list --scope user`，各限 60 秒，不占写门禁。
+  两次查询独立；任意一次失败或插件 JSON 无法解析，仍返回另一部分并追加中文 `warnings`。
+  omp 不存在仍报 `OMP_NOT_FOUND`。
+- marketplace 插件 JSON 形如 `{marketplace:[{id, scope, entries:[...]}], npm:[...]}`；
+  每个插件仅取 `entries` 中 `scope:"user"` 的条目，无 user 条目则跳过。
+  `PluginSummary {id, name, marketplace, version, enabled, installedAt, lastUpdated, installPath}`；
+  `id` 为 `name@marketplace`，`enabled` 缺省 true；其余缺失元数据为 null。
+- npm 仅只读展示 `{name, version:string|null}`，对未知条目尽力提取，异常条目不拖垮列表。
+  **已在 omp 18.11.1 沙箱实测** `omp-enforce-uv@0.3.0`：npm 数组条目含
+  `{name, version, path, manifest, enabledFeatures, enabled}`，这里只公开名称与版本。
+  npm 安装会提示 `--scope` 仅用于 marketplace 并忽略该标志；本应用不提供 npm 写操作。
+- marketplace 文本仅解析 `Configured Marketplaces:` 后的缩进行
+  `名称  来源` → `{name, source}`；`No marketplaces configured` 或未识别输出 → 空数组，
+  不猜测、不报解析错误。
+
+### 4.13 `omp_plugin_discover { marketplace } -> DiscoverEntry[]`
+
+- `omp plugin discover <marketplace> --scope user`（60 秒）；解析缩进行
+  `name@version` 与随后更深缩进的描述 → `{name, version, description}`。
+  容忍空行、额外标题与未知行，不能识别时为空数组。
+
+### 4.14 `omp_plugin_install { id, onLine } -> OmpOpResult`
+
+- `omp plugin install <id> --scope user`。
+
+### 4.15 `omp_plugin_uninstall { id, onLine } -> OmpOpResult`
+
+- `omp plugin uninstall <id> --scope user`。
+
+### 4.16 `omp_plugin_set_enabled { id, enabled, onLine } -> OmpOpResult`
+
+- 根据 `enabled` 运行 `omp plugin enable|disable <id> --scope user`。
+
+### 4.17 `omp_plugin_upgrade { id?, onLine } -> { output, changes }`
+
+- `omp plugin upgrade [id] --scope user`；id 为 null 时升级全部 user marketplace 插件。
+- `changes: {id, scope, from:string|null, to}[]` 解析以下两种 user 行：
+  `  hello-plugin@probe-mkt (user): 1.0.0 -> 1.1.0` 与
+  `Upgraded hello-plugin@probe-mkt (user) to 1.1.0`（此形式 `from:null`）。
+  同一 id/scope 的前后行合并；未识别输出仍完整保留在 `output`；
+  `All marketplace plugins are up to date.` → 空 changes，不根据退出 0 编造版本变化。
+
+### 4.18 `omp_marketplace_update { name?, onLine } -> OmpOpResult`
+
+- `omp plugin marketplace update [name] --scope user`；name 为 null 时更新全部来源缓存。
+
+### 4.19 `omp_marketplace_add { source, onLine } -> OmpOpResult`
+
+- `omp plugin marketplace add <source> --scope user`，保留原始输出（如
+  `✔ Added marketplace: /tmp/omp-mkt`），不从提示行伪造 marketplace 名称。
+
+### 4.20 `omp_marketplace_remove { name, onLine } -> OmpOpResult`
+
+- `omp plugin marketplace remove <name> --scope user`。
+- §4.14–§4.20 共用 §4.11 的 `OmpBusy` RAII 门禁、ANSI 清理、Channel 逐行日志、
+  stdin=null、15 分钟长超时（Git 来源可能耗时）；`OmpOpResult {output}`。
+  非零退出 → `OMP_FAILED`（中文摘要 + 输出末约 500 字），超时 → `TIMEOUT`，忙 → `BUSY`。
+  所有阻塞工作在 `spawn_blocking` 中完成，不暴露自由 argv。
+- 参数校验失败 → `INVALID_INPUT`：插件 id 严格为
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`；
+  marketplace 名称为 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`。
+  source 非空、最多 512 字、无控制字符且不以 `-` 开头；仅允许 `owner/repo` 简写、
+  `http://` / `https://` / `ssh://` URL、`git@host:path`、绝对路径或 `~/` 路径。
+  路径中的空格/分号仅作为 argv 字面值，不交给 shell 执行。
+- 已在隔离 HOME 的 omp 18.11.1 实测 install/uninstall/enable/disable/upgrade、
+  discover 与 marketplace add/list/update/remove 均接受 `--scope user`，无需省略。
+
+### 4.21 `omp_skills_list() -> { skills, warnings }`
+
+- `omp skill list -g --json`（60 秒，只读）；每条完整镜像
+  `{name, description, filePath, baseDir, source, hide}`，未知字段忽略，缺失字符串为 `""`、
+  hide 缺省 false；保留上游字符串 warnings。坏 JSON → `OMP_FAILED`。
+
+### 4.22 `omp_skills_update { onLine } -> OmpOpResult`
+
+- `omp skill update -g`，绝不传 `-y`（不能自动批准带脚本的技能）。
+  共用全局 `OmpBusy`、15 分钟超时、逐行日志与错误语义。
+- 只更新 registry 管理的全局技能；`~/.agents/skills` 由另一个工具维护，不受本命令影响。
+  本节没有技能安装、删除、任意命令或项目级变更入口。
+> §4.23–§4.29 保留未用；MCP 一组固定从 §4.30 起编号。
+
+### 4.30 MCP 配置范围、类型与安全规则
+
+- 所有 MCP 命令直接读写 JSON，不启动 omp、不联网、不占用 `OmpBusy`。
+  阻塞文件 IO 在 `spawn_blocking` 内执行；三个变更命令共用独立的进程级 `Mutex`，
+  锁覆盖重新读取、比较 revision、修改和原子写入；只读命令不加锁。
+- `scope: "user" | "project"`。只允许默认 profile 的 `$HOME/.omp/agent/mcp.json`
+  与 `<project>/.omp/mcp.json`；不接受任意配置文件路径，不扫描其他工具配置。
+  `project?: string|null` 是绝对、存在且为目录的 cwd，canonicalize 后不得等于 HOME；
+  project scope 必须提供；只要提供 project 就校验，失败为 `INVALID_INPUT`。
+  纯逻辑层注入 HOME，测试只用临时目录。
+- 文件 JSON 顶层与 `mcpServers`（若有）必须是对象。保留 `$schema`、
+  `disabledServers`、`enabledServers`、其他服务器及所有未知字段与键顺序。
+  JSON 重序列化为 2 空格缩进并补末尾换行，原始格式/空白可能改变，内容及未修改键的顺序保留。
+- `revision` 有三种值：不存在为 `"absent"`；权限/IO 错误导致 bytes 无法读取时为 `"unreadable"`；
+  可读取时为**原始文件 bytes** 的小写十六进制 SHA-256（包括 JSON 解析失败的文件）。
+  `expectedRevision:"unreadable"` 或当前文件不可读时，所有变更先返回 `IO`，不触碰文件或目录。
+  其余变更重新读取并比较 `expectedRevision`，不一致返回 `CONFLICT`（「文件已被外部修改」），
+  不覆盖文件；解析失败返回 `IO`（「配置文件不是合法 JSON，请先手动修复」），绝不重建覆盖。
+  同目录独占创建临时文件后 rename；保留原文件权限位，新文件权限 `0600`。
+  缺少 `.omp/`（用户级还包括 `agent/`）时按需创建；临时文件在失败时清理。
+- 软链接写穿到目标、保留链接：目标 `mcp.json` 本身是软链接（dotfiles 常见做法）时，
+  变更写穿到最终目标（临时文件 + rename 都在目标目录），链接本身保持不动，
+  权限位取自目标；失效链接（目标缺失）拒绝写入并报 `IO`
+  「配置文件是一个失效的软链接，请先修复」。读取与 revision 本就跟随链接。
+- 列表绝不返回 env/header **值**、args 内容、auth/oauth 内容，也不生成可被回写的掩码值。
+  只有 `mcp_get_server` 供编辑框返回真实配置；禁止记录/展示这些值到日志。
+
+### 4.31 `mcp_list { project? } -> McpListResult`
+
+- `{ files: McpFileInfo[], servers: McpServer[] }`；顺序为 user、project，
+  各文件服务器按配置键顺序。未提供 project 时只有用户文件。
+- `McpFileInfo { scope, path, exists, readError: string|null, revision,
+  disabledServers: string[], enabledServers: string[] }`。
+  单文件读取/解析失败记中文 `readError`、省略该文件服务器，不让整个命令失败；
+  项目文件的两个覆盖列表始终为 `[]`，只读取用户文件的同名覆盖列表。
+- `McpServer { scope, name, transport: "stdio"|"http"|"sse"|"unknown",
+  command: string|null, argCount: number, url: string|null, enabled: boolean,
+  effective: boolean, shadowedBy: null|"project"|"disabledServers"|"disabled",
+  envKeys: string[], headerKeys: string[], hasAuth: boolean }`。
+  `enabled` 为源条目的自身开关（缺省 true）；`hasAuth` 表示存在非 null 的 auth 或 oauth。
+  未写 type 时 command 条目推断 stdio，只有 url 的条目推断 http；无法识别为 unknown。
+- 按名称先选 project，否则 user；不合并同名定义。实际有效性（从上至下优先）：
+
+  | 条件 | effective | shadowedBy |
+  |---|---|---|
+  | 用户 disabledServers 包含该名称（包括同名落败条目） | false | disabledServers |
+  | 用户条目被同名项目条目覆盖 | false | project |
+  | 胜出条目 enabled=false，且用户 enabledServers 未包含名称 | false | disabled |
+  | 胜出条目 enabled=true 或用户 enabledServers 包含名称 | true | null |
+
+  enabledServers 永远不能越过 disabledServers；项目文件自己的覆盖列表不参与计算。
+
+### 4.32 `mcp_get_server { scope, project?, name } -> McpServerRaw`
+
+- `{ config: unknown, revision: string }`，config 为该条目的真实 JSON（包括 secret）。
+  每次重新读文件，无内存缓存；文件或名称不存在为 `NOT_FOUND`。
+
+### 4.33 `mcp_save_server { scope, project?, name, config, expectedRevision, originalName? } -> McpSaveResult`
+
+- `{ revision: string }`。新增或替换 `mcpServers[name]`；`originalName` 用于重命名：
+  必须存在，移除旧键并插入新键；新名称若已被其他条目使用则 `INVALID_INPUT`，不覆盖其他服务器。
+- 名称 1–100 个字符，仅 ASCII 字母/数字、`_`、`-`、`.`、`:`，
+  允许非空名称段之间的**单个空格**，不允许首尾空格或连续空格。
+- config 必须是对象；显式 type 仅 stdio/http/sse。未写 type 按 §4.31 推断，
+  无 command/url 时按 stdio 校验；stdio 必须有非空 command，http/sse 必须有非空 url；
+  command 与 url 不可同时存在。args 为字符串数组，env/headers 为字符串值对象，
+  enabled 为 bool，timeout 为非负数（允许 0）。这些错误均返回中文 `INVALID_INPUT`。
+- **防掩码回写**：env/headers 任一值若全由 `•` 组成（包括 `••••`），返回 `INVALID_INPUT`，
+  文案指出对应键名，文件 bytes 不变；不会用占位符覆盖真实 secret。
+- 新文件按顺序创建 `$schema`（OMP 官方 mcp-schema.json URL）与 `mcpServers`；
+  只改目标条目，未修改字段/其他条目的内容与键顺序不变。
+
+### 4.34 `mcp_set_enabled { scope, project?, name, enabled, expectedRevision } -> McpSaveResult`
+
+- 名称不存在为 `NOT_FOUND`。禁用写入 `enabled:false`；启用则**删除** enabled 键，
+  用缺省 true，不写 `enabled:true`。其余字段、用户覆盖列表不动；
+  因 disabledServers 或同名项目条目而无效的服务器，单改自身开关不保证实际有效。
+- revision、输入校验、无效 JSON 拒绝、原子写入与 §4.33 相同。
+
+### 4.35 `mcp_delete_server { scope, project?, name, expectedRevision } -> McpSaveResult`
+
+- 只移除目标键，名称不存在为 `NOT_FOUND`；不删空文件，不清理其他服务器。
+  不触碰 disabledServers/enabledServers 中的旧名称（残留无害）。
+  revision 与原子写入规则同 §4.33。
+- 已知限制：仅默认 profile；不读取 PI_CONFIG_DIR/PI_CODING_AGENT_DIR 覆盖；
+  不模拟不同名称等价 endpoint 的去重，不模拟 `mcp.enableProjectConfig` 或运行时连接/浏览器过滤。
+  `effective` 仅表示这两个原生文件中的名称优先级/开关规则，并非在线状态。
+  正在运行的 omp 会话需 `/mcp reload` 或重启后读取修改；本应用不负责连接测试与 OAuth 登录。
+- 已知限制（跨进程竞态）：与 omp 之间没有共享锁协议；在最终 revision 复检与 rename 之间
+  （约数十微秒）发生的外部写入会被覆盖且无提示；应用内由 Mutex 串行，
+  跨进程只靠 revision 比对降低概率。
+
 ## 5. 建树算法（`list/get_conversation/get_tree` 共用）
 
 1. 逐行解析；坏行计数跳过。首行 `title` 与 `session` header 不入树。
@@ -397,21 +609,30 @@ header `.title`、每个 `title_change` 的 `.title`。
 | `INVALID_NODE` | nodeId 未知 / 非保留节点 |
 | `IO` | 其他文件系统失败 |
 | `ITERM_FAILED` | AppleScript / iTerm 调用失败 |
+| `OMP_NOT_FOUND` | 未找到 omp 二进制（§4.9 除外） |
+| `OMP_FAILED` | omp 非零退出或技能列表 JSON 无法解析；中文摘要（非零退出附输出末约 500 字） |
+| `BUSY` | 另一个 omp 写操作正在进行 |
+| `TIMEOUT` | omp 执行超过期限；已杀进程并回收，附部分输出末尾 |
+| `INVALID_INPUT` | 用户输入不合法 |
+| `CONFLICT` | 文件已被外部修改 |
 | `UNKNOWN` | **仅前端**：传输层或未预期失败的归一化（后端永不产生） |
 
 `AppError { code, message }`；`message` 为中文人类可读。
 
 ## 8. 类型文件
 
-- `src-tauri/src/model.rs`：serde 权威定义（含 `AppResult<T>` 与 3 个
+- `src-tauri/src/model.rs`：serde 权威定义（含 `AppResult<T>` 与 4 个
   序列化单测）。`Option` 字段序列化为 null（不明缺省，保持全字段）。
 - `src/types.ts`：逐字段镜像（`Option<T>` → `T | null`，
   `u64/usize` → `number`，`Value` → `unknown`）。
 - `src/api.ts`：每命令一函数 + `normalizeError`。
   后端 `invoke` 拒绝值即 `AppError` 形状；未知形状降级 `UNKNOWN`。
 - 后端模块布局（`src-tauri/src/`）：`config.rs`（配置解析 + 路径校验）、
-  `lock.rs`（顶层，flock 占用探测）、`sessions/`（`parse` 解析 + 树索引、
-  `list` / `conversation` / `tree`）、`ops/`（删除 / 标记 / iTerm）。
+  `lock.rs`（顶层，flock 占用探测）、`occupant.rs`（占用归属识别）、
+  `sessions/`（`parse` 解析 + 树索引、`list` / `conversation` / `tree`）、
+  `ops/`（删除 / 标记 / iTerm）、`omp_cli.rs`（omp 路径解析 / 安全 runner /
+  版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
+  `mcp_config.rs`（MCP 原生配置读写）。
 
 ## 9. 常量
 
@@ -436,6 +657,14 @@ header `.title`、每个 `title_change` 的 `.title`。
   发布后必须在 `.app` 的 Info.plist 里验证。
 - `npm run tauri build`（不签名）产物
   `src-tauri/target/release/bundle/macos/omp-resume.app` 可启动。
+
+## 11. 纯前端功能（无后端命令）
+
+- **置顶**（`src/pins.ts`）：项目（cwd）与会话（id）两级置顶，仅存 WebView
+  `localStorage`（键 `omp-resume:pins:v1`），不修改会话文件，不经过后端。
+- **复制会话 ID**（`src/clipboard.ts`）：详情头 ID 按钮写入剪贴板，纯前端。
+- **全部更新**：前端按序调用 §4.18 → §4.17 → §4.22 → §4.10，首个失败即停；
+  有新版 omp 时只打开更新对话框，不自动执行 `omp update`。无独立命令。
 
 ## 附录 A. 真实条目示例（节选，已脱敏截断）
 

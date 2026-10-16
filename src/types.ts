@@ -13,6 +13,12 @@ export type ErrorCode =
   | "INVALID_NODE"
   | "IO"
   | "ITERM_FAILED"
+  | "OMP_NOT_FOUND"
+  | "OMP_FAILED"
+  | "BUSY"
+  | "TIMEOUT"
+  | "INVALID_INPUT"
+  | "CONFLICT"
   | "UNKNOWN";
 
 export interface AppError {
@@ -168,4 +174,167 @@ export interface AppendBranchMarkerResult {
 
 export interface OpenInItermRequest {
   path: string;
+}
+
+export interface OmpVersion {
+  version: string | null;
+  path: string | null;
+}
+
+export interface OmpUpdateCheck {
+  current: string | null;
+  latest: string | null;
+  upToDate: boolean;
+  raw: string;
+}
+
+export interface OmpUpdateResult {
+  before: string | null;
+  after: string | null;
+  changed: boolean;
+  output: string;
+}
+
+// MCP 原生配置（CONTRACT §4.30–§4.35）。
+export type McpScope = "user" | "project";
+export type McpTransport = "stdio" | "http" | "sse" | "unknown";
+export type McpShadowedBy = "project" | "disabledServers" | "disabled";
+
+export interface McpFileInfo {
+  scope: McpScope;
+  path: string;
+  exists: boolean;
+  readError: string | null;
+  /** 不存在："absent"；bytes 不可读："unreadable"（禁止变更）；否则原始 bytes 的 hex SHA-256，解析失败仍用真实 hash。 */
+  revision: string;
+  disabledServers: string[];
+  enabledServers: string[];
+}
+
+export interface McpServer {
+  scope: McpScope;
+  name: string;
+  transport: McpTransport;
+  command: string | null;
+  argCount: number;
+  url: string | null;
+  enabled: boolean;
+  effective: boolean;
+  shadowedBy: McpShadowedBy | null;
+  envKeys: string[];
+  headerKeys: string[];
+  hasAuth: boolean;
+}
+
+export interface McpListResult {
+  files: McpFileInfo[];
+  servers: McpServer[];
+}
+
+export interface McpListRequest {
+  project?: string | null;
+}
+
+export interface McpGetServerRequest {
+  scope: McpScope;
+  project?: string | null;
+  name: string;
+}
+
+/** 编辑框专用：config 包含真实 secret，不可写入日志。 */
+export interface McpServerRaw {
+  config: unknown;
+  revision: string;
+}
+
+export interface McpSaveServerRequest {
+  scope: McpScope;
+  project?: string | null;
+  name: string;
+  config: unknown;
+  expectedRevision: string;
+  originalName?: string | null;
+}
+
+export interface McpSaveResult {
+  revision: string;
+}
+
+export interface McpSetEnabledRequest {
+  scope: McpScope;
+  project?: string | null;
+  name: string;
+  enabled: boolean;
+  expectedRevision: string;
+}
+
+export interface McpDeleteServerRequest {
+  scope: McpScope;
+  project?: string | null;
+  name: string;
+  expectedRevision: string;
+}
+
+export interface OmpOpResult {
+  output: string;
+}
+
+export interface PluginSummary {
+  id: string;
+  name: string;
+  marketplace: string;
+  version: string | null;
+  enabled: boolean;
+  installedAt: string | null;
+  lastUpdated: string | null;
+  installPath: string | null;
+}
+
+export interface NpmPluginSummary {
+  name: string;
+  version: string | null;
+}
+
+export interface MarketplaceSummary {
+  name: string;
+  source: string;
+}
+
+export interface PluginsListResult {
+  plugins: PluginSummary[];
+  npm: NpmPluginSummary[];
+  marketplaces: MarketplaceSummary[];
+  warnings: string[];
+}
+
+export interface DiscoverEntry {
+  name: string;
+  version: string;
+  description: string;
+}
+
+export interface PluginUpgradeChange {
+  id: string;
+  scope: string;
+  from: string | null;
+  to: string;
+}
+
+export interface PluginUpgradeResult {
+  output: string;
+  changes: PluginUpgradeChange[];
+}
+
+export interface SkillSummary {
+  name: string;
+  description: string;
+  filePath: string;
+  baseDir: string;
+  source: string;
+  hide: boolean;
+}
+
+export interface SkillsListResult {
+  skills: SkillSummary[];
+  warnings: string[];
 }

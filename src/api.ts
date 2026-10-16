@@ -2,7 +2,7 @@
  * 后端命令的类型化封装：每个命令一个函数，错误归一化为 `AppError`。
  * 命令名 snake_case，参数/返回值 JSON camelCase（见 docs/CONTRACT.md）。
  */
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AppendBranchMarkerRequest,
   AppendBranchMarkerResult,
@@ -17,7 +17,23 @@ import type {
   GetConversationRequest,
   GetTreeRequest,
   ListSessionsResult,
+  McpDeleteServerRequest,
+  McpGetServerRequest,
+  McpListRequest,
+  McpListResult,
+  McpSaveResult,
+  McpSaveServerRequest,
+  McpServerRaw,
+  McpSetEnabledRequest,
   OpenInItermRequest,
+  OmpVersion,
+  OmpUpdateCheck,
+  OmpUpdateResult,
+  OmpOpResult,
+  PluginsListResult,
+  DiscoverEntry,
+  PluginUpgradeResult,
+  SkillsListResult,
   TreeData,
 } from "./types";
 
@@ -31,6 +47,12 @@ const KNOWN_CODES: Record<string, true> = {
   INVALID_NODE: true,
   IO: true,
   ITERM_FAILED: true,
+  OMP_NOT_FOUND: true,
+  OMP_FAILED: true,
+  BUSY: true,
+  TIMEOUT: true,
+  INVALID_INPUT: true,
+  CONFLICT: true,
   UNKNOWN: true,
 };
 
@@ -99,4 +121,108 @@ export function appendBranchMarker(
 
 export function openInIterm(req: OpenInItermRequest): Promise<void> {
   return call("open_in_iterm", { path: req.path });
+}
+
+export function getOmpVersion(): Promise<OmpVersion> {
+  return call("omp_version");
+}
+
+export function checkOmpUpdate(): Promise<OmpUpdateCheck> {
+  return call("omp_update_check");
+}
+
+function streamedCall<T>(cmd: string, onLine: (line: string) => void, args: Record<string, unknown> = {}): Promise<T> {
+  const channel = new Channel<string>();
+  channel.onmessage = onLine;
+  return call(cmd, { ...args, onLine: channel });
+}
+
+export function runOmpUpdate(onLine: (line: string) => void): Promise<OmpUpdateResult> {
+  return streamedCall("omp_update_run", onLine);
+}
+
+export function listOmpPlugins(): Promise<PluginsListResult> {
+  return call("omp_plugins_list");
+}
+
+export function discoverOmpPlugins(marketplace: string): Promise<DiscoverEntry[]> {
+  return call("omp_plugin_discover", { marketplace });
+}
+
+export function installOmpPlugin(id: string, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_plugin_install", onLine, { id });
+}
+
+export function uninstallOmpPlugin(id: string, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_plugin_uninstall", onLine, { id });
+}
+
+export function setOmpPluginEnabled(id: string, enabled: boolean, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_plugin_set_enabled", onLine, { id, enabled });
+}
+
+export function upgradeOmpPlugins(id: string | null, onLine: (line: string) => void): Promise<PluginUpgradeResult> {
+  return streamedCall("omp_plugin_upgrade", onLine, { id });
+}
+
+export function updateOmpMarketplaces(name: string | null, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_marketplace_update", onLine, { name });
+}
+
+export function addOmpMarketplace(source: string, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_marketplace_add", onLine, { source });
+}
+
+export function removeOmpMarketplace(name: string, onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_marketplace_remove", onLine, { name });
+}
+
+export function listOmpSkills(): Promise<SkillsListResult> {
+  return call("omp_skills_list");
+}
+
+export function updateOmpSkills(onLine: (line: string) => void): Promise<OmpOpResult> {
+  return streamedCall("omp_skills_update", onLine);
+}
+
+export function listMcp(req: McpListRequest = {}): Promise<McpListResult> {
+  return call("mcp_list", { project: req.project ?? null });
+}
+
+export function getMcpServer(req: McpGetServerRequest): Promise<McpServerRaw> {
+  return call("mcp_get_server", {
+    scope: req.scope,
+    project: req.project ?? null,
+    name: req.name,
+  });
+}
+
+export function saveMcpServer(req: McpSaveServerRequest): Promise<McpSaveResult> {
+  return call("mcp_save_server", {
+    scope: req.scope,
+    project: req.project ?? null,
+    name: req.name,
+    config: req.config,
+    expectedRevision: req.expectedRevision,
+    originalName: req.originalName ?? null,
+  });
+}
+
+export function setMcpEnabled(req: McpSetEnabledRequest): Promise<McpSaveResult> {
+  return call("mcp_set_enabled", {
+    scope: req.scope,
+    project: req.project ?? null,
+    name: req.name,
+    enabled: req.enabled,
+    expectedRevision: req.expectedRevision,
+  });
+}
+
+export function deleteMcpServer(req: McpDeleteServerRequest): Promise<McpSaveResult> {
+  return call("mcp_delete_server", {
+    scope: req.scope,
+    project: req.project ?? null,
+    name: req.name,
+    expectedRevision: req.expectedRevision,
+  });
 }

@@ -25,6 +25,12 @@ pub enum ErrorCode {
     InvalidNode,
     Io,
     ItermFailed,
+    OmpNotFound,
+    OmpFailed,
+    Busy,
+    Timeout,
+    InvalidInput,
+    Conflict,
     Unknown,
 }
 
@@ -383,6 +389,267 @@ pub struct OpenInItermRequest {
     pub path: String,
 }
 
+/// `omp_version` 返回；未找到或无法解析版本时为 null。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpVersion {
+    pub version: Option<String>,
+    pub path: Option<String>,
+}
+
+/// `omp_update_check` 返回；未识别输出不推断更新状态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpUpdateCheck {
+    pub current: Option<String>,
+    pub latest: Option<String>,
+    pub up_to_date: bool,
+    pub raw: String,
+}
+
+/// `omp_update_run` 返回；只有可识别的版本变化才算已更新。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpUpdateResult {
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub changed: bool,
+    pub output: String,
+}
+
+// ---------------------------------------------------------------------------
+// MCP 原生配置（CONTRACT §4.30–§4.35）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpScope {
+    User,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    Stdio,
+    Http,
+    Sse,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpShadowedBy {
+    Project,
+    DisabledServers,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpFileInfo {
+    pub scope: McpScope,
+    pub path: String,
+    pub exists: bool,
+    pub read_error: Option<String>,
+    pub revision: String,
+    pub disabled_servers: Vec<String>,
+    pub enabled_servers: Vec<String>,
+}
+
+/// 列表仅包含 secret 键名与参数数量，绝不包含可回写的掩码。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServer {
+    pub scope: McpScope,
+    pub name: String,
+    pub transport: McpTransport,
+    pub command: Option<String>,
+    pub arg_count: usize,
+    pub url: Option<String>,
+    pub enabled: bool,
+    pub effective: bool,
+    pub shadowed_by: Option<McpShadowedBy>,
+    pub env_keys: Vec<String>,
+    pub header_keys: Vec<String>,
+    pub has_auth: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpListResult {
+    pub files: Vec<McpFileInfo>,
+    pub servers: Vec<McpServer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpListRequest {
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpGetServerRequest {
+    pub scope: McpScope,
+    pub project: Option<String>,
+    pub name: String,
+}
+
+/// 编辑框专用的真实配置，不得写入日志或当作列表结果。
+/// SECURITY：手写 Debug，`config` 只打印占位符，防止 secret 经 `{:?}` 泄漏到日志。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerRaw {
+    pub config: serde_json::Value,
+    pub revision: String,
+}
+
+impl std::fmt::Debug for McpServerRaw {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServerRaw")
+            .field("config", &"<redacted>")
+            .field("revision", &self.revision)
+            .finish()
+    }
+}
+
+/// SECURITY：同上，`config` 可能携带 secret，Debug 必须脱敏。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSaveServerRequest {
+    pub scope: McpScope,
+    pub project: Option<String>,
+    pub name: String,
+    pub config: serde_json::Value,
+    pub expected_revision: String,
+    pub original_name: Option<String>,
+}
+
+impl std::fmt::Debug for McpSaveServerRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpSaveServerRequest")
+            .field("scope", &self.scope)
+            .field("project", &self.project)
+            .field("name", &self.name)
+            .field("config", &"<redacted>")
+            .field("expected_revision", &self.expected_revision)
+            .field("original_name", &self.original_name)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSaveResult {
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSetEnabledRequest {
+    pub scope: McpScope,
+    pub project: Option<String>,
+    pub name: String,
+    pub enabled: bool,
+    pub expected_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDeleteServerRequest {
+    pub scope: McpScope,
+    pub project: Option<String>,
+    pub name: String,
+    pub expected_revision: String,
+}
+
+/// omp 插件、marketplace 与技能写操作的完整输出。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OmpOpResult {
+    pub output: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSummary {
+    pub id: String,
+    pub name: String,
+    pub marketplace: String,
+    pub version: Option<String>,
+    pub enabled: bool,
+    pub installed_at: Option<String>,
+    pub last_updated: Option<String>,
+    pub install_path: Option<String>,
+}
+
+/// npm 插件仅展示，不进入 marketplace 插件的写操作。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NpmPluginSummary {
+    pub name: String,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceSummary {
+    pub name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginsListResult {
+    pub plugins: Vec<PluginSummary>,
+    pub npm: Vec<NpmPluginSummary>,
+    pub marketplaces: Vec<MarketplaceSummary>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverEntry {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUpgradeChange {
+    pub id: String,
+    pub scope: String,
+    pub from: Option<String>,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUpgradeResult {
+    pub output: String,
+    pub changes: Vec<PluginUpgradeChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSummary {
+    pub name: String,
+    pub description: String,
+    pub file_path: String,
+    pub base_dir: String,
+    pub source: String,
+    pub hide: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsListResult {
+    pub skills: Vec<SkillSummary>,
+    pub warnings: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +680,69 @@ mod tests {
     fn tree_node_kind_uses_camel_case() {
         let v = serde_json::to_value(TreeNodeKind::BranchSummary).unwrap();
         assert_eq!(v, "branchSummary");
+    }
+
+    #[test]
+    fn omp_contract_uses_camel_case_and_nulls() {
+        for (code, expected) in [
+            (ErrorCode::OmpNotFound, "OMP_NOT_FOUND"),
+            (ErrorCode::OmpFailed, "OMP_FAILED"),
+            (ErrorCode::Busy, "BUSY"),
+            (ErrorCode::Timeout, "TIMEOUT"),
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), expected);
+        }
+        let check = serde_json::to_value(OmpUpdateCheck {
+            current: None,
+            latest: None,
+            up_to_date: false,
+            raw: String::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            check,
+            serde_json::json!({"current": null, "latest": null, "upToDate": false, "raw": ""})
+        );
+        let version = serde_json::to_value(OmpVersion {
+            version: None,
+            path: None,
+        })
+        .unwrap();
+        assert_eq!(version, serde_json::json!({"version": null, "path": null}));
+        let update = serde_json::to_value(OmpUpdateResult {
+            before: None,
+            after: Some("18.12.0".into()),
+            changed: true,
+            output: "updated".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            update,
+            serde_json::json!({"before": null, "after": "18.12.0", "changed": true, "output": "updated"})
+        );
+    }
+
+    #[test]
+    fn secret_configs_are_redacted_in_debug() {
+        let raw = McpServerRaw {
+            config: serde_json::json!({"env": {"TOKEN": "super-secret-aaa"}}),
+            revision: "rev".into(),
+        };
+        let debug = format!("{raw:?}");
+        assert!(!debug.contains("super-secret-aaa"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("rev"), "{debug}");
+        let request = McpSaveServerRequest {
+            scope: McpScope::User,
+            project: None,
+            name: "secret".into(),
+            config: serde_json::json!({"headers": {"X": "super-secret-bbb"}}),
+            expected_revision: "rev".into(),
+            original_name: None,
+        };
+        let debug = format!("{request:?}");
+        assert!(!debug.contains("super-secret-bbb"), "{debug}");
+        assert!(debug.contains("<redacted>"), "{debug}");
+        assert!(debug.contains("secret"), "{debug}");
     }
 }

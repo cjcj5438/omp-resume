@@ -15,7 +15,10 @@ pub mod model;
 
 pub mod config;
 pub mod lock;
+pub mod mcp_config;
 pub mod occupant;
+pub mod omp_cli;
+pub mod omp_plugins;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
 pub mod ops;
 pub mod sessions;
@@ -149,6 +152,46 @@ async fn open_in_iterm(
     .map_err(io_join_error)?
 }
 
+/// CONTRACT §4.9：本地 omp 版本，不占写操作门禁。
+#[tauri::command]
+async fn omp_version() -> Result<model::OmpVersion, AppError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        omp_cli::omp_version_impl(omp_cli::resolve_omp().as_deref())
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
+/// CONTRACT §4.10：只检查 omp 更新，不安装。
+#[tauri::command]
+async fn omp_update_check() -> Result<model::OmpUpdateCheck, AppError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        omp_cli::omp_update_check_impl(omp_cli::resolve_omp().as_deref())
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
+/// CONTRACT §4.11：持有全局门禁，逐行推送实际更新日志。
+#[tauri::command]
+async fn omp_update_run(
+    app: tauri::AppHandle,
+    on_line: tauri::ipc::Channel<String>,
+) -> Result<model::OmpUpdateResult, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let busy = app.state::<omp_cli::OmpBusy>();
+        // 门禁留在阻塞任务内，调用方离开也不会提前释放。
+        let _guard = busy.try_acquire()?;
+        let bin = omp_cli::resolve_omp().ok_or_else(omp_cli::omp_not_found)?;
+        omp_cli::omp_update_run_impl(&bin, omp_cli::UPDATE_TIMEOUT, &mut |line| {
+            let _ = on_line.send(line.to_owned());
+        })
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let cfg = config::resolve(sessions_dir_arg());
@@ -158,6 +201,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(cfg)
+        .manage(omp_cli::OmpBusy::default())
+        .manage(mcp_config::McpWriteState::default())
         .invoke_handler(tauri::generate_handler![
             get_config,
             list_sessions,
@@ -166,7 +211,26 @@ pub fn run() {
             check_session,
             delete_sessions,
             append_branch_marker,
-            open_in_iterm
+            open_in_iterm,
+            omp_version,
+            omp_update_check,
+            omp_update_run,
+            mcp_config::mcp_list,
+            mcp_config::mcp_get_server,
+            mcp_config::mcp_save_server,
+            mcp_config::mcp_set_enabled,
+            mcp_config::mcp_delete_server,
+            omp_plugins::omp_plugins_list,
+            omp_plugins::omp_plugin_discover,
+            omp_plugins::omp_plugin_install,
+            omp_plugins::omp_plugin_uninstall,
+            omp_plugins::omp_plugin_set_enabled,
+            omp_plugins::omp_plugin_upgrade,
+            omp_plugins::omp_marketplace_update,
+            omp_plugins::omp_marketplace_add,
+            omp_plugins::omp_marketplace_remove,
+            omp_plugins::omp_skills_list,
+            omp_plugins::omp_skills_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
