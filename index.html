@@ -4,6 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>omp-resume</title>
+    <!-- 首帧前应用已保存的外观（与 src/appearance.ts 同源逻辑，保持同步），避免先深后浅闪烁。 -->
+    <script>
+      (function () {
+        try {
+          var mode = "system";
+          var accent = "blue";
+          try {
+            var s = JSON.parse(localStorage.getItem("omp-resume:appearance"));
+            if (s && ["system", "light", "dark"].indexOf(s.mode) >= 0) mode = s.mode;
+            if (s && ["blue", "purple", "green", "orange", "pink", "grey"].indexOf(s.accent) >= 0)
+              accent = s.accent;
+          } catch (e) {}
+          var dark =
+            mode === "dark" ||
+            (mode === "system" &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.dataset.theme = dark ? "dark" : "light";
+          root.dataset.accent = accent;
+        } catch (e) {}
+      })();
+    </script>
   </head>
 
   <body>

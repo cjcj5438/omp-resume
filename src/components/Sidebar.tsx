@@ -5,6 +5,7 @@ import type { TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
 import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
 import { SessionBadges } from "./ui";
+import { AppearancePanel } from "./AppearancePanel";
 
 interface SidebarProps {
   groups: ProjectGroup[];
@@ -228,6 +229,9 @@ export function Sidebar({
             </button>
           </div>
         ) : null}
+        <div className="omp-row">
+          <AppearancePanel />
+        </div>
       </footer>
     </aside>
   );
