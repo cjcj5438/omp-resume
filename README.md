@@ -103,12 +103,13 @@ UI 文案为中文。
   `task.disabledAgents`、`task.agentAdvisor`、`retry.fallbackChains`），经 `omp config set`
   写入；另有 3 个兜底开关键（`retry.modelFallback`/`retry.fallbackOn`/
   `retry.fallbackRevertPolicy`）只读展示、写入一律拒绝；不读 models.yml/models.json、
-  不运行 `omp config list`，不碰凭据。  写入；不读 models.yml/models.json、不运行 `omp config list`，不碰凭据。
+  不运行 `omp config list`，不碰凭据。
 - **菜单栏只读检测，聚焦仅 activate + select**：菜单栏功能只读 flock 锁、
   会话 jsonl 尾部与 iTerm 标题；唯一的控制动作「聚焦」也只做 iTerm 的
   `activate` + 按 tty `select`，**不发送任何按键 / 任何信号 / 不 kill 进程**，
   不写会话文件，不安装 omp hooks。查询 iTerm 前必先确认其进程在跑
-  （轮询绝不把没在运行的 iTerm 拉起来）。- **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
+  （轮询绝不把没在运行的 iTerm 拉起来）。
+- **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
   原子写入；孤儿条目（会话已删）惰性保留不自动修剪，仅本应用删除成功时联动清理。
 
 ## 构建与安装
@@ -205,7 +206,7 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 | 租约目录 `ownersDir` | `OMP_RESUME_OWNERS_DIR` | `$HOME/.omp/run/session-owners` |
 | omp 二进制 | `OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` > `~/.bun/bin/omp` | 逐项检查存在性，不依赖 PATH |
 | 提示词库 `history.db` | `OMP_RESUME_HISTORY_DB` | `$HOME/.omp/agent/history.db` |
-| 应用数据目录（含 `meta.json`） | `OMP_RESUME_DATA_DIR` | `$HOME/Library/Application Support/omp-resume` |
+| 应用数据目录（含 `meta.json` / `settings.json`） | `OMP_RESUME_DATA_DIR` | `$HOME/Library/Application Support/omp-resume` |
 
 带参数启动（GUI 的 argv 不易透传，可直接跑二进制）：
 
@@ -221,15 +222,16 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 - `src/`：React 前端（`api.ts` 命令封装、`types.ts` 类型镜像、
   `components/` UI（含 `ManageView` / `PluginsPanel` / `SkillsPanel` /
   `McpPanel` / `OmpUpdateDialog`）、`tree/` 链折叠、`pins.ts`（置顶偏好）、
-  `clipboard.ts`（复制）、`dev/` 仅开发用 mock）。
+  `appearance.ts`（主题模式/强调色偏好）、`clipboard.ts`（复制）、
+  `dev/` 仅开发用 mock）。
 - `src-tauri/src/`：`config.rs`（配置 + 路径校验）、`lock.rs`（flock 探测）、
   `occupant.rs`（占用归属识别）、`sessions/`（解析 / 列表 / 对话 / 树）、
   `ops/`（删除 / 标记 / iTerm）、`ops/picker.rs`（目录选择）、`omp_cli.rs`（omp 路径解析 /
   安全 runner / 版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
   `omp_models.rs`（模型与 Agent 白名单配置）、`usage.rs`（用量统计）、`history.rs`
   （recap/提示词历史只读）、`cleanup.rs`（清理候选）、`meta.rs`（别名/标签/备注）、
-  `mcp_config.rs`（MCP 原生配置读写）、`model.rs`（前后端共享类型）、
-  `lib.rs`（命令注册）。
+  `menubar/`（托盘菜单/检测/聚焦/通知/设置）、`mcp_config.rs`（MCP 原生配置读写）、
+  `model.rs`（前后端共享类型）、`lib.rs`（命令注册）。
 - `docs/CONTRACT.md`：**权威规格**（数据格式、命令、语义、错误码）。
 - `scripts/fixtures/`：合成会话冒烟套件（详见其 README）。
 
@@ -282,7 +284,7 @@ kill %1
 - 「在 iTerm 继续」按登录 shell 的 `PATH` 查找 `omp`；若未安装在 PATH 中，
   需先保证 iTerm 的 shell 能找到它。
 - macOS 专用；应用未经签名/公证（本地构建即用）。
-- 置顶与外观偏好（主题模式/强调色）都存于 WebView 的 localStorage，开发模式（localhost:1420）与打包后的 .app 是不同来源，互不共享；在 dev 里的置顶/主题设置不会出现在 .app 里。
+- 置顶与外观偏好（主题模式/强调色，键 `omp-resume:appearance`）都存于 WebView 的 localStorage，开发模式（localhost:1420）与打包后的 .app 是不同来源，互不共享；在 dev 里的置顶/主题设置不会出现在 .app 里。
 - 版本显示与更新所用的 omp 路径解析顺序：`OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > Homebrew（`/opt/homebrew/bin/omp`）> `/usr/local/bin/omp` > `~/.bun/bin/omp`，不依赖 PATH。
 - 管理功能仅 user scope（插件与技能均为用户级）；MCP 仅默认 profile，
   不读 `PI_CONFIG_DIR` / `PI_CODING_AGENT_DIR` 覆盖，不做 endpoint 等价去重，
