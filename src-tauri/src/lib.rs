@@ -19,6 +19,8 @@ pub mod config;
 pub mod history;
 pub mod lock;
 pub mod mcp_config;
+/// macOS 菜单栏：运行中 omp 会话的只读检测 + 聚焦（见 CONTRACT §17）。
+pub mod menubar;
 pub mod meta;
 pub mod occupant;
 pub mod omp_cli;
@@ -30,6 +32,7 @@ pub mod sessions;
 pub mod usage;
 
 use crate::model::{AppError, ErrorCode};
+use tauri::Manager;
 
 /// 取 `--sessions-dir <path>` 启动参数（无则 None，走环境/默认）。
 fn sessions_dir_arg() -> Option<String> {
@@ -264,15 +267,57 @@ async fn omp_update_run(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let cfg = config::resolve(sessions_dir_arg());
+    let poll_cfg = cfg.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         // 自动更新：updater 负责检查/下载/安装，process 负责安装后重启。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(cfg)
         .manage(omp_cli::OmpBusy::default())
         .manage(mcp_config::McpWriteState::default())
         .manage(std::sync::Arc::new(usage::UsageCache::default()))
+        .setup(move |app| {
+            // 菜单栏：设置 → 托盘 → 通知点击 → 轮询线程（CONTRACT §17）。
+            let data_dir =
+                meta::data_dir().unwrap_or_else(|_| std::env::temp_dir().join("omp-resume"));
+            let settings = menubar::settings::load(&data_dir);
+            app.manage(menubar::tray::Shared::new(data_dir, settings.clone()));
+            let initial = menubar::menu::build_model(
+                Vec::new(),
+                settings.notify_on_waiting,
+                settings.show_dock_icon,
+            );
+            let _tray = menubar::tray::create_tray(app, &initial)?;
+            menubar::tray::register_click_handler(app.handle())?;
+            if let Some(shared) = app.try_state::<menubar::tray::Shared>() {
+                if let Ok(mut guard) = shared.last_menu.lock() {
+                    *guard = Some(initial);
+                }
+            }
+            menubar::tray::spawn_poller(
+                app.handle().clone(),
+                poll_cfg.owners_dir.clone(),
+                poll_cfg.sessions_dir.clone(),
+            );
+            Ok(())
+        })
+        .on_menu_event(menubar::tray::handle_menu_event)
+        .on_window_event(|window, event| {
+            // 关闭主窗口 = 隐藏并驻留菜单栏；真退出（菜单“退出”/⌘Q/关机）不拦截。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let quitting = window
+                    .app_handle()
+                    .try_state::<menubar::tray::Shared>()
+                    .map(|s| s.quitting.load(std::sync::atomic::Ordering::SeqCst))
+                    .unwrap_or(false);
+                if !quitting {
+                    api.prevent_close();
+                    menubar::tray::hide_main(window.app_handle());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_config,
             list_sessions,
