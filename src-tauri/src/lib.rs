@@ -19,6 +19,7 @@ pub mod config;
 pub mod history;
 pub mod lock;
 pub mod mcp_config;
+pub mod meta;
 pub mod occupant;
 pub mod omp_cli;
 pub mod omp_plugins;
@@ -295,6 +296,8 @@ pub fn run() {
             mcp_config::mcp_save_server,
             mcp_config::mcp_set_enabled,
             mcp_config::mcp_delete_server,
+            meta::get_meta,
+            meta::set_session_meta,
             omp_plugins::omp_plugins_list,
             omp_plugins::omp_plugin_discover,
             omp_plugins::omp_plugin_install,

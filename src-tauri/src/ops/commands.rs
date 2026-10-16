@@ -51,11 +51,15 @@ fn delete_one(cfg: &Config, path: &str) -> DeleteResult {
     };
     refuse_if_locked(cfg, &info.id).map_or_else(
         || match super::delete::delete_session_files(&valid) {
-            Ok(_) => DeleteResult {
-                path: path.to_owned(),
-                ok: true,
-                error: None,
-            },
+            Ok(_) => {
+                // 本应用删除成功才联动清应用侧条目（best-effort：失败静默，不影响删除结果）。
+                crate::meta::prune_session_after_delete(&info.id);
+                DeleteResult {
+                    path: path.to_owned(),
+                    ok: true,
+                    error: None,
+                }
+            }
             Err(e) => fail(e),
         },
         fail,

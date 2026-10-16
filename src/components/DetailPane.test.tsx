@@ -31,6 +31,10 @@ describe("DetailPane 占用者行", () => {
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
       />,
     );
     expect(await screen.findByText(/占用：VS Code 1\.138\.0 · PID 3074/)).toBeTruthy();
@@ -53,6 +57,10 @@ describe("DetailPane 占用者行", () => {
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
       />,
     );
     expect(container.textContent).not.toContain("占用：");
@@ -89,6 +97,10 @@ describe("复制会话 ID", () => {
         onToast={onToast}
         pinned={false}
         onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
       />,
     );
 
@@ -114,6 +126,10 @@ describe("复制会话 ID", () => {
         onToast={onToast}
         pinned={false}
         onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
       />,
     );
 

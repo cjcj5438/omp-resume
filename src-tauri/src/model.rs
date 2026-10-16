@@ -31,6 +31,7 @@ pub enum ErrorCode {
     Timeout,
     InvalidInput,
     Conflict,
+    MetaCorrupt,
     Unknown,
 }
 
@@ -666,6 +667,42 @@ pub struct PromptHistoryEntry {
     pub created_at: String,
     pub use_count: i64,
 }
+// 会话别名 / 标签 / 备注（应用侧 meta.json，不碰会话文件）
+// ---------------------------------------------------------------------------
+
+/// 单个会话的应用侧备注。`Option` 字段序列化为 null（保持全字段）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMeta {
+    /// 别名；无则为 null。trimmed，≤80 字符。
+    pub alias: Option<String>,
+    /// 标签；trimmed、非空、大小写不敏感去重，≤10 个、单个 ≤24 字符。
+    pub tags: Vec<String>,
+    /// 备注；无则为 null。trimmed，≤2000 字符。
+    pub note: Option<String>,
+    /// 最后修改时间（ISO-8601 UTC 毫秒）。
+    pub updated_at: String,
+}
+
+/// `set_session_meta` 的输入条目：`None`（整包 null）表示删除该会话条目。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMetaInput {
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// meta.json 全量快照：键为会话 id（不用路径，路径含时间戳）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaSnapshot {
+    pub revision: u64,
+    pub sessions: std::collections::BTreeMap<String, SessionMeta>,
+}
 
 // ---------------------------------------------------------------------------
 // list_cleanup_candidates（CONTRACT §14）
@@ -799,6 +836,43 @@ mod tests {
         assert!(!debug.contains("super-secret-bbb"), "{debug}");
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(debug.contains("secret"), "{debug}");
+    }
+
+    #[test]
+    fn meta_snapshot_uses_camel_case_and_nulls() {
+        assert_eq!(
+            serde_json::to_value(ErrorCode::MetaCorrupt).unwrap(),
+            "META_CORRUPT"
+        );
+        let snap = MetaSnapshot {
+            revision: 3,
+            sessions: [(
+                "s1".to_owned(),
+                SessionMeta {
+                    alias: None,
+                    tags: vec!["bug".to_owned()],
+                    note: Some("n".to_owned()),
+                    updated_at: "2026-10-16T00:00:00.000Z".to_owned(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let v = serde_json::to_value(&snap).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "revision": 3,
+                "sessions": {
+                    "s1": {"alias": null, "tags": ["bug"], "note": "n", "updatedAt": "2026-10-16T00:00:00.000Z"}
+                }
+            })
+        );
+        // 输入缺省字段可反序列化（前端可只传 tags）。
+        let input: SessionMetaInput =
+            serde_json::from_value(serde_json::json!({"tags": []})).unwrap();
+        assert_eq!(input.alias, None);
+        assert_eq!(input.note, None);
     }
 }
 

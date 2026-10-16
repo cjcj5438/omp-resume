@@ -10,7 +10,7 @@
  */
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
-import type { AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, OmpOpResult, PluginSummary, PluginUpgradeChange, SkillSummary } from "../types";
+import type { AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry } from "../types";
 import {
@@ -300,11 +300,24 @@ export async function installMockBackend(): Promise<MockHandle> {
   const find = (path: string): FixtureSession | undefined =>
     sessions.find((s) => s.summary.path === path);
 
+  // 应用侧备注（内存态，镜像真后端的 revision 冲突与校验语义）。
+  let metaRevision = 0;
+  let metaSessions: Record<string, SessionMeta> = {};
+  const metaSnapshot = (): MetaSnapshot =>
+    structuredClone({ revision: metaRevision, sessions: metaSessions });
+
   (window as unknown as { __ompMock?: unknown }).__ompMock = {
     calls: itermCalls,
     newSessionCalls,
     get sessions() {
       return sessions;
+    },
+    get meta() {
+      return metaSnapshot();
+    },
+    /** 冒烟用：模拟外部修改，把 revision 顶掉一次，使下次保存触发 CONFLICT。 */
+    bumpMeta() {
+      metaRevision += 1;
     },
   };
 
@@ -418,8 +431,40 @@ export async function installMockBackend(): Promise<MockHandle> {
           if (!s.summary.probeOk)
             return { path: p, ok: false, error: err("PROBE_FAILED", "占用探测失败，不敢删除") };
           sessions = sessions.filter((x) => x.summary.path !== p);
+          // 镜像真后端：删除成功联动清应用侧条目。
+          delete metaSessions[s.summary.id];
           return { path: p, ok: true, error: null };
         });
+      }
+      case "get_meta":
+        return metaSnapshot();
+      case "set_session_meta": {
+        const sessionId = args["sessionId"];
+        const expectedRevision = args["expectedRevision"];
+        if (typeof sessionId !== "string" || !sessionId.trim())
+          throw err("INVALID_INPUT", "会话 id 不能为空");
+        if (expectedRevision !== metaRevision)
+          throw err("CONFLICT", "备注已被外部修改，请重新载入后重试");
+        const input = args["meta"] as SessionMetaInput | null;
+        const alias = input?.alias?.trim() || null;
+        if (alias !== null && alias.length > 80) throw err("INVALID_INPUT", "别名最多 80 个字符");
+        const tags: string[] = [];
+        for (const raw of input?.tags ?? []) {
+          const t = raw.trim();
+          if (!t || tags.some((x) => x.toLowerCase() === t.toLowerCase())) continue;
+          if (t.length > 24) throw err("INVALID_INPUT", `单个标签最多 24 个字符：${t}`);
+          tags.push(t);
+        }
+        if (tags.length > 10) throw err("INVALID_INPUT", "标签最多 10 个");
+        const note = input?.note?.trim() || null;
+        if (note !== null && note.length > 2000) throw err("INVALID_INPUT", "备注最多 2000 个字符");
+        if (alias === null && tags.length === 0 && note === null) {
+          delete metaSessions[sessionId];
+        } else {
+          metaSessions[sessionId] = { alias, tags, note, updatedAt: new Date().toISOString() };
+        }
+        metaRevision += 1;
+        return metaSnapshot();
       }
       case "append_branch_marker": {
         const s = find(args["path"] as string);

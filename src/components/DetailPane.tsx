@@ -1,7 +1,7 @@
 /** 详情面板：会话头、工具栏（在 iTerm 继续 / 删除）、对话/树两个标签页。 */
 import { useCallback, useEffect, useState } from "react";
 import { getConversation } from "../api";
-import type { AppError, Conversation, SessionSummary } from "../types";
+import type { AppError, Conversation, MetaSnapshot, SessionMeta, SessionSummary } from "../types";
 import { displayCwd, formatFullTime, formatSize } from "../format";
 import type { ContinueOutcome } from "../flows";
 import { copyText } from "../clipboard";
@@ -10,6 +10,7 @@ import { TreeView } from "./TreeView";
 import { SessionBadges } from "./ui";
 import { UsageSummary } from "./UsageSummary";
 import { RecapBlock } from "./RecapBlock";
+import { SessionMetaEditor } from "./SessionMetaEditor";
 
 interface DetailPaneProps {
   session: SessionSummary | null;
@@ -24,6 +25,11 @@ interface DetailPaneProps {
   onToast: (text: string, kind: "info" | "error") => void;
   pinned: boolean;
   onTogglePin: () => void;
+  /** 选中会话的应用侧条目（null = 尚无）；revision 随快照走。 */
+  metaEntry: SessionMeta | null;
+  metaRevision: number;
+  metaError: AppError | null;
+  onMetaSnapshot: (snap: MetaSnapshot) => void;
 }
 
 type Tab = "conv" | "tree";
@@ -39,6 +45,10 @@ export function DetailPane({
   onToast,
   pinned,
   onTogglePin,
+  metaEntry,
+  metaRevision,
+  metaError,
+  onMetaSnapshot,
 }: DetailPaneProps) {
   const [tab, setTab] = useState<Tab>("conv");
   const [conv, setConv] = useState<{
@@ -154,6 +164,7 @@ export function DetailPane({
           </button>
         </div>
       ) : null}
+      {session ? <SessionMetaEditor sessionId={session.id} entry={metaEntry} revision={metaRevision} loadError={metaError} onSnapshot={onMetaSnapshot} onToast={onToast} /> : null}
       {session ? (
         <>
           <div className="tabs" role="tablist" aria-label="详情视图">

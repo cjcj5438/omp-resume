@@ -19,6 +19,7 @@ export type ErrorCode =
   | "TIMEOUT"
   | "INVALID_INPUT"
   | "CONFLICT"
+  | "META_CORRUPT"
   | "UNKNOWN";
 
 export interface AppError {
@@ -404,4 +405,22 @@ export interface UsageStats {
   byProject: { cwd: string; cost: number; tokens: UsageTokens; sessions: number }[];
   byModel: UsageModel[];
   byDay: { date: string; cost: number; tokens: UsageTokens }[];
+}
+// 会话别名 / 标签 / 备注（应用侧 meta.json，以会话 id 为键）。
+export interface SessionMeta {
+  alias: string | null;
+  tags: string[];
+  note: string | null;
+  updatedAt: string;
+}
+
+export interface MetaSnapshot {
+  revision: number;
+  sessions: Record<string, SessionMeta>;
+}
+
+export interface SessionMetaInput {
+  alias?: string | null;
+  tags: string[];
+  note?: string | null;
 }

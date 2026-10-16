@@ -352,6 +352,13 @@ body {
   white-space: nowrap;
 }
 
+/* 别名作主标题时，原标题小号灰字附后，明确区分两者。 */
+.row-title-orig {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
 .row-meta {
   display: flex;
   flex-wrap: wrap;
@@ -410,6 +417,52 @@ body {
   background: var(--accent);
   color: #fff;
   flex: none;
+}
+
+/* 用户标签徽章：描边弱样式，不抢占占用中/fork/分支等语义徽章。 */
+.badge-tag {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* 标签过滤条：横向滚动，多选为 AND。 */
+.tag-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.tag-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.7;
+  cursor: pointer;
+}
+
+.tag-chip:hover {
+  background: var(--bg-hover);
+}
+
+.tag-chip-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tag-count {
+  opacity: 0.75;
 }
 
 /* ---- 按钮 ---- */

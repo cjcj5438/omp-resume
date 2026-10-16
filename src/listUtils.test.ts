@@ -1,10 +1,12 @@
-/** 列表过滤 / 选择保持 / focus 节流单测。 */
+/** 列表过滤 / 标签过滤 / 选择保持 / focus 节流单测。 */
 import { describe, expect, it } from "vitest";
-import type { ProjectGroup, SessionSummary } from "./types";
+import type { MetaSnapshot, ProjectGroup, SessionSummary } from "./types";
 import {
   FOCUS_REFRESH_MIN_INTERVAL_MS,
   applyPins,
   canFocusRefresh,
+  collectTagCounts,
+  filterByTags,
   filterGroups,
   retainExisting,
 } from "./listUtils";
@@ -72,6 +74,77 @@ describe("filterGroups", () => {
   it("空查询返回全部；无命中组隐藏", () => {
     expect(filterGroups(groups, "  ")).toBe(groups);
     expect(filterGroups(groups, "不存在的词")).toEqual([]);
+  });
+
+  it("命中别名 / 标签 / 备注；meta 缺失时不影响原有匹配", () => {
+    const meta: MetaSnapshot = {
+      revision: 1,
+      sessions: {
+        "/p/a.jsonl": { alias: "我的别名", tags: ["待跟进"], note: null, updatedAt: "t" },
+        "/p/c.jsonl": { alias: null, tags: [], note: "上线前复查", updatedAt: "t" },
+      },
+    };
+    // 别名命中（原标题/cwd/首条消息都不含该词）。
+    expect(filterGroups(groups, "我的别名", meta)[0].sessions.map((x) => x.path)).toEqual([
+      "/p/a.jsonl",
+    ]);
+    // 标签命中。
+    expect(filterGroups(groups, "待跟进", meta)[0].sessions.map((x) => x.path)).toEqual([
+      "/p/a.jsonl",
+    ]);
+    // 备注命中。
+    expect(filterGroups(groups, "上线前复查", meta)[0].sessions.map((x) => x.path)).toEqual([
+      "/p/c.jsonl",
+    ]);
+    // meta 缺失时原有匹配不变。
+    expect(filterGroups(groups, "demo", null)[0].sessions).toHaveLength(1);
+    expect(filterGroups(groups, "demo")[0].sessions).toHaveLength(1);
+  });
+});
+
+describe("filterByTags", () => {
+  const meta: MetaSnapshot = {
+    revision: 1,
+    sessions: {
+      "/p/a.jsonl": { alias: null, tags: ["bug", "高优"], note: null, updatedAt: "t" },
+      "/p/b.jsonl": { alias: null, tags: ["bug"], note: null, updatedAt: "t" },
+    },
+  };
+
+  it("多选为 AND：只保留同时带全部标签的会话", () => {
+    const one = filterByTags(groups, ["bug"], meta);
+    expect(one.flatMap((g) => g.sessions.map((x) => x.path)).sort()).toEqual([
+      "/p/a.jsonl",
+      "/p/b.jsonl",
+    ]);
+    const both = filterByTags(groups, ["bug", "高优"], meta);
+    expect(both.flatMap((g) => g.sessions.map((x) => x.path))).toEqual(["/p/a.jsonl"]);
+    // 无交集 → 空。
+    expect(filterByTags(groups, ["bug", "不存在"], meta)).toEqual([]);
+  });
+
+  it("空选中返回原引用；精确匹配（子串不算）", () => {
+    expect(filterByTags(groups, [], meta)).toBe(groups);
+    expect(filterByTags(groups, ["bu"], meta)).toEqual([]);
+  });
+});
+
+describe("collectTagCounts", () => {
+  it("统计各标签的会话数，按计数倒序、标签名升序", () => {
+    const meta: MetaSnapshot = {
+      revision: 1,
+      sessions: {
+        "/p/a.jsonl": { alias: null, tags: ["bug", "高优"], note: null, updatedAt: "t" },
+        "/p/b.jsonl": { alias: null, tags: ["bug"], note: null, updatedAt: "t" },
+        "/ghost.jsonl": { alias: null, tags: ["孤儿"], note: null, updatedAt: "t" },
+      },
+    };
+    // 孤儿条目（不在列表中）不计入。
+    expect(collectTagCounts(groups, meta)).toEqual([
+      { tag: "bug", count: 2 },
+      { tag: "高优", count: 1 },
+    ]);
+    expect(collectTagCounts(groups, null)).toEqual([]);
   });
 });
 

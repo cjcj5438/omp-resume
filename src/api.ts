@@ -34,7 +34,9 @@ import type {
   OmpOpResult,
   PluginsListResult,
   DiscoverEntry,
+  MetaSnapshot,
   PluginUpgradeResult,
+  SessionMetaInput,
   SkillsListResult,
   TreeData,
   SessionUsage,
@@ -57,6 +59,7 @@ const KNOWN_CODES: Record<string, true> = {
   TIMEOUT: true,
   INVALID_INPUT: true,
   CONFLICT: true,
+  META_CORRUPT: true,
   UNKNOWN: true,
 };
 
@@ -265,4 +268,15 @@ export function getSessionUsage(req: { path: string }): Promise<SessionUsage> {
 
 export function getUsageStats(req: { sinceDays?: number | null } = {}): Promise<UsageStats> {
   return call("get_usage_stats", { sinceDays: req.sinceDays ?? null });
+}
+export function getMeta(): Promise<MetaSnapshot> {
+  return call("get_meta");
+}
+
+export function setSessionMeta(
+  sessionId: string,
+  meta: SessionMetaInput | null,
+  expectedRevision: number,
+): Promise<MetaSnapshot> {
+  return call("set_session_meta", { sessionId, meta, expectedRevision });
 }

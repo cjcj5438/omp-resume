@@ -948,3 +948,77 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   ——印证体积必须把附件算进去。
 - 与立项时快照（68 个会话、附件 965 文件/53 MB）相比，sessions 目录已增长到
   约 325 MB（附件 1181 文件），故「可释放合计」远大于快照值。
+
+## 15. 会话别名 / 标签 / 备注（应用侧 meta.json）
+
+> 只存应用侧，**绝不写会话 .jsonl 或 omp 的任何文件**。
+> `/resume` 里仍显示原标题（预期代价），UI 用小号灰字区分「别名」与「原标题」。
+
+### 15.1 文件格式与存储
+
+- 路径：`$HOME/Library/Application Support/omp-resume/meta.json`；
+  环境变量 `OMP_RESUME_DATA_DIR` 可覆盖数据目录（测试/开发用）。
+  目录不存在时创建。
+- 格式：`{"version":1,"revision":N,"sessions":{"<sessionId>":{"alias":"…","tags":["…"],"note":"…","updatedAt":"ISO"}}}`。
+  以**会话 id** 为键（不用路径——路径含时间戳）。`updatedAt` 为 ISO-8601 UTC 毫秒。
+  文件不存在 = `revision 0`、空 `sessions`。
+- 写入：同目录独占创建临时文件（`O_CREAT|O_EXCL`）→ 写 → 同步 →
+  复检 revision → `rename` 原子替换；新文件权限 `0600`
+  （已有文件保留原权限位；实现复用 `mcp_config.rs` 的写法）。
+  失败时临时文件自动清理。
+- 并发：同进程内 `set` 与删除联动清理共用一把进程级互斥，覆盖
+  重读 → 比 revision → 改 → 写的全过程；跨进程无锁，靠 revision 复检
+  降低竞态概率（与 §4.35 同口径的已知限制）。
+- 读：`get_meta` 不加锁（原子 rename 保证读到完整的新旧其一）。
+
+### 15.2 命令
+
+#### `get_meta() -> MetaSnapshot`
+
+`MetaSnapshot { revision: number, sessions: Record<sessionId, SessionMeta> }`；
+`SessionMeta { alias: string|null, tags: string[], note: string|null, updatedAt: string }`。
+
+#### `set_session_meta { sessionId, meta, expectedRevision } -> MetaSnapshot`
+
+- `meta: { alias?, tags, note? } | null`：`null` 或 trim 后全空（空 alias/空 tags/空 note）
+  = **删除该会话条目**；否则新增/替换，`updatedAt` 更新为当前时间。
+- 校验（trim 后）：`alias ≤ 80` 字符；单个 `tag ≤ 24` 字符、每会话 `≤ 10` 个、
+  大小写不敏感去重（保留首次原文）、空标签丢弃；`note ≤ 2000` 字符。
+  超限 → `INVALID_INPUT`（中文文案），文件不变。
+- `expectedRevision != 当前 revision` → `CONFLICT`（「备注已被外部修改，请重新载入后重试」），文件不变。
+- 成功后 `revision + 1` 并返回**完整新快照**。
+- 值与现有条目完全一致时不写文件、不 bump revision（幂等保存）。
+
+### 15.3 错误码
+
+| code | 含义 |
+|---|---|
+| `INVALID_INPUT` | 会话 id 为空/过长，或 alias/tags/note 超限 |
+| `CONFLICT` | `expectedRevision` 与当前 revision 不一致 |
+| `META_CORRUPT` | meta.json 解析失败或 `version` 不兼容；**绝不覆盖**，UI 禁用保存 |
+| `IO` | 其他文件系统失败（含写锁不可用） |
+
+`META_CORRUPT` 为本节新增错误码（§7 表的扩展，`SCREAMING_SNAKE_CASE` 序列化）。
+
+### 15.4 孤儿策略与删除联动
+
+- **孤儿条目保持惰性**：会话在应用外被删除后，meta.json 里的条目在读取时
+  原样返回（不显示在列表，因为没有对应会话），**绝不自动修剪**——
+  换 `--sessions-dir` 或跑 fixture 时修剪会误删真实数据。
+- 仅当**本应用**的 `delete_sessions` 删除成功时，联动清掉对应条目
+  （在 `ops::commands::delete_one` 的成功路径上调用，best-effort：
+  清理失败静默忽略，不让删除失败、不阻塞）；meta 文件损坏时跳过清理
+  （删除结果不变，损坏文件原样保留）。删除后前端重新拉取快照同步 revision。
+
+### 15.5 实测记录（2026-10-16，macOS arm64）
+
+- 后端单测 13 项（往返、revision 冲突、损坏不覆盖、0600、校验边界、
+  全空删除条目、无操作幂等、孤儿保留、删除联动清理、清理失败不影响删除、
+  数据目录覆盖）全部通过。
+- 前端单测 26 项（filterGroups 命中 alias/tag/note、标签 AND 过滤、
+  标签计数、别名行内展示、标签过滤条、编辑器脏态/冲突/损坏）全部通过。
+- `npm run dev + ?mock=1` 真实浏览器冒烟：编辑别名/标签/备注并保存，
+  列表行显示别名 + 原标题灰字 + 标签徽章，标签过滤条按 AND 过滤，
+  详情编辑器 dirty/保存/还原行为正确。
+- 后端真实读写冒烟（`OMP_RESUME_DATA_DIR=/tmp/...`）：写入 meta.json
+  权限 0600，删除会话后条目被联动清除。

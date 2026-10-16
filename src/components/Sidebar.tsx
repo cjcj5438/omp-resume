@@ -1,6 +1,7 @@
-/** 左侧会话列表：过滤、分组折叠、批量勾选、刷新。 */
+/** 左侧会话列表：过滤、标签过滤、分组折叠、批量勾选、刷新。 */
 import { useState } from "react";
-import type { AppError, ProjectGroup, SessionSummary } from "../types";
+import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
+import type { TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
 import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
 import { SessionBadges } from "./ui";
@@ -35,6 +36,12 @@ interface SidebarProps {
   onNewSessionIn: (cwd: string) => void;
   historyActive: boolean;
   onToggleHistory: () => void;
+  /** 应用侧备注快照；null = 未加载（行内不显示别名/标签）。 */
+  meta: MetaSnapshot | null;
+  /** 正在使用的标签及计数（空时不渲染过滤条）。 */
+  tagCounts: TagCount[];
+  activeTags: readonly string[];
+  onToggleTag: (tag: string) => void;
 }
 
 export function Sidebar({
@@ -67,6 +74,10 @@ export function Sidebar({
   onNewSessionIn,
   historyActive,
   onToggleHistory,
+  meta,
+  tagCounts,
+  activeTags,
+  onToggleTag,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   return (
@@ -103,6 +114,25 @@ export function Sidebar({
           刷新
         </button>
       </div>
+      {tagCounts.length > 0 ? (
+        <div className="tag-bar" role="group" aria-label="按标签过滤">
+          {tagCounts.map(({ tag, count }) => {
+            const on = activeTags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={on ? "tag-chip tag-chip-on" : "tag-chip"}
+                aria-pressed={on}
+                title={on ? `取消标签过滤：${tag}` : `只看带标签的会话：${tag}`}
+                onClick={() => onToggleTag(tag)}
+              >
+                {tag} <span className="tag-count">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <div className="sidebar-list">
         {listError ? (
           <div className="banner banner-error" role="alert">
@@ -167,6 +197,7 @@ export function Sidebar({
                     <Row
                       key={s.path}
                       s={s}
+                      meta={meta?.sessions[s.id] ?? null}
                       checked={checked.has(s.path)}
                       selected={s.path === selectedPath}
                       onToggleCheck={onToggleCheck}
@@ -204,6 +235,8 @@ export function Sidebar({
 
 interface RowProps {
   s: SessionSummary;
+  /** 该会话的应用侧备注；null = 无。 */
+  meta: SessionMeta | null;
   checked: boolean;
   selected: boolean;
   onToggleCheck: (path: string, on: boolean) => void;
@@ -212,7 +245,11 @@ interface RowProps {
   onTogglePin: () => void;
 }
 
-function Row({ s, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin }: RowProps) {
+/** 会话行：有别名时别名作主标题、原标题小号灰字附后；至多 3 个标签徽章（多余计 `+N`）。 */
+function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin }: RowProps) {
+  const alias = meta?.alias ?? null;
+  const shownTags = (meta?.tags ?? []).slice(0, 3);
+  const extraTags = (meta?.tags ?? []).length - shownTags.length;
   return (
     <div
       className={selected ? "row row-selected" : "row"}
@@ -221,26 +258,43 @@ function Row({ s, checked, selected, pinned, onToggleCheck, onSelect, onTogglePi
       <input
         type="checkbox"
         className="row-check"
-        aria-label={`选择 ${s.title}`}
+        aria-label={`选择 ${alias ?? s.title}`}
         checked={checked}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => onToggleCheck(s.path, e.target.checked)}
       />
       <div className="row-main">
-        <div className="row-title" title={s.title}>
-          {s.title}
+        <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
+          {alias ? (
+            <>
+              <span>{alias}</span>
+              <span className="row-title-orig">{s.title}</span>
+            </>
+          ) : (
+            s.title
+          )}
         </div>
         <div className="row-meta">
           <span>{formatRelativeTime(s.modifiedAt)}</span>
           <span>{s.messageCount} 条消息</span>
           <span>{formatSize(s.sizeBytes)}</span>
           <SessionBadges s={s} />
+          {shownTags.map((t) => (
+            <span key={t} className="badge badge-tag" title={`标签：${t}`}>
+              {t}
+            </span>
+          ))}
+          {extraTags > 0 ? (
+            <span className="badge badge-tag" title={(meta?.tags ?? []).slice(3).join("、")}>
+              +{extraTags}
+            </span>
+          ) : null}
         </div>
       </div>
         <PinToggle
           pinned={pinned}
           kindLabel="会话"
-          name={s.title}
+          name={alias ?? s.title}
           onToggle={onTogglePin}
         />
     </div>

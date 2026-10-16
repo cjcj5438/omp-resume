@@ -6,6 +6,7 @@ import {
   checkOmpUpdate,
   chooseDirectory,
   deleteSessions,
+  getMeta,
   getOmpVersion,
   listSessions,
   normalizeError,
@@ -16,11 +17,12 @@ import type {
   AppError,
   DeleteResult,
   ListSessionsResult,
+  MetaSnapshot,
   OmpUpdateCheck,
   SessionSummary,
 } from "./types";
 import { errorText } from "./format";
-import { applyPins, canFocusRefresh, filterGroups, retainExisting } from "./listUtils";
+import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, retainExisting } from "./listUtils";
 import { runContinueFromNode, type ContinueOutcome, type DeleteTarget } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
 import { Sidebar } from "./components/Sidebar";
@@ -59,6 +61,10 @@ function App() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [pins, setPins] = useState<Pins>(() => loadPins());
+  // 应用侧备注快照（别名/标签/备注）：启动加载，向下传；保存后用返回快照更新。
+  const [meta, setMeta] = useState<MetaSnapshot | null>(null);
+  const [metaError, setMetaError] = useState<AppError | null>(null);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const [ompVersion, setOmpVersion] = useState<string | null>(null);
   const [ompChecking, setOmpChecking] = useState(false);
   const [ompCheck, setOmpCheck] = useState<OmpUpdateCheck | null>(null);
@@ -93,9 +99,19 @@ function App() {
     }
   }, []);
 
+  const loadMeta = useCallback(async () => {
+    try {
+      setMeta(await getMeta());
+      setMetaError(null);
+    } catch (e) {
+      setMetaError(normalizeError(e));
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadMeta();
+  }, [load, loadMeta]);
 
   // 置顶变更即持久化（仅界面偏好，存储失败静默）。
   useEffect(() => {
@@ -151,9 +167,10 @@ function App() {
     () => applyPins(list?.groups ?? [], pins),
     [list, pins],
   );
+  const tagCounts = useMemo(() => collectTagCounts(orderedGroups, meta), [orderedGroups, meta]);
   const groups = useMemo(
-    () => filterGroups(orderedGroups, query),
-    [orderedGroups, query],
+    () => filterGroups(filterByTags(orderedGroups, activeTags, meta), query, meta),
+    [orderedGroups, activeTags, query, meta],
   );
   const totalCount = useMemo(
     () =>
@@ -240,16 +257,29 @@ function App() {
         .filter((id): id is string => id != null);
       if (deletedIds.length > 0) setPins((prev) => removeSessionPins(prev, deletedIds));
       await load();
+      // 后端删除成功会联动清应用侧条目：刷新快照以同步 revision。
+      await loadMeta();
       setCleanupVersion((v) => v + 1);
       return results;
     },
-    [byPath, load, deleteTargets],
+    [byPath, load, loadMeta, deleteTargets],
   );
 
   const handleTogglePin = useCallback(
     (kind: PinKind, key: string) => setPins((prev) => togglePin(prev, kind, key)),
     [],
   );
+
+  const handleToggleTag = useCallback(
+    (tag: string) =>
+      setActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag])),
+    [],
+  );
+
+  const handleMetaSnapshot = useCallback((snap: MetaSnapshot) => {
+    setMeta(snap);
+    setMetaError(null);
+  }, []);
 
   const handleCheckOmp = useCallback(async () => {
     setOmpChecking(true);
@@ -316,6 +346,10 @@ function App() {
         onOpenCheatSheet={() => setShowCheatSheet(true)}
         onNewSession={() => void handleNewSession(null)}
         onNewSessionIn={(cwd) => void handleNewSession(cwd)}
+        meta={meta}
+        tagCounts={tagCounts}
+        activeTags={activeTags}
+        onToggleTag={handleToggleTag}
       />
       {view === "history" ? (
         <PromptHistoryView
@@ -363,6 +397,10 @@ function App() {
           onTogglePin={() => {
             if (selected) handleTogglePin("session", selected.id);
           }}
+          metaEntry={selected ? (meta?.sessions[selected.id] ?? null) : null}
+          metaRevision={meta?.revision ?? 0}
+          metaError={metaError}
+          onMetaSnapshot={handleMetaSnapshot}
         />
       )}
       {deleteTargets ? (
