@@ -11,14 +11,12 @@
   align-items: baseline;
   gap: 12px;
   flex-wrap: wrap;
+  margin-bottom: 4px;
 }
 
-.models-agents .block-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  flex-wrap: wrap;
+/* 区块标题比卡片标题大一级。 */
+.models-agents .manage-sub {
+  font-size: 15px;
 }
 
 /* 顶栏：一句话说明 + 状态行。 */
@@ -93,10 +91,23 @@
   flex-wrap: wrap;
 }
 
+.models-agents .role-card-name {
+  font-size: 13px;
+}
+
+.models-agents .role-key {
+  font-size: 11px;
+}
+
 .models-agents .role-card-head {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.models-agents .role-card-blurb {
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 /* 行编辑单元：模型选择 + 思考强度，窄屏自动换行。 */
@@ -242,10 +253,11 @@
   flex-basis: 100%;
 }
 
-/* 兜底块：标题行 + 有序 chip + 添加行。 */
+/* 兜底块：实线分组 + 小字组标签 + 有序 chip + 添加。 */
 .models-agents .chain-block {
-  border-top: 1px dashed var(--border);
-  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 2px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -259,8 +271,14 @@
   flex-wrap: wrap;
 }
 
+.models-agents .chain-block-head .btn-quiet-danger {
+  margin-left: auto;
+}
+
 .models-agents .chain-block-title {
+  font-size: 12px;
   font-weight: 600;
+  color: var(--text-muted);
 }
 
 .models-agents .chain-note {
@@ -369,4 +387,125 @@
 
 .models-agents .others-details > p {
   margin: 6px 0;
+}
+
+/* 小图标按钮：默认弱化，hover/聚焦时明显；原生 button，可键盘访问。 */
+.models-agents .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: default;
+}
+
+.models-agents .icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.models-agents .icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.models-agents .icon-btn:disabled {
+  opacity: 0.35;
+}
+
+.models-agents .icon-btn-danger {
+  color: var(--danger);
+}
+
+.models-agents .icon-btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 添加兜底面板：选模型 → 选强度 → 添加；自定义值另起一行。 */
+.models-agents .chain-add-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 10px;
+  min-width: 0;
+}
+
+.models-agents .chain-add-panel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.models-agents .link-btn {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: default;
+}
+
+.models-agents .link-btn:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+/* 未配置角色的紧凑行。 */
+.models-agents .role-compact {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.models-agents .role-compact-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* 更多角色（能力类）折叠区。 */
+.models-agents .more-roles {
+  margin-top: 8px;
+}
+
+.models-agents .more-roles summary {
+  cursor: default;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 吸底保存条：有未保存修改时才出现，贴着滚动容器底部。 */
+.models-agents .save-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 8px 2px;
+  margin-top: 8px;
+  font-size: 12px;
 }

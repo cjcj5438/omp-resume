@@ -300,12 +300,8 @@ function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
       judge: "typesafe/jev-latest",
       plan: "5438-claude/claude-sonnet-5-5:xhigh",
       slow: "5438-claude/claude-opus-5-5:high",
-      task: "5438/muse-spark-1.3-contributor:max",
-      advisor: "5438/glm-5.3-flash:max",
       commit: "5438/deepseek-v4.1-flash:max",
-      smol: "5438-claude/claude-haiku-5-5:high",
-      tiny: "5438/deepseek-v4.1-flash:low",
-      memory: "5438/deepseek-v4.1-flash:low",
+      image: "factory-droid/gpt-6.1-sol:high",
       default: "5438/muse-spark-1.3-contributor:max",
     },
     "task.agentModelOverrides": {

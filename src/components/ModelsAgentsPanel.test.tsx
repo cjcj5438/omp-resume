@@ -200,7 +200,7 @@ describe("主要模型（角色卡融合）", () => {
     expect(within(roleCard("task")).getByTestId("chain-task")).toBeInTheDocument();
 
     // 添加 vision 角色并选模型。
-    fireEvent.click(screen.getByTestId("add-role-vision"));
+    fireEvent.click(screen.getByTestId("expand-role-vision"));
     const vision = roleCard("vision");
     fireEvent.click(within(vision).getByRole("button", { name: "图片理解的主模型" }));
     fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
@@ -309,10 +309,13 @@ describe("Agent", () => {
     const overrides = saves.find((s) => s.key === "task.agentModelOverrides");
     expect(overrides?.value).toEqual({ task: "5438/mimo-v2.6-pro:max" });
     expect(saves.map((s) => s.key)).toEqual(["task.agentModelOverrides"]);
-    // 保存重载后，scout 回到 @smol（smol 未配置，如实说明）。
+    // 保存重载后，scout 回到 @smol（smol 未配置，沿回退链实际使用 default 的模型）。
     await waitFor(() =>
-      expect(screen.getByTestId("agent-effective-scout")).toHaveTextContent("用 omp 内置默认"),
+      expect(screen.getByTestId("agent-effective-scout")).toHaveTextContent(
+        "MiMo v2.6 Pro (5438)",
+      ),
     );
+    expect(screen.getByTestId("agent-effective-scout")).toHaveTextContent("smol未配置");
   });
 
   it("停用与顾问只写各自配置键", async () => {
@@ -362,12 +365,14 @@ describe("其他模型的兜底", () => {
     fireEvent.click(screen.getByText(/共 2 条/));
 
     const chain = screen.getByTestId("chain-sonic");
-    fireEvent.click(
-      within(chain).getByRole("button", { name: "删除 5438/deepseek-v4.1-flash" }),
-    );
+    fireEvent.click(within(chain).getByRole("button", { name: "＋ 添加兜底模型" }));
+    fireEvent.click(within(chain).getByRole("button", { name: "使用自定义值…" }));
     const manual = within(chain).getByLabelText(/手动输入/);
     fireEvent.change(manual, { target: { value: "p1/extra" } });
     fireEvent.keyDown(manual, { key: "Enter" });
+    fireEvent.click(
+      within(chain).getByRole("button", { name: "删除 5438/deepseek-v4.1-flash" }),
+    );
     fireEvent.click(within(blockOf("其他模型的兜底")).getByRole("button", { name: "保存兜底" }));
 
     await waitFor(() => expect(saves).toHaveLength(1));
@@ -401,17 +406,64 @@ describe("兜底总开关与冲突", () => {
     render(<ModelsAgentsPanel onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
-    fireEvent.click(screen.getByTestId("add-role-vision"));
+    fireEvent.click(screen.getByTestId("expand-role-vision"));
     fireEvent.click(within(roleCard("vision")).getByRole("button", { name: "图片理解的主模型" }));
     fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
     fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }));
 
     expect(await screen.findByText(/配置已被外部修改/)).toBeInTheDocument();
     await waitFor(() => expect(stub.configReads).toBeGreaterThanOrEqual(2));
+    // 冲突后重新载入：草稿还原，吸底保存条消失。
     await waitFor(() =>
       expect(
-        within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }),
-      ).toBeDisabled(),
+        within(blockOf("主要模型")).queryByRole("button", { name: "保存主模型" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("未配置角色与吸底保存条", () => {
+  it("紧凑行显示实际使用，点「设置」展开成卡、可再收起", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    // memory 沿回退链用 default 的模型；advisor 只认已配置的 slow，走内置。
+    const memory = screen.getByTestId("role-compact-memory");
+    expect(memory).toHaveTextContent("未单独设置");
+    expect(memory).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
+    expect(memory).toHaveTextContent("（主对话角色）");
+    expect(screen.getByTestId("role-compact-advisor")).toHaveTextContent("omp 内置默认");
+
+    fireEvent.click(within(memory).getByRole("button", { name: "设置" }));
+    const card = screen.getByTestId("role-card-memory");
+    expect(card).toBeInTheDocument();
+    // 展开后可收起回紧凑行。
+    fireEvent.click(within(card).getByRole("button", { name: "收起" }));
+    expect(screen.queryByTestId("role-card-memory")).not.toBeInTheDocument();
+    expect(screen.getByTestId("role-compact-memory")).toBeInTheDocument();
+  });
+
+  it("改一个角色出现吸底保存条并计数，保存后消失", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    // 未修改时没有保存条。
+    expect(within(blockOf("主要模型")).queryByText(/处未保存修改/)).not.toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByTestId("role-compact-memory")).getByRole("button", { name: "设置" }));
+    fireEvent.click(within(roleCard("memory")).getByRole("button", { name: "记忆助手的主模型" }));
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+
+    const bar = within(blockOf("主要模型")).getByRole("status");
+    expect(bar).toHaveTextContent("1 处未保存修改");
+    fireEvent.click(within(bar).getByRole("button", { name: "保存主模型" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    await waitFor(() =>
+      expect(within(blockOf("主要模型")).queryByRole("status")).not.toBeInTheDocument(),
     );
   });
 });

@@ -13,7 +13,9 @@ import {
   classifyChainKey,
   COMMON_ROLES,
   describeRetryStatus,
+  describeRoleFallback,
   draftFromConfig,
+  resolveRoleFallback,
   formatContextWindow,
   formatCost,
   orderNumeral,
@@ -207,6 +209,74 @@ describe("Agent 实际使用模型", () => {
     const got = resolveAgentEffective(agent({ defaultModel: [] }), undefined, roles, MODELS);
     expect(got.modelText).toBe("跟随当前会话模型");
     expect(got.sourceText).toBe("该 Agent 未指定默认模型");
+  });
+});
+
+describe("未配置角色实际用谁", () => {
+  const fallbackRoles = { default: "p1/big", smol: "p1/fast:low" };
+
+  it("已配置的角色返回自己（via 为空）", () => {
+    expect(resolveRoleFallback("smol", fallbackRoles)).toEqual({
+      selector: "p1/fast:low",
+      via: null,
+    });
+  });
+
+  it("memory→tiny→smol 逐级找已配置的", () => {
+    expect(resolveRoleFallback("memory", fallbackRoles)).toEqual({
+      selector: "p1/fast:low",
+      via: "smol",
+    });
+    expect(resolveRoleFallback("tiny", fallbackRoles)).toEqual({
+      selector: "p1/fast:low",
+      via: "smol",
+    });
+  });
+
+  it("smol 未配置时用 default", () => {
+    expect(resolveRoleFallback("smol", { default: "p1/big" })).toEqual({
+      selector: "p1/big",
+      via: "default",
+    });
+  });
+
+  it("advisor 只认已配置的 slow（configuredOnly）", () => {
+    expect(resolveRoleFallback("advisor", { slow: "p1/fast", default: "p1/big" })).toEqual({
+      selector: "p1/fast",
+      via: "slow",
+    });
+    expect(resolveRoleFallback("advisor", { default: "p1/big" })).toBeNull();
+  });
+
+  it("都不满足时返回 null（omp 内置默认）", () => {
+    expect(resolveRoleFallback("plan", fallbackRoles)).toBeNull();
+    expect(resolveRoleFallback("default", {})).toBeNull();
+    expect(resolveRoleFallback("nope", fallbackRoles)).toBeNull();
+  });
+
+  it("紧凑行文案带出来源角色", () => {
+    expect(describeRoleFallback("memory", fallbackRoles, MODELS)).toEqual({
+      modelText: "Fast One · low",
+      modelUnknown: false,
+      viaDisplay: "轻快任务",
+    });
+    expect(describeRoleFallback("plan", fallbackRoles, MODELS)).toEqual({
+      modelText: "omp 内置默认",
+      modelUnknown: false,
+      viaDisplay: null,
+    });
+  });
+
+  it("Agent 别名沿回退链解析出来源", () => {
+    const got = resolveAgentEffective(
+      agent({ defaultModel: ["@memory"] }),
+      undefined,
+      fallbackRoles,
+      MODELS,
+    );
+    expect(got.modelText).toBe("Fast One");
+    expect(got.sourceText).toBe("内置默认 @memory → 轻快任务角色（memory未配置）");
+    expect(got.thinking).toBe("low");
   });
 });
 

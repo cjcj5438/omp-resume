@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import "./ModelsAgentsPanel.css";
 import { getModelConfig, listModels, normalizeError, updateModelConfig } from "../api";
 import { errorText } from "../format";
-import { deepEqual } from "../modelConfig";
+import { deepEqual, rawValueText } from "../modelConfig";
 import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
 import {
   attachedChainKeys,
@@ -21,6 +21,7 @@ import {
   classifyChainKey,
   COMMON_ROLES,
   describeRetryStatus,
+  describeRoleFallback,
   draftFromConfig,
   friendlyModelName,
   orderNumeral,
@@ -67,9 +68,11 @@ function ThinkingSegment(props: {
   value: string;
   disabled: boolean;
   label: string;
+  /** 默认选项的文案；添加兜底时用「继承」。 */
+  defaultLabel?: string;
   onChange: (value: string) => void;
 }) {
-  const { levels, value, disabled, label, onChange } = props;
+  const { levels, value, disabled, label, defaultLabel, onChange } = props;
   const extra = value !== "" && !levels.includes(value) ? value : null;
   const options = extra !== null ? [...levels, extra] : levels;
   return (
@@ -84,7 +87,7 @@ function ThinkingSegment(props: {
           disabled={disabled}
           onClick={() => onChange("")}
         >
-          默认
+          {defaultLabel ?? "默认"}
         </button>
         {options.map((level) => (
           <button
@@ -152,7 +155,7 @@ function SelectorCell(props: {
   );
 }
 
-/** 单条兜底的编辑器：一行说明 + 有序条目 + 添加。 */
+/** 单条兜底的编辑器：一行说明 + 紧凑有序条目 + 弹出式添加。 */
 function ChainEditor(props: {
   chainKey: string;
   title: string;
@@ -167,15 +170,7 @@ function ChainEditor(props: {
 }) {
   const { chainKey, title, hint, note, draft, models, disabled, onEnsure, onDeleteChain, onChange } =
     props;
-  const [addSelector, setAddSelector] = useState<string | null>(null);
-  const [addThinking, setAddThinking] = useState("");
-  const [manual, setManual] = useState("");
-  const [manualError, setManualError] = useState<string | null>(null);
-  const addLevels =
-    addSelector !== null
-      ? (models.find((m) => m.selector === addSelector)?.thinkingLevels ?? [])
-      : [];
-
+  const [adding, setAdding] = useState(false);
   if (draft === null) {
     return (
       <div className="chain-block" data-testid={`chain-${chainKey}`}>
@@ -205,23 +200,8 @@ function ChainEditor(props: {
     });
   };
 
-  const addComposed = () => {
-    if (addSelector === null) return;
-    const composed = addThinking !== "" ? `${addSelector}:${addThinking}` : addSelector;
-    onChange(chainKey, (chain) => ({ ...chain, entries: [...chain.entries, composed] }));
-    setAddSelector(null);
-    setAddThinking("");
-  };
-
-  const addManual = () => {
-    const text = manual.trim();
-    if (text === "") {
-      setManualError("先输入一个模型（provider/model，可带 :thinking，或通配如 p1/*）");
-      return;
-    }
-    onChange(chainKey, (chain) => ({ ...chain, entries: [...chain.entries, text] }));
-    setManual("");
-    setManualError(null);
+  const appendEntry = (value: string) => {
+    onChange(chainKey, (chain) => ({ ...chain, entries: [...chain.entries, value] }));
   };
 
   return (
@@ -263,40 +243,118 @@ function ChainEditor(props: {
           ))}
         </ol>
       )}
-      <div className="chain-add">
-        <ModelPicker
-          models={models}
-          value={addSelector}
-          allowUnset={false}
-          unsetLabel="选择模型…"
-          disabled={disabled}
-          label={`为${title}添加兜底模型`}
-          onChange={(selector) => {
-            setAddSelector(selector);
-            setAddThinking("");
-          }}
-        />
-        {addSelector !== null ? (
-          <ThinkingSegment
-            levels={addLevels}
-            value={addThinking}
+      {!adding ? (
+        <div>
+          <button
+            type="button"
+            className="btn btn-small"
             disabled={disabled}
-            label={`新兜底模型的思考强度（${chainKey}）`}
-            onChange={setAddThinking}
+            onClick={() => setAdding(true)}
+          >
+            ＋ 添加兜底模型
+          </button>
+        </div>
+      ) : (
+        <ChainAddPanel
+          chainKey={chainKey}
+          title={title}
+          models={models}
+          disabled={disabled}
+          onAdd={(value) => {
+            appendEntry(value);
+            setAdding(false);
+          }}
+          onClose={() => setAdding(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 添加兜底面板：选模型 → 选思考强度（默认继承）→ 添加；或使用自定义值。 */
+function ChainAddPanel(props: {
+  chainKey: string;
+  title: string;
+  models: ModelInfo[];
+  disabled: boolean;
+  onAdd: (value: string) => void;
+  onClose: () => void;
+}) {
+  const { chainKey, title, models, disabled, onAdd, onClose } = props;
+  const [selector, setSelector] = useState<string | null>(null);
+  const [thinking, setThinking] = useState("");
+  const [custom, setCustom] = useState(false);
+  const [manual, setManual] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+  const levels =
+    selector !== null
+      ? (models.find((m) => m.selector === selector)?.thinkingLevels ?? [])
+      : [];
+
+  const addComposed = () => {
+    if (selector === null) return;
+    onAdd(thinking !== "" ? `${selector}:${thinking}` : selector);
+  };
+
+  const addManual = () => {
+    const text = manual.trim();
+    if (text === "") {
+      setManualError("先输入一个模型（provider/model，可带 :thinking，或通配如 p1/*）");
+      return;
+    }
+    onAdd(text);
+  };
+
+  return (
+    <div className="chain-add-panel">
+      {!custom ? (
+        <>
+          <ModelPicker
+            models={models}
+            value={selector}
+            allowUnset={false}
+            unsetLabel="选择模型…"
+            disabled={disabled}
+            label={`为${title}选择兜底模型`}
+            onChange={(next) => {
+              setSelector(next);
+              setThinking("");
+            }}
           />
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-small"
-          disabled={disabled || addSelector === null}
-          onClick={addComposed}
-        >
-          添加
-        </button>
-      </div>
-      <details className="chain-manual">
-        <summary className="muted">手动输入（通配或列表里没有的模型）</summary>
-        <div className="chain-add">
+          {selector !== null ? (
+            <ThinkingSegment
+              levels={levels}
+              value={thinking}
+              disabled={disabled}
+              label={`新兜底模型的思考强度（${chainKey}）`}
+              defaultLabel="继承"
+              onChange={setThinking}
+            />
+          ) : null}
+          <div className="chain-add-panel-actions">
+            <button
+              type="button"
+              className="btn btn-small btn-accent"
+              disabled={disabled || selector === null}
+              onClick={addComposed}
+            >
+              添加
+            </button>
+            <button type="button" className="btn btn-small" onClick={onClose}>
+              取消
+            </button>
+          </div>
+          <button
+            type="button"
+            className="link-btn muted"
+            disabled={disabled}
+            onClick={() => setCustom(true)}
+          >
+            使用自定义值…
+          </button>
+        </>
+      ) : (
+        <>
           <input
             className="filter-input"
             placeholder="provider/model[:thinking]，或 p1/*"
@@ -311,12 +369,32 @@ function ChainEditor(props: {
               if (e.key === "Enter") addManual();
             }}
           />
-          <button type="button" className="btn btn-small" disabled={disabled} onClick={addManual}>
-            添加
-          </button>
-        </div>
-        {manualError !== null ? <div className="muted">{manualError}</div> : null}
-      </details>
+          <div className="chain-add-panel-actions">
+            <button
+              type="button"
+              className="btn btn-small btn-accent"
+              disabled={disabled}
+              onClick={addManual}
+            >
+              添加
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => {
+                setCustom(false);
+                setManualError(null);
+              }}
+            >
+              返回选择模型
+            </button>
+            <button type="button" className="btn btn-small" onClick={onClose}>
+              取消
+            </button>
+          </div>
+          {manualError !== null ? <div className="muted">{manualError}</div> : null}
+        </>
+      )}
     </div>
   );
 }
@@ -354,30 +432,33 @@ function ChainChip(props: {
       <span className="chain-chip-actions">
         <button
           type="button"
-          className="btn btn-small"
+          className="icon-btn"
           disabled={disabled || index === 0}
           aria-label={`上移 ${label}`}
+          title="上移"
           onClick={() => onMove(index, -1)}
         >
-          上移
+          ↑
         </button>
         <button
           type="button"
-          className="btn btn-small"
+          className="icon-btn"
           disabled={disabled || last}
           aria-label={`下移 ${label}`}
+          title="下移"
           onClick={() => onMove(index, 1)}
         >
-          下移
+          ↓
         </button>
         <button
           type="button"
-          className="btn btn-small btn-quiet-danger"
+          className="icon-btn icon-btn-danger"
           disabled={disabled}
           aria-label={`删除 ${label}`}
+          title="删除"
           onClick={onDelete}
         >
-          删除
+          ✕
         </button>
       </span>
     </li>
@@ -393,12 +474,13 @@ function RoleCard(props: {
   chains: Map<string, ChainDraft>;
   models: ModelInfo[];
   disabled: boolean;
-  removable: boolean;
+  /** 未配置且干净的卡可收起回紧凑行。 */
+  collapsible: boolean;
   onRow: (row: SelectorRow) => void;
   onEnsureChain: (key: string) => void;
   onDeleteChain: (key: string) => void;
   onChain: (key: string, patch: (chain: ChainDraft) => ChainDraft) => void;
-  onRemove: () => void;
+  onCollapse: () => void;
 }) {
   const {
     role,
@@ -408,12 +490,12 @@ function RoleCard(props: {
     chains,
     models,
     disabled,
-    removable,
+    collapsible,
     onRow,
     onEnsureChain,
     onDeleteChain,
     onChain,
-    onRemove,
+    onCollapse,
   } = props;
   const info = roleInfo(role);
   const primary = row.selector !== null ? row.selector : null;
@@ -421,8 +503,8 @@ function RoleCard(props: {
     <div className="role-card" data-testid={`role-card-${role}`}>
       <div className="role-card-head">
         <div className="role-card-title">
-          <strong>{info?.name ?? role}</strong>
-          <span className="mono muted">{role}</span>
+          <strong className="role-card-name">{info?.name ?? role}</strong>
+          <span className="mono muted role-key">{role}</span>
           {info === null ? <span className="badge badge-grey">自定义角色</span> : null}
           {info?.kind === "capability" ? (
             <span className="badge badge-grey">能力角色</span>
@@ -430,7 +512,7 @@ function RoleCard(props: {
           {primary === null ? <span className="badge badge-grey">未配置</span> : null}
           {row.touched ? <span className="muted">已修改</span> : null}
         </div>
-        <div className="muted">{info?.blurb ?? "此配置里的自定义角色"}</div>
+        <div className="muted role-card-blurb">{info?.blurb ?? "此配置里的自定义角色"}</div>
       </div>
       <SelectorCell
         models={models}
@@ -440,10 +522,10 @@ function RoleCard(props: {
         disabled={disabled}
         onChange={onRow}
       />
-      {removable ? (
+      {collapsible ? (
         <div>
-          <button type="button" className="btn btn-small" disabled={disabled} onClick={onRemove}>
-            移除此角色
+          <button type="button" className="btn btn-small" disabled={disabled} onClick={onCollapse}>
+            收起
           </button>
         </div>
       ) : null}
@@ -464,7 +546,7 @@ function RoleCard(props: {
           key={key}
           chainKey={key}
           title={attachedTitle(key, models)}
-          hint="不管哪个角色在用这个模型，出错时都按顺序改用（优先于上面的按角色兜底）"
+          hint="不管哪个角色在用这个模型，出错时都按顺序改用（优先于按角色的兜底）"
           note={null}
           draft={chains.get(key) ?? null}
           models={models}
@@ -484,6 +566,44 @@ function attachedTitle(key: string, models: ModelInfo[]): string {
   const base = selectorBase(key);
   const name = friendlyModelName(base, models);
   return `「${name ?? base}」的兜底`;
+}
+
+/** 能力类角色：默认折叠在「更多角色」里（配置了也会成卡，但收在这里）。 */
+const MORE_ROLES = ["image", "web", "speech", "dictation", "vision", "judge"];
+
+/** 未配置角色的紧凑行：实际使用 + 设置按钮，点开才展开成完整卡。 */
+function RoleCompactRow(props: {
+  role: string;
+  modelText: string;
+  modelUnknown: boolean;
+  viaDisplay: string | null;
+  disabled: boolean;
+  onExpand: () => void;
+}) {
+  const { role, modelText, modelUnknown, viaDisplay, disabled, onExpand } = props;
+  const info = roleInfo(role);
+  return (
+    <div className="role-compact" data-testid={`role-compact-${role}`}>
+      <span className="role-compact-name">
+        <strong>{info?.name ?? role}</strong>
+        <span className="mono muted role-key">{role}</span>
+      </span>
+      <span className="muted">
+        未单独设置，实际使用：{modelText}
+        {viaDisplay !== null ? `（${viaDisplay}角色）` : ""}
+      </span>
+      {modelUnknown ? <span className="badge badge-grey">未知值 · 保留</span> : null}
+      <button
+        type="button"
+        className="btn btn-small"
+        disabled={disabled}
+        data-testid={`expand-role-${role}`}
+        onClick={onExpand}
+      >
+        设置
+      </button>
+    </div>
+  );
 }
 
 /** Agent 行：当前实际使用的模型 + 改用/停用/顾问。 */
@@ -610,6 +730,8 @@ export function ModelsAgentsPanel(props: {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyBlock, setBusyBlock] = useState<BlockKey | null>(null);
   const [othersOpen, setOthersOpen] = useState(false);
+  const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
+  const [moreOpen, setMoreOpen] = useState(false);
   const [blockErrors, setBlockErrors] = useState<Record<BlockKey, string | null>>({
     roles: null,
     agents: null,
@@ -776,6 +898,30 @@ export function ModelsAgentsPanel(props: {
     });
   };
 
+  const expandRole = (role: string) => {
+    setDraft((prev) => {
+      if (!prev || prev.roles.has(role)) return prev;
+      const roles = new Map(prev.roles);
+      roles.set(role, { selector: null, thinking: "", touched: false });
+      return { ...prev, roles, shownRoles: [...prev.shownRoles, role] };
+    });
+    setExpandedRoles((prev) => new Set(prev).add(role));
+  };
+
+  const collapseRole = (role: string) => {
+    setExpandedRoles((prev) => {
+      const next = new Set(prev);
+      next.delete(role);
+      return next;
+    });
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const roles = new Map(prev.roles);
+      roles.delete(role);
+      return { ...prev, roles, shownRoles: prev.shownRoles.filter((r) => r !== role) };
+    });
+  };
+
   const revert = (block: BlockKey) => {
     setDraft(draftFromConfig(config));
     setBlockErrors((prev) => ({ ...prev, [block]: null }));
@@ -873,13 +1019,86 @@ export function ModelsAgentsPanel(props: {
     setOthersOpen(true);
   };
 
-  const missingRoles = COMMON_ROLES.filter((role) => !draft.shownRoles.includes(role));
+  // 未保存修改计数（吸底保存条用）。
+  const baseChainKeys = new Set(Object.keys(config.fallbackChains));
+  const chainsChangeCount =
+    [...draft.chains.values()].filter((c) => c.touched || !baseChainKeys.has(c.key)).length +
+    [...baseChainKeys].filter((key) => !draft.chains.has(key)).length;
+  const rolesChangeCount =
+    [...draft.roles.values()].filter((r) => r.touched).length + chainsChangeCount;
+  const knownAgents = new Set(config.agents.map((a) => a.name));
+  const configDisabledKnown = new Set(
+    config.disabledAgents.map((n) => rawValueText(n)).filter((n) => knownAgents.has(n)),
+  );
+  const agentsChangeCount =
+    [...draft.overrides.values()].filter((r) => r.touched).length +
+    draft.advisorTouched.size +
+    [...draft.disabled].filter((a) => !configDisabledKnown.has(a)).length +
+    [...configDisabledKnown].filter((a) => !draft.disabled.has(a)).length;
   const retry = describeRetryStatus(config.retryStatus);
   const retryEnabledText =
     retry.enabled === null ? "未知" : retry.enabled ? "开" : "关";
 
   const rolesSaveLabel =
     rolesDirty && chainsDirty ? "保存主模型与兜底" : chainsDirty ? "保存兜底" : "保存主模型";
+
+  /** 某角色用卡还是紧凑行：已配置 / 有兜底 / 已点开 → 卡，否则紧凑行。 */
+  const roleCardVisible = (role: string): boolean => {
+    if (!draft.shownRoles.includes(role)) return false;
+    if (config.roles[role] !== undefined) return true;
+    if (draft.chains.has(role)) return true;
+    return expandedRoles.has(role);
+  };
+
+  const renderRoleEntry = (role: string) => {
+    if (!roleCardVisible(role)) {
+      const fallback = describeRoleFallback(role, config.roles, modelsList);
+      return (
+        <RoleCompactRow
+          key={role}
+          role={role}
+          modelText={fallback.modelText}
+          modelUnknown={fallback.modelUnknown}
+          viaDisplay={fallback.viaDisplay}
+          disabled={busyBlock !== null}
+          onExpand={() => expandRole(role)}
+        />
+      );
+    }
+    const row = draft.roles.get(role) ?? { selector: null, thinking: "", touched: false };
+    const primary = row.selector;
+    const attached =
+      primary !== null
+        ? attachedChainKeys(primary, [...draft.chains.keys()]).filter((key) =>
+            draft.chains.has(key),
+          )
+        : [];
+    const roleChain = draft.chains.get(role) ?? null;
+    // 未配置、没兜底、没改过、非 default 的卡可收起回紧凑行。
+    const collapsible =
+      config.roles[role] === undefined &&
+      !row.touched &&
+      !draft.chains.has(role) &&
+      role !== "default";
+    return (
+      <RoleCard
+        key={role}
+        role={role}
+        row={row}
+        roleChain={roleChain}
+        attachedKeys={attached}
+        chains={draft.chains}
+        models={modelsList}
+        disabled={busyBlock !== null}
+        collapsible={collapsible}
+        onRow={(next) => setRow("roles", role, next)}
+        onEnsureChain={ensureChain}
+        onDeleteChain={deleteChain}
+        onChain={updateChain}
+        onCollapse={() => collapseRole(role)}
+      />
+    );
+  };
 
   return (
     <div className="manage-section models-agents">
@@ -936,93 +1155,52 @@ export function ModelsAgentsPanel(props: {
             {blockErrors.roles}
           </div>
         ) : null}
-        {draft.shownRoles.map((role) => {
-          const row = draft.roles.get(role) ?? { selector: null, thinking: "", touched: false };
-          const primary = row.selector;
-          const attached =
-            primary !== null
-              ? attachedChainKeys(primary, [...draft.chains.keys()]).filter((key) =>
-                  draft.chains.has(key),
-                )
-              : [];
-          const roleChain = draft.chains.get(role) ?? null;
-          // 未配置、没兜底、没改过的卡可以移除（常见角色随时加回来）。
-          const removable =
-            row.selector === null && !row.touched && roleChain === null && role !== "default";
-          return (
-            <RoleCard
-              key={role}
-              role={role}
-              row={row}
-              roleChain={roleChain}
-              attachedKeys={attached}
-              chains={draft.chains}
-              models={modelsList}
+        {draft.shownRoles
+          .filter((role) => !MORE_ROLES.includes(role))
+          .map((role) => renderRoleEntry(role))}
+        {COMMON_ROLES.filter(
+          (role) => !MORE_ROLES.includes(role) && !draft.shownRoles.includes(role),
+        ).map((role) => renderRoleEntry(role))}
+        <details
+          className="more-roles"
+          open={moreOpen}
+          data-testid="more-roles"
+        >
+          <summary
+            onClick={(e) => {
+              e.preventDefault();
+              setMoreOpen(!moreOpen);
+            }}
+          >
+            更多角色（图片生成、联网搜索等能力类，默认收起）
+          </summary>
+          <p className="muted">
+            能力类角色需要专用模型；未单独设置时用 omp 内置默认。配过的同样在这里改。
+          </p>
+          {MORE_ROLES.map((role) => renderRoleEntry(role))}
+        </details>
+        {dirty.roles ? (
+          <div className="save-bar" role="status">
+            <span>{rolesChangeCount} 处未保存修改</span>
+            <button
+              type="button"
+              className="btn"
               disabled={busyBlock !== null}
-              removable={removable}
-              onRow={(next) => setRow("roles", role, next)}
-              onEnsureChain={ensureChain}
-              onDeleteChain={deleteChain}
-              onChain={updateChain}
-              onRemove={() =>
-                setDraft((prev) => {
-                  if (!prev) return prev;
-                  const roles = new Map(prev.roles);
-                  roles.delete(role);
-                  return {
-                    ...prev,
-                    roles,
-                    shownRoles: prev.shownRoles.filter((r) => r !== role),
-                  };
-                })
-              }
-            />
-          );
-        })}
-        {missingRoles.length > 0 ? (
-          <div className="add-roles">
-            <span className="muted">添加角色：</span>
-            {missingRoles.map((role) => (
-              <button
-                key={role}
-                type="button"
-                className="btn btn-small"
-                disabled={busyBlock !== null}
-                data-testid={`add-role-${role}`}
-                onClick={() =>
-                  setDraft((prev) => {
-                    if (!prev || prev.roles.has(role)) return prev;
-                    const roles = new Map(prev.roles);
-                    roles.set(role, { selector: null, thinking: "", touched: false });
-                    return { ...prev, roles, shownRoles: [...prev.shownRoles, role] };
-                  })
-                }
-              >
-                {roleInfo(role)?.name ?? role}
-              </button>
-            ))}
+              onClick={() => revert("roles")}
+            >
+              还原
+            </button>
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={busyBlock !== null}
+              onClick={saveRoles}
+            >
+              {busyBlock === "roles" ? <span className="spinner" aria-hidden="true" /> : null}
+              {rolesSaveLabel}
+            </button>
           </div>
         ) : null}
-        <div className="block-actions">
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={busyBlock !== null || !dirty.roles}
-            onClick={saveRoles}
-          >
-            {busyBlock === "roles" ? <span className="spinner" aria-hidden="true" /> : null}
-            {rolesSaveLabel}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busyBlock !== null || !dirty.roles}
-            onClick={() => revert("roles")}
-          >
-            还原
-          </button>
-          {dirty.roles ? <span className="muted">未保存的修改</span> : null}
-        </div>
       </section>
 
       <section className="block-section" aria-label="Agent">
@@ -1086,26 +1264,28 @@ export function ModelsAgentsPanel(props: {
             />
           );
         })}
-        <div className="block-actions">
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={busyBlock !== null || !dirty.agents}
-            onClick={saveAgents}
-          >
-            {busyBlock === "agents" ? <span className="spinner" aria-hidden="true" /> : null}
-            保存
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busyBlock !== null || !dirty.agents}
-            onClick={() => revert("agents")}
-          >
-            还原
-          </button>
-          {dirty.agents ? <span className="muted">未保存的修改</span> : null}
-        </div>
+        {dirty.agents ? (
+          <div className="save-bar" role="status">
+            <span>{agentsChangeCount} 处未保存修改</span>
+            <button
+              type="button"
+              className="btn"
+              disabled={busyBlock !== null}
+              onClick={() => revert("agents")}
+            >
+              还原
+            </button>
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={busyBlock !== null}
+              onClick={saveAgents}
+            >
+              {busyBlock === "agents" ? <span className="spinner" aria-hidden="true" /> : null}
+              保存
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="block-section" aria-label="其他模型的兜底">
@@ -1213,26 +1393,28 @@ export function ModelsAgentsPanel(props: {
             </div>
           ) : null}
         </details>
-        <div className="block-actions">
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={busyBlock !== null || !dirty.others}
-            onClick={saveOthers}
-          >
-            {busyBlock === "others" ? <span className="spinner" aria-hidden="true" /> : null}
-            保存兜底
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={busyBlock !== null || !dirty.others}
-            onClick={() => revert("others")}
-          >
-            还原
-          </button>
-          {dirty.others ? <span className="muted">未保存的修改</span> : null}
-        </div>
+        {dirty.others ? (
+          <div className="save-bar" role="status">
+            <span>{chainsChangeCount} 处未保存修改</span>
+            <button
+              type="button"
+              className="btn"
+              disabled={busyBlock !== null}
+              onClick={() => revert("others")}
+            >
+              还原
+            </button>
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={busyBlock !== null}
+              onClick={saveOthers}
+            >
+              {busyBlock === "others" ? <span className="spinner" aria-hidden="true" /> : null}
+              保存兜底
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>

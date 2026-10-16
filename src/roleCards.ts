@@ -95,6 +95,65 @@ export function friendlyModelName(selector: string, models: ModelInfo[]): string
   return models.find((m) => m.selector === selector)?.name ?? null;
 }
 
+/**
+ * 未配置角色实际用谁：沿 omp 的回退规则展开（与 `mv()`/`abe` 一致）——
+ * advisor 只认已配置的 slow；memory→tiny→smol→default 逐级找已配置的；
+ * smol/slow 未配置时用 default；其余未配置直接内置。
+ * 返回解析到的选择器与其来源角色；都解析不到返回 null（用 omp 内置默认）。
+ */
+export function resolveRoleFallback(
+  role: string,
+  roles: Record<string, unknown>,
+): { selector: string; via: string | null } | null {
+  const seen = new Set<string>([role]);
+  let current: string | null = role;
+  while (current !== null) {
+    const raw = roles[current];
+    if (typeof raw === "string" && raw.trim() !== "") {
+      return { selector: raw, via: current === role ? null : current };
+    }
+    let next: string | null = null;
+    if (current === "advisor") {
+      next = typeof roles["slow"] === "string" ? "slow" : null;
+    } else if (current === "memory" || current === "tiny") {
+      next = current === "memory" ? "tiny" : "smol";
+    } else if (current === "smol" || current === "slow") {
+      next = "default";
+    }
+    if (next === null || seen.has(next)) return null;
+    seen.add(next);
+    current = next;
+  }
+  return null;
+}
+
+export interface RoleFallbackText {
+  /** 主行：实际使用的模型（友好名 / 原始值 / omp 内置默认）。 */
+  modelText: string;
+  modelUnknown: boolean;
+  /** 来源角色的中文名；null 表示就是该角色自己或走内置。 */
+  viaDisplay: string | null;
+}
+
+/** 未配置角色的「实际使用」文案。 */
+export function describeRoleFallback(
+  role: string,
+  roles: Record<string, unknown>,
+  models: ModelInfo[],
+): RoleFallbackText {
+  const resolved = resolveRoleFallback(role, roles);
+  if (resolved === null) {
+    return { modelText: "omp 内置默认", modelUnknown: false, viaDisplay: null };
+  }
+  const parsed = parseSelectorValue(resolved.selector);
+  const name = friendlyModelName(parsed.selector, models);
+  return {
+    modelText: `${name ?? resolved.selector}${parsed.thinking !== "" ? ` · ${parsed.thinking}` : ""}`,
+    modelUnknown: name === null,
+    viaDisplay: resolved.via === null ? null : (roleInfo(resolved.via)?.name ?? resolved.via),
+  };
+}
+
 export interface AgentEffective {
   /** 主行：实际使用的模型（友好名 / 说明文字）。 */
   modelText: string;
@@ -104,6 +163,66 @@ export interface AgentEffective {
   sourceText: string;
   /** 思考强度（"" 表示默认）。 */
   thinking: string;
+}
+
+export interface AliasResolved {
+  modelText: string;
+  modelUnknown: boolean;
+  thinking: string;
+  /** `@smol → 轻快任务角色`；兜底时附 `（smol未配置）`；内置时为 `@smol`。 */
+  arrowText: string;
+  builtin: boolean;
+}
+
+/**
+ * 别名取值的公共解析（覆盖与内置默认共用）：`@角色` 先按该角色取值，
+ * 未配置时沿角色回退链找实际生效者，再取不到走 omp 内置默认。
+ * 不认识的别名返回 null（调用方按字面 selector 处理）。
+ */
+function resolveAliasValue(
+  raw: string,
+  roles: Record<string, unknown>,
+  models: ModelInfo[],
+  fallbackThinking: string,
+): AliasResolved | null {
+  const alias = parseRoleAlias(raw);
+  if (alias === null) return null;
+  if (roleInfo(alias.role) === null && roles[alias.role] === undefined) return null;
+  const display = roleInfo(alias.role)?.name ?? alias.role;
+  const own = roles[alias.role];
+  if (own !== undefined && typeof own !== "string") {
+    return {
+      modelText: `${display}角色未配置，用 omp 内置默认`,
+      modelUnknown: false,
+      thinking: alias.thinking || fallbackThinking,
+      arrowText: `@${alias.role}`,
+      builtin: true,
+    };
+  }
+  const resolved = resolveRoleFallback(alias.role, roles);
+  if (resolved === null) {
+    return {
+      modelText: `${display}角色未配置，用 omp 内置默认`,
+      modelUnknown: false,
+      thinking: alias.thinking || fallbackThinking,
+      arrowText: `@${alias.role}`,
+      builtin: true,
+    };
+  }
+  const parsed = parseSelectorValue(resolved.selector);
+  const name = friendlyModelName(parsed.selector, models);
+  const viaDisplay =
+    resolved.via === null ? null : (roleInfo(resolved.via)?.name ?? resolved.via);
+  return {
+    modelText: name ?? resolved.selector,
+    modelUnknown: name === null,
+    thinking: alias.thinking || parsed.thinking || fallbackThinking,
+    arrowText:
+      viaDisplay === null
+        ? `@${alias.role} → ${display}角色`
+        : `@${alias.role} → ${viaDisplay}角色（${alias.role}未配置）`,
+    builtin: false,
+  };
 }
 
 /**
@@ -120,27 +239,15 @@ export function resolveAgentEffective(
   const fallbackThinking = agent.defaultThinkingLevel ?? "";
   if (overrideRaw !== undefined) {
     const raw = rawValueText(overrideRaw);
-    const alias = parseRoleAlias(raw);
-    const aliasRoleKnown =
-      alias !== null && (roleInfo(alias.role) !== null || roles[alias.role] !== undefined);
-    if (alias !== null && aliasRoleKnown) {
-      const display = roleInfo(alias.role)?.name ?? alias.role;
-      const roleRaw = roles[alias.role];
-      if (typeof roleRaw !== "string") {
-        return {
-          modelText: `${display}角色未配置，用 omp 内置默认`,
-          modelUnknown: false,
-          sourceText: `改用 @${alias.role}（跟随该角色）`,
-          thinking: alias.thinking || fallbackThinking,
-        };
-      }
-      const parsed = parseSelectorValue(roleRaw);
-      const name = friendlyModelName(parsed.selector, models);
+    const resolved = resolveAliasValue(raw, roles, models, fallbackThinking);
+    if (resolved !== null) {
       return {
-        modelText: name ?? roleRaw,
-        modelUnknown: name === null,
-        sourceText: `来自「改用模型」@${alias.role} → ${display}角色`,
-        thinking: alias.thinking || parsed.thinking || fallbackThinking,
+        modelText: resolved.modelText,
+        modelUnknown: resolved.modelUnknown,
+        sourceText: resolved.builtin
+          ? `改用 ${resolved.arrowText}（跟随该角色）`
+          : `来自「改用模型」${resolved.arrowText}`,
+        thinking: resolved.thinking,
       };
     }
     const parsed = parseSelectorValue(raw);
@@ -163,27 +270,13 @@ export function resolveAgentEffective(
   }
   const more =
     agent.defaultModel.length > 1 ? `（首选，其后还有 ${agent.defaultModel.length - 1} 个备选）` : "";
-  const alias = parseRoleAlias(first);
-  const aliasRoleKnown =
-    alias !== null && (roleInfo(alias.role) !== null || roles[alias.role] !== undefined);
-  if (alias !== null && aliasRoleKnown) {
-    const display = roleInfo(alias.role)?.name ?? alias.role;
-    const roleRaw = roles[alias.role];
-    if (typeof roleRaw !== "string") {
-      return {
-        modelText: `${display}角色未配置，用 omp 内置默认`,
-        modelUnknown: false,
-        sourceText: `内置默认 @${alias.role}${more}`,
-        thinking: alias.thinking || fallbackThinking,
-      };
-    }
-    const parsed = parseSelectorValue(roleRaw);
-    const name = friendlyModelName(parsed.selector, models);
+  const resolvedDefault = resolveAliasValue(first, roles, models, fallbackThinking);
+  if (resolvedDefault !== null) {
     return {
-      modelText: name ?? roleRaw,
-      modelUnknown: name === null,
-      sourceText: `内置默认 @${alias.role} → ${display}角色${more}`,
-      thinking: alias.thinking || parsed.thinking || fallbackThinking,
+      modelText: resolvedDefault.modelText,
+      modelUnknown: resolvedDefault.modelUnknown,
+      sourceText: `内置默认 ${resolvedDefault.arrowText}${more}`,
+      thinking: resolvedDefault.thinking,
     };
   }
   const parsed = parseSelectorValue(first);
