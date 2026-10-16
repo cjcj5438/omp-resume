@@ -176,6 +176,17 @@ export interface OpenInItermRequest {
   path: string;
 }
 
+/** 提示词历史条目（CONTRACT §13.2）。cwd / sessionId 缺失或为空时为 null。 */
+export interface PromptHistoryEntry {
+  id: number;
+  prompt: string;
+  cwd: string | null;
+  sessionId: string | null;
+  /** ISO-8601 UTC 毫秒。 */
+  createdAt: string;
+  useCount: number;
+}
+
 export interface OmpVersion {
   version: string | null;
   path: string | null;

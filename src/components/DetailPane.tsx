@@ -9,6 +9,7 @@ import { ConversationView } from "./ConversationView";
 import { TreeView } from "./TreeView";
 import { SessionBadges } from "./ui";
 import { UsageSummary } from "./UsageSummary";
+import { RecapBlock } from "./RecapBlock";
 
 interface DetailPaneProps {
   session: SessionSummary | null;
@@ -118,6 +119,7 @@ export function DetailPane({
             ) : null}
           </div>
           <UsageSummary path={session.path} supported={session.formatSupported} revision={`${session.modifiedAt}:${session.sizeBytes}:${refreshKey}`} />
+          <RecapBlock sessionId={session.id} />
           {!session.formatSupported ? (
             <div className="banner banner-warn">
               该会话格式（版本 {session.version ?? "?"}）暂不支持预览，仍可继续或删除

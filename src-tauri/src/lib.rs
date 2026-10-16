@@ -14,6 +14,7 @@
 pub mod model;
 
 pub mod config;
+pub mod history;
 pub mod lock;
 pub mod mcp_config;
 pub mod occupant;
@@ -171,6 +172,36 @@ async fn choose_directory() -> Result<Option<String>, model::AppError> {
         .map_err(io_join_error)?
 }
 
+/// CONTRACT §13.1：会话最新 recap（只读；库缺失或失败静默为 null）。
+#[tauri::command]
+async fn get_session_recap(session_id: String) -> Result<Option<String>, model::AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok::<_, model::AppError>(history::session_recap(
+            &history::resolve_db_path(),
+            &session_id,
+        ))
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
+/// CONTRACT §13.2：提示词历史搜索（只读；库缺失或失败静默为空列表）。
+#[tauri::command]
+async fn search_prompt_history(
+    query: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<model::PromptHistoryEntry>, model::AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok::<_, model::AppError>(history::search_prompts(
+            &history::resolve_db_path(),
+            query.as_deref(),
+            limit.unwrap_or(history::DEFAULT_SEARCH_LIMIT),
+        ))
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
 /// CONTRACT §4.9：本地 omp 版本，不占写操作门禁。
 #[tauri::command]
 async fn omp_version() -> Result<model::OmpVersion, AppError> {
@@ -236,6 +267,8 @@ pub fn run() {
             open_in_iterm,
             new_session_in_iterm,
             choose_directory,
+            get_session_recap,
+            search_prompt_history,
             omp_version,
             omp_update_check,
             omp_update_run,

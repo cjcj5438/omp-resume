@@ -650,6 +650,23 @@ pub struct SkillsListResult {
     pub warnings: Vec<String>,
 }
 
+// ---------------------------------------------------------------------------
+// 提示词历史（CONTRACT §13.2，只读 history.db）
+// ---------------------------------------------------------------------------
+
+/// 一条提示词历史。`cwd` / `sessionId` 缺失或为空时为 null。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptHistoryEntry {
+    pub id: i64,
+    pub prompt: String,
+    pub cwd: Option<String>,
+    pub session_id: Option<String>,
+    /// ISO-8601 UTC 毫秒（由 history 的秒级 epoch 转换）。
+    pub created_at: String,
+    pub use_count: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -31,6 +31,8 @@ interface SidebarProps {
   onCheckOmp: () => void;
   onNewSession: () => void;
   onNewSessionIn: (cwd: string) => void;
+  historyActive: boolean;
+  onToggleHistory: () => void;
 }
 
 export function Sidebar({
@@ -59,6 +61,8 @@ export function Sidebar({
   onCheckOmp,
   onNewSession,
   onNewSessionIn,
+  historyActive,
+  onToggleHistory,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   return (
@@ -83,6 +87,9 @@ export function Sidebar({
         </button>
         <button type="button" className="btn" onClick={onNewSession}>
           新会话…
+        </button>
+        <button type="button" className="btn" aria-pressed={historyActive} onClick={onToggleHistory}>
+          提示词历史
         </button>
         <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
           {loading ? <span className="spinner" aria-hidden="true" /> : null}

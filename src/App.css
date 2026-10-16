@@ -243,6 +243,81 @@ body {
   outline: 2px solid var(--accent);
 }
 
+/* 会话概要（recap）：默认折叠到 3 行，展开后完整显示。 */
+.recap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-size: 12px;
+}
+
+.recap-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.recap-collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 提示词历史视图：搜索栏 + 列表，列表区域可滚动。 */
+.ph-view {
+  overflow-y: auto;
+}
+
+.ph-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ph-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px;
+}
+
+.ph-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ph-prompt {
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.ph-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .row {
   display: flex;
   gap: 8px;

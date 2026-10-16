@@ -814,3 +814,69 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   去重后主对话 **$124.49429938**、后台（含嵌套）**$9.35127952**、子代理 **$26.77144350**，
   总计 **$160.61702240**，Token **2,131,166,844**；冷扫描 **2.244 秒**，缓存再扫描 **75.94 毫秒**。
   比首次快照仍有少量增量，来自同时运行的会话追加；上述两次计时均只读、不改写原始数据。
+
+## 13. 新开会话与会话概要 / 提示词历史（本次追加）
+
+### 13.0 `new_session_in_iterm { cwd } -> ()` 与 `choose_directory() -> string | null`
+
+**硬性不变量**：应用内不做聊天、不调用任何 LLM；新开会话**绝不带 prompt、
+不自动发送任何内容、不带任何参数**，只执行 `omp`。
+
+- `new_session_in_iterm { cwd }`：
+  - `cwd` 必须为**存在的绝对目录**，否则 `CWD_MISSING`
+    （不存在 / 是文件 / 相对路径同一错误码，与现有 §4.8 一致）。
+  - `cwd` 含控制字符（换行等）→ `INVALID_INPUT`：AppleScript 字符串字面量
+    转义会**静默剥离**控制字符（§4.8 的 fail-safe 策略），若不拒绝，
+    `cd` 目标会与实际目录不一致。
+  - 行为：复用 §4.8 的 iTerm 原语（无窗口开新窗口、未运行先启动、当前窗口开新 tab），
+    在该 tab 执行 `cd '<cwd>' && omp`（POSIX 单引号转义 `'` → `'"'"'`，
+    再经 AppleScript 字符串转义）。命令跑完 shell 保留，用户可继续交互。
+  - 失败 → `ITERM_FAILED`（复用 §4.8 的 osascript 错误映射与自动化授权指引）。
+  - 实现：纯逻辑层 `ops::commands::new_session_in_iterm_impl(cwd, opener)`
+    （opener 可注入，生产传 `ops::iterm::open_tab`）；命令构造纯函数
+    `ops::iterm::new_session_command`。
+- `choose_directory() -> string | null`：
+  - `osascript -e 'POSIX path of (choose folder with prompt "选择项目目录")'`
+    （不新增依赖、不改 capabilities）。
+  - **用户取消（osascript 错误 -128）返回 `null`，不是错误**；
+    其他 osascript 失败 → `IO`。
+  - 返回值去掉尾部换行与末尾斜杠；根目录保留 `/`。
+  - 纯函数 `ops::picker::parse_choose_output` 负责解释结果。
+- 前端：「新会话…」按钮（侧栏顶部）→ `choose_directory` → 有结果则
+  `new_session_in_iterm`；项目分组头「+」按钮（hover/focus 显示，
+  与置顶按钮并排，tooltip「在此项目新会话」）直接用该组 `cwd`。目录不存在时禁用。
+  成功 / 失败提示沿用「在 iTerm 继续」的 toast 处理。
+  `api.ts`：`newSessionInIterm(cwd)` 与 `chooseDirectory()`。
+
+### 13.1 `get_session_recap { sessionId } -> string | null`
+
+- 数据源：`$HOME/.omp/agent/history.db`，可用环境变量
+  `OMP_RESUME_HISTORY_DB` 覆盖（供测试）。
+- **只读**（`SQLITE_OPEN_READ_ONLY`）：不写、不 checkpoint、不创建库文件。
+- 取该会话最新一条 recap：`session_recaps` 按 `created_at DESC, id DESC LIMIT 1`。
+- 库不存在 / 表列对不上 / 任何 SQL 错误 / 结果空白 → `null`，**静默**
+  （功能隐藏，不报错；与 §3.1 占用归属同样的降级方式）。
+- 前端：`RecapBlock.tsx` 挂载在详情页会话头（DetailPane 内一行）；
+  无 recap 不渲染；默认折叠 3 行（CSS line-clamp），可展开 / 收起。
+
+### 13.2 `search_prompt_history { query?, limit? = 200 } -> PromptHistoryEntry[]`
+
+- `PromptHistoryEntry { id: i64, prompt: string, cwd: string|null,
+  sessionId: string|null, createdAt: string, useCount: i64 }`（JSON camelCase）。
+  `cwd` / `sessionId` 为空串或 NULL → `null`；`createdAt` 为 ISO-8601 UTC 毫秒
+  （由 `history.created_at` 秒级 epoch 转换，§0 时间约定）。
+- 排序：`created_at DESC, id DESC`。`limit` 默认 200。
+- `query`：**大小写不敏感 LIKE 子串**匹配（空白 / 缺省 = 不过滤），
+  转义 `\` `%` `_` 并配 `ESCAPE '\'`。**不使用 `history_fts`**
+  （FTS5 默认分词器不切 CJK；约 425 行规模 LIKE 足够）。
+  注意 `LIKE` 的大小写不敏感仅对 ASCII 生效（CJK 本无大小写）。
+- 库不存在 / 表列对不上 / 任何 SQL 错误 → 空列表，**静默**。
+  单行时间戳缺失或越界 → 跳过该行，不影响其他行。
+- 实测（omp 18.11.1，2026-10-16）：`history` 429 行、`session_recaps` 110 行
+  覆盖 39 个会话；库为 WAL 模式。只读查询前后 `history.db` 主文件
+  大小与 mtime 不变，`-wal` / `-shm` 亦无变化。
+- 前端：侧栏「提示词历史」按钮 → `PromptHistoryView.tsx`：搜索框（200ms 防抖）
+  + 列表（prompt 截断 2 行、cwd 末段、相对时间、使用次数），每条三个动作：
+  「复制」（`clipboard.ts`）、「跳到来源会话」（**仅当 sessionId 命中当前已加载
+  会话列表时可用**，否则禁用，选中该会话）、「在该目录新会话」
+  （调用 §13.0 `new_session_in_iterm`；`cwd` 为 null 时禁用；**绝不携带 prompt**）。

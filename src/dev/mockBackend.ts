@@ -10,6 +10,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import type { AppError, MarketplaceSummary, OmpOpResult, PluginSummary, PluginUpgradeChange, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
+import type { PromptHistoryEntry } from "../types";
 import {
   FIXTURE_SESSIONS,
   buildListResult,
@@ -419,6 +420,21 @@ export async function installMockBackend(): Promise<MockHandle> {
       }
       case "choose_directory":
         return params.get("pick") === "cancel" ? null : "/Users/chenjing/my/omp-resume";
+      case "get_session_recap": {
+        // 仅第一个夹具会话有 recap，便于同时看到「有」与「无」两种详情。
+        const sid = args["sessionId"];
+        return sid === sessions[0]?.summary.id ? "本会话：修复了侧栏分组按钮的对齐，并补充了新会话入口的单测。下一步是验证 iTerm 冒烟。" : null;
+      }
+      case "search_prompt_history": {
+        const q = (typeof args["query"] === "string" ? args["query"] : "").trim().toLowerCase();
+        const first = sessions[0]?.summary;
+        const entries: PromptHistoryEntry[] = [
+          { id: 3, prompt: "给 Sidebar 加一个新会话按钮，点击后先选目录", cwd: first?.cwd ?? null, sessionId: first?.id ?? null, createdAt: "2026-10-16T01:00:00.000Z", useCount: 3 },
+          { id: 2, prompt: "帮我看看 100% 的 CPU 占用", cwd: null, sessionId: "gone-session-id", createdAt: "2026-10-15T08:00:00.000Z", useCount: 1 },
+          { id: 1, prompt: "fix README.md typo", cwd: "/Users/chenjing/my/other", sessionId: null, createdAt: "2026-10-14T03:00:00.000Z", useCount: 2 },
+        ];
+        return entries.filter((e) => q === "" || e.prompt.toLowerCase().includes(q));
+      }
       case "omp_version":
         return { version: "18.11.1", path: "/Users/chenjing/.local/bin/omp" };
       case "omp_update_check": {

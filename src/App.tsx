@@ -25,6 +25,7 @@ import { runContinueFromNode, type ContinueOutcome } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
 import { Sidebar } from "./components/Sidebar";
 import { DetailPane } from "./components/DetailPane";
+import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
 import { StatsView } from "./components/StatsView";
 import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
@@ -49,7 +50,7 @@ function App() {
   const [deleteTargets, setDeleteTargets] = useState<SessionSummary[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
-  const [view, setView] = useState<"sessions" | "manage" | "stats">("sessions");
+  const [view, setView] = useState<"sessions" | "manage" | "stats" | "history">("sessions");
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
   // 手动重新检查：重启应用即可。
   const [update, setUpdate] = useState<Update | null>(null);
@@ -139,6 +140,9 @@ function App() {
     return m;
   }, [list]);
 
+  // 提示词历史视图：已加载会话 id，用于判断「跳到来源会话」是否可用。
+  const loadedSessionIds = useMemo(() => new Set([...byPath.values()].map((s) => s.id)), [byPath]);
+
   // 先置顶排序再过滤，使过滤结果保持置顶顺序。
   const orderedGroups = useMemo(
     () => applyPins(list?.groups ?? [], pins),
@@ -208,6 +212,19 @@ function App() {
     [addToast],
   );
 
+  // 提示词历史「跳到来源会话」：切回会话视图并选中该会话（不在列表中则无操作）。
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      for (const s of byPath.values()) {
+        if (s.id !== sessionId) continue;
+        setView("sessions");
+        setSelectedPath(s.path);
+        return;
+      }
+    },
+    [byPath],
+  );
+
   const requestDelete = useCallback(
     async (paths: string[]): Promise<DeleteResult[]> => {
       const results = await deleteSessions({ paths });
@@ -265,6 +282,8 @@ function App() {
         onToggleManage={() => setView((v) => (v === "manage" ? "sessions" : "manage"))}
         statsActive={view === "stats"}
         onToggleStats={() => setView((v) => (v === "stats" ? "sessions" : "stats"))}
+        historyActive={view === "history"}
+        onToggleHistory={() => setView((v) => (v === "history" ? "sessions" : "history"))}
         checked={checked}
         onToggleCheck={(path, on) =>
           setChecked((prev) => {
@@ -288,7 +307,14 @@ function App() {
         onNewSession={() => void handleNewSession(null)}
         onNewSessionIn={(cwd) => void handleNewSession(cwd)}
       />
-      {view === "manage" ? (
+      {view === "history" ? (
+        <PromptHistoryView
+          loadedSessionIds={loadedSessionIds}
+          onOpenSession={handleOpenSession}
+          onNewSessionIn={(cwd) => void handleNewSession(cwd)}
+          onToast={addToast}
+        />
+      ) : view === "manage" ? (
         <ManageView
           projects={manageProjects}
           onToast={addToast}

@@ -26,6 +26,7 @@ import type {
   McpServerRaw,
   McpSetEnabledRequest,
   OpenInItermRequest,
+  PromptHistoryEntry,
   OmpVersion,
   OmpUpdateCheck,
   OmpUpdateResult,
@@ -133,6 +134,16 @@ export function newSessionInIterm(cwd: string): Promise<void> {
 /** 原生选择项目目录；用户取消返回 null。 */
 export function chooseDirectory(): Promise<string | null> {
   return call("choose_directory");
+}
+
+/** 会话最新 recap（CONTRACT §13.1）；无 recap 为 null。 */
+export function getSessionRecap(sessionId: string): Promise<string | null> {
+  return call("get_session_recap", { sessionId });
+}
+
+/** 提示词历史搜索（CONTRACT §13.2）；query 为空则返回全部（按时间倒序）。 */
+export function searchPromptHistory(query?: string): Promise<PromptHistoryEntry[]> {
+  return call("search_prompt_history", { query: query ?? null });
 }
 
 export function getOmpVersion(): Promise<OmpVersion> {
