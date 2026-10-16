@@ -63,6 +63,11 @@ UI 文案为中文。
   列出候选与可释放空间（体积含附件目录与 .bak），勾选后走既有永久删除流程。
 - **别名/标签/备注**：应用侧存储（`meta.json`，revision 冲突保护 + 原子写入 + 0600），
   不改会话文件；列表显示别名并附原标题小字，标签过滤条，过滤框同时匹配别名/标签/备注。
+- **菜单栏**：菜单栏图标 + 紧凑计数（`2·1`，在工作·在等我，疑似卡住加 `!`），
+  下拉列出当前占用中的 omp 会话（状态、标题、归属应用、持续时长、子代理数），
+  一行点击即可聚焦到对应 iTerm 标签；状态判定（工作中 / 等待输入 / 空闲 / 疑似卡住）
+  基于 flock 占用 + 会话记录尾部 + iTerm 标题状态符；会话进入等待输入或疑似卡住时
+  发系统通知（可关）；关闭窗口后驻留菜单栏（Dock 图标可隐藏）。
 - **全部更新**：按 marketplace 目录 → 插件 → registry skills → 检查 omp
   的顺序执行，首个失败即停并点名；有新版 omp 时只打开更新对话框，
   不自动执行 `omp update`。
@@ -98,8 +103,12 @@ UI 文案为中文。
   `task.disabledAgents`、`task.agentAdvisor`、`retry.fallbackChains`），经 `omp config set`
   写入；另有 3 个兜底开关键（`retry.modelFallback`/`retry.fallbackOn`/
   `retry.fallbackRevertPolicy`）只读展示、写入一律拒绝；不读 models.yml/models.json、
-  不运行 `omp config list`，不碰凭据。
-- **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
+  不运行 `omp config list`，不碰凭据。  写入；不读 models.yml/models.json、不运行 `omp config list`，不碰凭据。
+- **菜单栏只读检测，聚焦仅 activate + select**：菜单栏功能只读 flock 锁、
+  会话 jsonl 尾部与 iTerm 标题；唯一的控制动作「聚焦」也只做 iTerm 的
+  `activate` + 按 tty `select`，**不发送任何按键 / 任何信号 / 不 kill 进程**，
+  不写会话文件，不安装 omp hooks。查询 iTerm 前必先确认其进程在跑
+  （轮询绝不把没在运行的 iTerm 拉起来）。- **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
   原子写入；孤儿条目（会话已删）惰性保留不自动修剪，仅本应用删除成功时联动清理。
 
 ## 构建与安装
@@ -294,3 +303,12 @@ kill %1
   一个区块保存串行写多个 key，中途失败**不回滚**（会点名已保存的键并重新载入最新配置）；
   没有同名角色的兜底 key 会原样保留但可能不被 omp 使用（见 CONTRACT §16.8）。
 - 目录选择对话框在应用未激活时可能出现在窗口后方。
+- 菜单栏的状态判定是启发式：阈值（空闲 30 分 / 卡住 10 分 / 新近 60 秒）为推断值待校准；
+  「等待输入（疑似审批）」的形态未在真实审批场景验证；子代理运行中的父会话不判疑似卡住
+  （其进展不在父文件里，实测修正）。非 iTerm 占用者的会话不可聚焦（行内置灰并注明）。
+- 菜单栏通知在本机实测未弹出横幅：ad-hoc 签名 + 系统勿扰模式开启的环境下，
+  `tauri-plugin-notification`（legacy NSUserNotification）与 osascript 回退
+  （`display notification`，归属「脚本编辑器」）都被静默丢弃；需在
+  「系统设置 → 通知」允许对应应用、且勿扰关闭后才可见。转换检测与发送链路本身有单测覆盖。
+- 关闭主窗口 = 隐藏并驻留菜单栏（Dock 图标按设置隐藏，`ActivationPolicy::Accessory`）；
+  「退出 omp-resume」/ ⌘Q / Dock 退出 / 系统关机才真正退出（不拦截）。

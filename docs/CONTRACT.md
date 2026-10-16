@@ -159,12 +159,13 @@ assistant 与 toolResult 之间，不跳过它们树会断裂。
  （macOS 为 sidecar 文件锁；Linux 为抽象 socket、Windows 为命名互斥体——
   本应用只跑 macOS）。
   注意：omp 文档把该租约写作 `<session-owners>/<session-id>`（无后缀），
-  但本机磁盘文件一律为 `<session-id>.lock`（140 个），以后缀为准。
+  但本机磁盘文件一律为 `<session-id>.lock`（以后缀为准；锁文件持续累积，
+  数量只作参考，占用判定只看 flock，不看文件是否存在）。
 - 探测：对该文件 `flock(LOCK_EX|LOCK_NB)`。
   `EWOULDBLOCK` → `inUse:true`；文件不存在或加锁成功（立即释放）→
   `inUse:false`；其他失败（权限等）→ `probeOk:false, inUse:false`。
 - 会话 id 取自 header.id；id 解析不出 → `probeOk:false`。
-- 本机验证时 140 个锁文件中有 10 个被持有（含当前正在运行的会话）。
+- 全量探测对每个锁文件做一次非阻塞 flock（360 余个约 5ms，见 §17 实测）。
 - 只读打开（share/export/预览）不占租约——我们的读/探测都不写文件，
   唯二写操作是删除与 marker 追加，且都先拒绝 `inUse`。
 
@@ -1257,4 +1258,194 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   「omp 可能不会使用这条配置」，原样保留。
 - `default` 链的「自动补全」语义（`wL`：default 链会临时补给没有链的
   常见角色）只在运行时验证过方向、未做端到端实验。
-- 压制/冷却窗口的具体时长（`suppressSelector` 默认 5 分钟或按错误类型）未逐一验证。
+- 压制/冷却窗口的具体时长（`suppressSelector` 默认 5 分钟或按错误类型）未逐一验证。- 已知限制：回退链的 key 只能从角色 / 模型 selector 里选，无法新建
+  `provider/*` 通配 key（已有通配 key 正常显示与保存）；一个块里存在
+  脏值（非字符串条目）时该块保存会被 `INVALID_INPUT` 拒绝（点名 key，
+  需在 omp 侧手动修复）；新增角色只能来自常见角色列表。
+
+## 17. macOS 菜单栏：运行中 omp 会话（本次追加）
+
+> 在菜单栏查看并管理**当前正在运行**的 omp 会话（只读检测 + 聚焦）。
+> MVP 控制动作只有「聚焦」；**绝不** kill / 发信号 / 停止任何进程，
+> **绝不**向任何 iTerm session `write text` / 发送按键，绝不安装 omp hooks。
+> iTerm 只允许 `activate` + `select`（已对 `Iterm2.sdef` 核对：select =
+> "Make receiver visible and selected."）。不聊天、不调 LLM、不写会话 .jsonl、
+> 不读凭据（models.yml / models.json 禁止读取，不运行 `omp config list`）。
+> `omp ps` 管的是后台守护进程而非交互式会话，**不用作数据源**。
+
+### 17.1 状态判定（`menubar::classify`，纯函数 + 单测）
+
+输入：inUse（不 inUse 不展示）、iTerm 标题状态符、最后一条「有意义记录」及时间、
+未配对 toolCall 数（assistant 的 toolCall id 无对应 toolResult）、子代理 lifecycle 配对。
+「有意义记录」= `message`（user/assistant/toolResult/bashExecution）与
+`custom` 的 `tool_execution_start/end`；**必须忽略**：`model_usage`（尤其
+purpose=cache-warm/memory 的心跳，约每 5 分钟一条 aborted 会让 mtime 变新）、
+`title_change`、`todo_hud_state`、`model_change`、`thinking_level_change`、
+`custom_message`、`system-prompt-digest`、`memory_recall`、`credential_pin`。
+**不能用文件 mtime 当主依据。**
+
+```
+ATTENTION_IDLE=30min  STUCK=10min  RECENT=60s
+classify:
+  not inUse → 不展示
+  if 标题含旋转符 or 有子代理运行中 → 工作中
+  elif 标题是 '>' and 有未配对 toolCall → 等待输入（疑似审批）
+  elif 有未配对 toolCall → 工作中（工具执行）
+  elif last 是 toolResult/bashExecution/user/toolEvent 且 < RECENT → 工作中（生成中/有进展）
+  elif last 是 assistant 且 stop → (距今 < ATTENTION_IDLE ? 等待输入 : 空闲)
+  elif last 是 assistant 且非 stop（回合未结束）→ 工作中
+  else 空闲
+  工作中 且 无运行子代理 且 距最后有意义记录 > STUCK 且 有未配对 toolCall → 疑似卡住
+```
+
+状态用词：工作中 / 等待输入 / 空闲 / 疑似卡住。阈值是推断值，集中定义于
+`classify.rs` 常量，注释「待校准」。补充语义（单测锁定）：
+
+- `user` 视同 `toolResult`：用户刚发消息必然是模型在生成；
+- `tool_execution_start/end` 新鲜时说明工具有进展；陈旧则不算；
+- `assistant` 且 `stopReason != "stop"`（如 `toolUse`）= 回合未结束 → 工作中；
+  `stopReason` **缺失视为 stop**（否则陈旧会话会永判工作中）；
+- 标题状态符：`>` = 在提示符；盲文旋转符（U+2800–U+28FF 任一帧）= 正在工作；
+  其他（无 `π ` 前缀等）= 不携带信号，只用 jsonl 规则。
+- 非 iTerm 占用者（如 VS Code）拿不到标题：只用 jsonl 规则判定，
+  行内不提供聚焦动作，仅「占用中 · 应用名」（不可点）。
+
+**实测修正（2026-10-16，对真实数据两处误判后收窄）**：
+
+1. 卡住覆盖要求**无运行中的子代理**。父会话等子代理时，进展写在子代理自己的
+   文件里，父文件「有意义记录」长期不更新是正常的（任务工具的未配对调用要等
+   子代理返回）；实测曾把正在工作的父会话（iTerm 标题为旋转符、子代理就是
+   本 worker）误判「疑似卡住」。子代理活动即此类会话的活性信号。
+2. jsonl 尾部种子读取为**首次见到该会话时全文件单遍**（此后仍增量），
+   而非固定 64KB 尾窗：cache-warm 心跳与大 toolResult 会把
+   `vibe-session-lifecycle` 配对行挤出尾窗，实测导致子代理漏检。
+
+### 17.2 检测分层（`menubar::detect` / `poller` / `tail` / `iterm`）
+
+全程后台线程（`std::thread`，3 秒一轮，不阻塞 UI）；无占用会话时只跑 T0。
+
+- **T0** 每轮：flock 全量探测 `ownersDir/*.lock` → inUse 集合
+  （实测 360 余把锁约 5ms）。锁目录不可读 → 跳过本轮、保留旧菜单。
+- **T1** 仅当 inUse 集合变化（或每 10 轮兜底）：重建 id→路径索引
+  （文件名 `<ts>_<id>.jsonl` 尾段即会话 id，只扫顶层）；`lsof` 查持有 PID
+  复用 `occupant.rs` 归类应用；`lsof -a -p PID -d 0` 得 tty。**一个 omp 进程
+  会同时持有多个会话的锁**（父 + 子代理），展示按**顶层会话**行，
+  无法归属到顶层文件的锁（子代理锁）只计入「未归属」计数，不成行。
+- **T2** 对 inUse 的顶层会话：`TailState` 增量读取（首次全文件单遍，
+  之后 seek 已消费偏移只读新增；处理末行不完整、超大行（>16MB 跳过）、
+  截断/替换重建）；提取有意义记录、toolCall 配对、`vibe-session-lifecycle`
+  子代理运行态（按 `data.id` 分组：spawn/turn-started=运行、turn-settled=停、
+  tombstone=移除）、标题（title 行 → header → title_change 最后非空）。
+  未配对 toolCall 记录 24h 过期（孤儿 id 不永久污染判定）。
+- **T3** iTerm 标题：仅当存在 iTerm 占用者且 iTerm 在运行时（查询前必须
+  `pgrep -x iTerm2` 门禁，`tell application "iTerm2"` 会把没在跑的 iTerm 拉起来），
+  每轮一次 osascript **批量**取回全部 `tty → 标题`（单脚本遍历全部
+  window→tab→session，绝不逐会话一次）。AppleScript 里不能直接用 `tab` 常量
+  （会被解析为 iTerm 的 tab 类），用 `character id 9` 作分隔（实测验证）。
+
+### 17.3 菜单结构与图标标题（`menubar::menu`，纯函数 + 单测）
+
+图标：单色模板图 `src-tauri/icons/tray-icon.png`（44×44 黑+alpha，π 字形，
+2× 超采样生成，`icon_as_template(true)` 随系统深浅模式取色）。
+生成方法：纯 Python 画 88×88 位图（顶横+双竖的 π）后 2×2 盒式下采样到 44×44
+写 RGBA PNG，脚本见提交说明；如需重绘，改位图逻辑重跑即可。
+
+图标旁标题（单色窄文本；无占用时只显示图标）：
+
+| 情形 | 字样 |
+|---|---|
+| 无占用会话 | （空） |
+| 有占用 | `<工作中+疑似卡住>·<等待输入>`，如 `2·1` |
+| 有疑似卡住 | 追加 `!`，如 `1·0!` |
+
+下拉菜单自上而下：①头部（禁用项）`omp 会话 · 占用 N · 工作中 X · 等待输入 Y`
+（含疑似卡住时追加 `· 疑似卡住 Z`；无占用：`没有运行中的 omp 会话`）；
+②分隔线；③会话行按 疑似卡住 → 等待输入 → 工作中 → 空闲 排序，
+每行 `<状态符> <标题去 π 前缀与 (omp) 后缀，截断 32 字> · <应用名> · <持续时长>`
+（持续时长自会话 header 创建时间起：`刚刚/X分/X小时Y分/X天`），
+有子代理在跑时行尾加 `· 子代理 n`；最多 8 行，超出进「更多…」子菜单；
+点击行 = 聚焦该会话所在 iTerm 标签（`activate` + 按 tty `select`）；
+非 iTerm 占用者行置灰不可点，行内注明原因（`仅 iTerm 可聚焦` /
+`未找到占用进程` / `未找到终端`）；④分隔线；⑤「打开主窗口」；
+⑥勾选项「完成时通知」（默认开）、「在 Dock 显示图标」（默认关）；
+⑦分隔线；⑧「退出 omp-resume」。菜单项 id 编码会话 id（`session:<id>`）路由事件。
+菜单只在内容变化时 `set_menu`（模型整体 `PartialEq` 比对）。
+聚焦失败（找不到 tty / iTerm 未运行 / 无 Automation 权限）以系统通知明示
+（文案含「系统设置 → 隐私与安全性 → 自动化」指引），不静默。
+
+### 17.4 设置文件（`menubar::settings`）
+
+`<data_dir>/settings.json`（`OMP_RESUME_DATA_DIR` 可覆盖数据目录）：
+
+```json
+{"version": 1, "notifyOnWaiting": true, "showDockIcon": false}
+```
+
+原子写入（同目录临时文件 → sync → rename），新文件 0600，已有文件保留原权限位。
+损坏/版本不兼容 → **回落默认且不覆盖损坏文件**（与 meta.json 的「拒绝读写」
+口径不同：设置丢了可重选，备注丢了不行）。无 revision（唯一写者是菜单勾选）。
+
+### 17.5 通知（`menubar::notify` + `tray` 接线）
+
+- 仅「工作中 → 等待输入」转换通知，且该会话此前工作中（Working/Stuck）
+  持续 ≥ 30 秒；同会话 30 秒防抖；同一轮询周期 > 3 个会话转换 → 合并成一条汇总
+  （「N 个会话在等你」）；「疑似卡住」首次出现通知一次（离开卡住态后重新计数，
+  即按 episode 一次）。正文只含会话标题（截断 60 字）与状态，**不含对话内容**。
+  设置「完成时通知」关闭时不发。
+- 发送：优先 `tauri-plugin-notification`（2.7.0；Rust 侧 `NotificationExt` 直接
+  发送，不需要前端权限调用，capabilities 仍加 `notification:default`）；
+  点击通知（`tap`）聚焦对应 iTerm 标签（汇总/失败类通知点击打开主窗口）。
+  插件发送失败退回 `osascript display notification`（只展示、不可点击；
+  标题/正文经 `applescript_escape` 转义）。
+- **未验证项**：ad-hoc 签名下通知是否需要用户首次授权、点击回调在 ad-hoc 下
+  是否投递（以真机验证结论为准，见 §17.8）。
+
+真机实测（2026-10-16）补充：
+
+- 转换判定链路本身在真机验证中暴露并修复了一个真实缺陷：`busy_secs` 在离开
+  工作态时先清 `busy_since` 再取值，恒为 0，导致「工作中 ≥ 30 秒」门槛永远
+  不过、等待输入通知从未发出；已修复并加 poller 级回归测试
+  （`busy_duration_gates_waiting_notification`）。
+- 发送链路有诊断日志（stderr）：`通知发送尝试…` / `插件发送调用成功…`。
+  真机观察到：插件（mac-notification-sys，legacy `NSUserNotification`）
+  `show()` 返回成功，但内容横幅未展示；macOS 只弹了本应用的**通知权限提示**
+  （「"omp-resume" 通知 / 「通知」可能包括提醒、声音和图标标记。」，
+  `com.apple.notificationcenter.askpermissions` 类）；NotificationCenter 里
+  也没有本应用条目（只有 iTerm2 自带的 Session 提醒）。osascript 回退
+  （`display notification`）归属「脚本编辑器」（`com.apple.ScriptEditor2`，
+  通知权限为关）同样无展示。系统勿扰模式开启（系统日志
+  `muted by DND suppression: delay`）进一步抑制横幅。
+- 结论：**转换检测 → 门槛/防抖/汇总/开关 → 发送调用**链路实测工作；
+  **内容横幅弹出与点击聚焦回调未能在本机验证**（被通知权限未决 + 勿扰阻断，
+  且不改变用户系统设置）。需用户在「系统设置 → 通知」允许 omp-resume、
+  关闭勿扰后复验。stuck「首次出现通知一次」逻辑实测触发
+  （会话 E、H1、H2 的首次卡住均有发送日志）。
+
+### 17.6 驻留与窗口行为
+
+- 关闭主窗口 = 拦截 `CloseRequested` → `hide()`，应用继续驻留菜单栏；
+  隐藏时若「在 Dock 显示图标」为关 → `ActivationPolicy::Accessory`（Dock 图标隐藏）；
+  「打开主窗口」→ 切回 `Regular` + `show` + `set_focus`。
+- 真退出路径不拦截：菜单「退出」先置 quitting 标志再 `app.exit(0)`；
+  ⌘Q / Dock 退出 / 系统关机走的 `RunEvent::ExitRequested` / 进程终止
+  **不经** CloseRequested 拦截，正常退出（详见 README 已知限制）。
+
+### 17.7 模块与命令
+
+后端 `src-tauri/src/menubar/`：`classify`（状态判定）、`tail`（jsonl 增量读取）、
+`iterm`（标题批量查询/解析/聚焦、`Runner` 可注入）、`detect`（T0 + 索引）、
+`poller`（T0–T3 组装，`OccupantSource` 可注入）、`menu`（菜单模型）、
+`settings`（settings.json）、`notify`（通知判定 + osascript 回退）、
+`tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程）。无新增前端命令；
+探针 `cargo test --test menubar_probe -- --ignored --nocapture`（只读）。
+
+### 17.8 实测记录（2026-10-16，macOS arm64）
+
+（真机验证数据见下节补充；以下为探针数据）
+- flock 全量探测 362 把锁约 5ms；`lsof` 批量查持有者约 0.1–0.35s（T1 仅变化时跑）；
+  T2 首轮全文件种子约 180ms（4 个会话），增量轮 1–2ms；
+  T3 osascript 批量取标题约 10–30ms（单次实测 0.17s 冷启，热轮更低）。
+- 真实环境判定（详见报告）：11 把被持有锁 → 4 个顶层会话（其余为子代理锁，
+  计入未归属）；3 个「空闲」（iTerm 标题 `>`、数小时无有意义记录），
+  1 个「工作中」（iTerm 旋转符、1 个子代理运行中——即本 worker），
+  与 iTerm 实际标题逐一对齐。
