@@ -56,6 +56,9 @@ UI 文案为中文。
 - **全部更新**：按 marketplace 目录 → 插件 → registry skills → 检查 omp
   的顺序执行，首个失败即停并点名；有新版 omp 时只打开更新对话框，
   不自动执行 `omp update`。
+- **主题切换**：侧栏底部「外观」面板，主题模式（跟随系统 / 浅色 / 深色，
+  跟随系统实时响应 `prefers-color-scheme` 变化）与 6 种强调色
+  （蓝 / 紫 / 绿 / 橙 / 粉 / 灰）即时生效；macOS 原生标题栏跟随应用主题。
 
 ## 安全规则（如何保证不弄坏数据）
 
@@ -258,7 +261,7 @@ kill %1
 - 「在 iTerm 继续」按登录 shell 的 `PATH` 查找 `omp`；若未安装在 PATH 中，
   需先保证 iTerm 的 shell 能找到它。
 - macOS 专用；应用未经签名/公证（本地构建即用）。
-- 置顶存于 WebView 的 localStorage，开发模式（localhost:1420）与打包后的 .app 是不同来源，互不共享；在 dev 里置顶的项目不会出现在 .app 里。
+- 置顶与外观偏好（主题模式/强调色）都存于 WebView 的 localStorage，开发模式（localhost:1420）与打包后的 .app 是不同来源，互不共享；在 dev 里的置顶/主题设置不会出现在 .app 里。
 - 版本显示与更新所用的 omp 路径解析顺序：`OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > Homebrew（`/opt/homebrew/bin/omp`）> `/usr/local/bin/omp` > `~/.bun/bin/omp`，不依赖 PATH。
 - 管理功能仅 user scope（插件与技能均为用户级）；MCP 仅默认 profile，
   不读 `PI_CONFIG_DIR` / `PI_CODING_AGENT_DIR` 覆盖，不做 endpoint 等价去重，
