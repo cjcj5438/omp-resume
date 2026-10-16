@@ -73,7 +73,7 @@ fn live_pipeline_once() {
                 println!(
                     "  row{}: {}",
                     if row.enabled { "" } else { " (disabled)" },
-                    row.text
+                    row.text()
                 );
             }
         }

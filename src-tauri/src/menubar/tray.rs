@@ -18,7 +18,7 @@ use tauri::{
     App, AppHandle, Manager, Runtime,
 };
 
-use super::menu::{menu_text, MenuModel};
+use super::menu::{menu_text, refresh_decision, MenuModel, Refresh};
 use super::notify::{self, NotifyAction};
 use super::poller::{Poller, SystemOccupants, POLL_INTERVAL_SECS};
 use super::settings::{self, Settings};
@@ -43,6 +43,9 @@ pub struct Shared {
     /// 真退出进行中（菜单“退出”置位；置位后窗口 CloseRequested 不再拦截）。
     pub quitting: AtomicBool,
     pub data_dir: PathBuf,
+    /// 行文本更新器（会话 id → `set_text` 闭包）：仅时长变化时就地更新，
+    /// 结构性重建时整体替换。
+    pub row_updaters: Mutex<RowUpdaters>,
 }
 
 impl Shared {
@@ -55,40 +58,53 @@ impl Shared {
             notify_seq: AtomicI32::new(1),
             quitting: AtomicBool::new(false),
             data_dir,
+            row_updaters: Mutex::new(Vec::new()),
         }
     }
 }
 
+/// 行文本更新器：(会话 id, `set_text` 闭包)。结构性重建时整体替换。
+pub type RowUpdaters = Vec<(String, Box<dyn Fn(&str) + Send + Sync>)>;
+
+/// 装配结果：菜单 + 行项句柄（会话 id → 菜单项，供时长就地更新）。
+pub type BuiltMenu<R> = (Menu<R>, Vec<(String, MenuItem<R>)>);
+
 /// 由 [`MenuModel`] 装配原生菜单（纯装配，文案已由模型定好）。
-pub fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) -> tauri::Result<Menu<R>> {
+/// 返回菜单与行项句柄（供时长就地更新；句柄同时以闭包形式存入
+/// [`Shared::row_updaters`]）。
+pub fn build_menu<R: Runtime>(
+    app: &AppHandle<R>,
+    model: &MenuModel,
+) -> tauri::Result<BuiltMenu<R>> {
     let menu = Menu::new(app)?;
     let header = MenuItem::new(app, menu_text(&model.header), false, None::<&str>)?;
     menu.append(&header)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
+    let mut handles: Vec<(String, MenuItem<R>)> = Vec::new();
     for row in &model.rows {
         let item = MenuItem::with_id(
             app,
             format!("{SESSION_PREFIX}{}", row.session_id),
-            menu_text(&row.text),
+            menu_text(&row.text()),
             row.enabled,
             None::<&str>,
         )?;
         menu.append(&item)?;
+        handles.push((row.session_id.clone(), item));
     }
     if !model.overflow.is_empty() {
-        let built: Vec<MenuItem<R>> = model
-            .overflow
-            .iter()
-            .map(|row| {
-                MenuItem::with_id(
-                    app,
-                    format!("{SESSION_PREFIX}{}", row.session_id),
-                    menu_text(&row.text),
-                    row.enabled,
-                    None::<&str>,
-                )
-            })
-            .collect::<Result<_, _>>()?;
+        let mut built: Vec<MenuItem<R>> = Vec::new();
+        for row in &model.overflow {
+            let item = MenuItem::with_id(
+                app,
+                format!("{SESSION_PREFIX}{}", row.session_id),
+                menu_text(&row.text()),
+                row.enabled,
+                None::<&str>,
+            )?;
+            built.push(item.clone());
+            handles.push((row.session_id.clone(), item));
+        }
         let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = built
             .iter()
             .map(|b| b as &dyn tauri::menu::IsMenuItem<R>)
@@ -128,14 +144,14 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) -> tauri::R
         true,
         None::<&str>,
     )?)?;
-    Ok(menu)
+    Ok((menu, handles))
 }
 
 /// 创建托盘图标（初始菜单由调用方给，首轮轮询后刷新）。
 pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result<TrayIcon<R>> {
     let icon = Image::from_bytes(include_bytes!("../../icons/tray-icon.png"))?;
     let handle = app.handle();
-    let menu = build_menu(handle, model)?;
+    let (menu, _handles) = build_menu(handle, model)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(true)
@@ -262,14 +278,25 @@ fn focus_session<R: Runtime>(app: &AppHandle<R>, session_id: String) {
     });
 }
 
-/// 用模型刷新托盘（菜单 + 标题 + tooltip），并更新缓存。
+/// 用模型整体重建托盘（菜单 + 标题 + tooltip），更新缓存与行文本更新器。
 fn refresh_tray<R: Runtime>(app: &AppHandle<R>, shared: &Shared, model: &MenuModel) {
     if let Ok(mut guard) = shared.last_menu.lock() {
         *guard = Some(model.clone());
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        if let Ok(menu) = build_menu(app, model) {
+        if let Ok((menu, handles)) = build_menu(app, model) {
             let _ = tray.set_menu(Some(menu));
+            if let Ok(mut updaters) = shared.row_updaters.lock() {
+                *updaters = handles
+                    .into_iter()
+                    .map(|(sid, item)| {
+                        let f: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |text: &str| {
+                            let _ = item.set_text(menu_text(text));
+                        });
+                        (sid, f)
+                    })
+                    .collect();
+            }
         }
         let _ = tray.set_title(model.tray_title.as_deref());
         let _ = tray.set_tooltip(Some(&model.tooltip));
@@ -405,11 +432,6 @@ pub fn spawn_poller<R: Runtime + 'static>(
                 let outcome = poller.poll_once(epoch_now(), notify_on, dock_on);
                 if let Some(model) = outcome.menu {
                     if let Some(shared) = app.try_state::<Shared>() {
-                        let changed = shared
-                            .last_menu
-                            .lock()
-                            .map(|g| g.as_ref() != Some(&model))
-                            .unwrap_or(true);
                         // 发布聚焦表。
                         if let Ok(mut focus) = shared.focus.lock() {
                             focus.clear();
@@ -419,10 +441,39 @@ pub fn spawn_poller<R: Runtime + 'static>(
                                 }
                             }
                         }
-                        if changed {
-                            refresh_tray(&app, &shared, &model);
-                        } else if let Ok(mut guard) = shared.last_menu.lock() {
-                            *guard = Some(model);
+                        // 仅时长文字变化 → 就地 set_text（不关掉用户展开着的菜单）；
+                        // 结构性变化（会话增减/状态/排序/标题/勾选）→ 整体重建。
+                        let decision = shared
+                            .last_menu
+                            .lock()
+                            .map(|guard| refresh_decision(guard.as_ref(), &model))
+                            .unwrap_or(Refresh::Rebuild);
+                        match decision {
+                            Refresh::None => {}
+                            Refresh::Texts(texts) => {
+                                let mut applied = 0;
+                                if let Ok(updaters) = shared.row_updaters.lock() {
+                                    for (sid, text) in &texts {
+                                        for (uid, set_text) in updaters.iter() {
+                                            if uid == sid {
+                                                set_text(text);
+                                                applied += 1;
+                                            }
+                                        }
+                                    }
+                                }
+                                if applied == texts.len() {
+                                    if let Ok(mut guard) = shared.last_menu.lock() {
+                                        *guard = Some(model);
+                                    }
+                                } else {
+                                    // 更新器与行对不上（不该发生）：保险整体重建。
+                                    refresh_tray(&app, &shared, &model);
+                                }
+                            }
+                            Refresh::Rebuild => {
+                                refresh_tray(&app, &shared, &model);
+                            }
                         }
                         for action in &outcome.actions {
                             send_action(&app, &shared, action);

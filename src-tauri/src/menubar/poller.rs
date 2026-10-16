@@ -512,7 +512,7 @@ mod tests {
         assert!(!o.snapshots[0].focusable);
         let row = &o.menu.unwrap().rows[0];
         assert!(!row.enabled);
-        assert!(row.text.contains("仅 iTerm 可聚焦"), "{}", row.text);
+        assert!(row.text().contains("仅 iTerm 可聚焦"), "{}", row.text());
     }
 
     #[test]
