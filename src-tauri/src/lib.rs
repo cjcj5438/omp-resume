@@ -153,6 +153,24 @@ async fn open_in_iterm(
     .map_err(io_join_error)?
 }
 
+/// 在 iTerm 新开 omp 会话（`cd '<cwd>' && omp`，无参数、不带 prompt）。
+#[tauri::command]
+async fn new_session_in_iterm(cwd: String) -> Result<(), model::AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ops::commands::new_session_in_iterm_impl(&cwd, &ops::iterm::open_tab)
+    })
+    .await
+    .map_err(io_join_error)?
+}
+
+/// 原生选择项目目录；用户取消返回 null。
+#[tauri::command]
+async fn choose_directory() -> Result<Option<String>, model::AppError> {
+    tauri::async_runtime::spawn_blocking(ops::picker::choose_directory)
+        .await
+        .map_err(io_join_error)?
+}
+
 /// CONTRACT §4.9：本地 omp 版本，不占写操作门禁。
 #[tauri::command]
 async fn omp_version() -> Result<model::OmpVersion, AppError> {
@@ -216,6 +234,8 @@ pub fn run() {
             delete_sessions,
             append_branch_marker,
             open_in_iterm,
+            new_session_in_iterm,
+            choose_directory,
             omp_version,
             omp_update_check,
             omp_update_run,

@@ -210,6 +210,39 @@ body {
   opacity: 1;
 }
 
+/* 分组头「在此项目新会话」：与置顶按钮并排，同样仅 hover/focus 时显示。 */
+.group-new {
+  flex: none;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0;
+}
+
+.group-header-row:hover .group-new,
+.group-header-row:focus-within .group-new,
+.group-new:focus-visible {
+  opacity: 1;
+}
+
+.group-new:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.group-new:disabled {
+  opacity: 0.35;
+}
+
+.group-new:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
 .row {
   display: flex;
   gap: 8px;

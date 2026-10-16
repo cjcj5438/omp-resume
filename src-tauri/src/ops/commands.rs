@@ -164,3 +164,30 @@ pub fn open_in_iterm_impl(
     ))?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// new_session_in_iterm（新开会话，无参数、不带 prompt）
+// ---------------------------------------------------------------------------
+
+/// 在 iTerm 于 `cwd` 新开 omp 会话（仅执行 `cd '<cwd>' && omp`）。
+/// `cwd` 须为存在的绝对目录（否则 `CWD_MISSING`）；含控制字符则拒绝
+/// （AppleScript 转义会静默剥离它们，可能改变实际 cd 目标）。
+pub fn new_session_in_iterm_impl(
+    cwd: &str,
+    opener: &dyn Fn(&str) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let cwd_path = Path::new(cwd);
+    if !cwd_path.is_absolute() || !cwd_path.is_dir() {
+        return Err(AppError::new(
+            ErrorCode::CwdMissing,
+            format!("目录不存在或不是目录：{cwd}"),
+        ));
+    }
+    if cwd.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "目录路径含控制字符，拒绝在 iTerm 中打开",
+        ));
+    }
+    opener(&super::iterm::new_session_command(cwd))
+}

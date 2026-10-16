@@ -1,7 +1,7 @@
 //! iTerm 新 tab 打开原语。
 //!
 //! - 纯函数：`shell_quote` / `applescript_escape` / `resume_command` /
-//!   `build_script`，均可单测。
+//!   `new_session_command` / `build_script`，均可单测。
 //! - 副作用：`open_tab` 经 `osascript` 驱动 iTerm（`std::process::Command`
 //!   直接传 argv，脚本走 `-e` 参数，**绝不经过 shell 字符串拼接**）。
 //!
@@ -51,6 +51,12 @@ pub fn resume_command(cwd: &str, session_path: &str) -> String {
         shell_quote(cwd),
         shell_quote(session_path)
     )
+}
+
+/// 新开会话命令：`cd '<cwd>' && omp`。**不带任何参数、不带 prompt**，
+/// 只启动 omp 交互界面（与「在 iTerm 继续」的 `--resume` 区分）。
+pub fn new_session_command(cwd: &str) -> String {
+    format!("cd {} && omp", shell_quote(cwd))
 }
 
 /// 生成驱动 iTerm 的完整 AppleScript（纯函数，便于单测锁定脚本形状）。
@@ -174,6 +180,32 @@ mod tests {
         // `$`、反引号、`;` 必须被单引号保护，不可被 shell 展开。
         let cmd = resume_command("/tmp/$HOME", "/s/a`id`;x.jsonl");
         assert!(cmd.starts_with("cd '/tmp/$HOME' && omp --resume '/s/a`id`;x.jsonl'"));
+    }
+
+    #[test]
+    fn new_session_command_has_no_args() {
+        assert_eq!(new_session_command("/tmp"), "cd '/tmp' && omp");
+        assert_eq!(
+            new_session_command("/Users/x/My Project"),
+            "cd '/Users/x/My Project' && omp"
+        );
+        assert_eq!(
+            new_session_command("/Users/x/it's 中文"),
+            "cd '/Users/x/it'\"'\"'s 中文' && omp"
+        );
+        // 末尾只能是裸 `omp`：不带 --resume、prompt 或其他参数。
+        assert!(new_session_command("/tmp/a b").ends_with("&& omp"));
+    }
+
+    #[test]
+    fn new_session_command_survives_applescript() {
+        // 引号与反斜杠先经 shell 单引号保护，再经 AppleScript 字符串转义。
+        let cmd = new_session_command("/Users/x/say \"hi\"\\中文");
+        let script = build_script(&cmd);
+        assert!(
+            script.contains("write text \"cd '/Users/x/say \\\"hi\\\"\\\\中文' && omp\""),
+            "{script}"
+        );
     }
 
     #[test]
@@ -325,5 +357,111 @@ mod tests {
              end tell"
         );
         osascript(&close_script).expect("关闭冒烟 tab");
+    }
+
+    /// 真机冒烟（手动 `cargo test --lib -- --ignored smoke_new_session_real`）：
+    /// 经 `new_session_in_iterm_impl` 在临时目录开新 tab，确认该 tab 内确实
+    /// 启动了 omp 进程，再结束 omp 并只关闭该 tab（不留残留标签页/进程）。
+    #[test]
+    #[ignore]
+    #[cfg(target_os = "macos")]
+    fn smoke_new_session_real() {
+        use std::collections::HashSet;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+
+        fn osascript(script: &str) -> Result<String, String> {
+            let out = Command::new("osascript")
+                .arg("-e")
+                .arg(script)
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| format!("spawn osascript: {e}"))?;
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                Err(format!(
+                    "osascript failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ))
+            }
+        }
+
+        fn all_ttys() -> HashSet<String> {
+            let script = "tell application \"iTerm\"\n\
+                 \tset out to {}\n\
+                 \trepeat with w in windows\n\
+                 \t\trepeat with t in tabs of w\n\
+                 \t\t\trepeat with s in sessions of t\n\
+                 \t\t\t\tset end of out to (tty of s)\n\
+                 \t\t\tend repeat\n\
+                 \t\tend repeat\n\
+                 \tend repeat\n\
+                 \treturn out\n\
+                 end tell";
+            let out = osascript(script).expect("列出现有 tty");
+            out.split(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '.')
+                .filter(|s| s.starts_with("/dev/"))
+                .map(str::to_owned)
+                .collect()
+        }
+
+        let before = all_ttys();
+        let dir = std::env::temp_dir().join(format!("omp-resume-ns-smoke-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::ops::commands::new_session_in_iterm_impl(
+            &dir.display().to_string(),
+            &crate::ops::iterm::open_tab,
+        )
+        .expect("new_session_in_iterm_impl");
+
+        // 轮询新 tab 的前台进程，最多约 20s：应出现 omp 进程。
+        let mut found: Option<(String, Vec<String>)> = None;
+        for _ in 0..40 {
+            std::thread::sleep(Duration::from_millis(500));
+            for tty in all_ttys().difference(&before) {
+                let short = tty.trim_start_matches("/dev/");
+                let ps = Command::new("ps")
+                    .args(["-t", short, "-o", "pid=,args="])
+                    .output()
+                    .expect("ps");
+                let pids: Vec<String> = String::from_utf8_lossy(&ps.stdout)
+                    .lines()
+                    .filter(|l| l.contains("omp"))
+                    .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
+                    .collect();
+                if !pids.is_empty() {
+                    found = Some((tty.clone(), pids));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+
+        // 清理（无论是否观测到 omp）：结束 omp，再关闭本次新增的所有 tab，不留残留。
+        let fresh: Vec<String> = all_ttys().difference(&before).cloned().collect();
+        if let Some((_, pids)) = &found {
+            let _ = Command::new("kill").arg("-TERM").args(pids).status();
+            std::thread::sleep(Duration::from_millis(1500));
+        }
+        for tty in &fresh {
+            let close_script = format!(
+                "tell application \"iTerm\"\n\
+                 \trepeat with w in windows\n\
+                 \t\trepeat with t in tabs of w\n\
+                 \t\t\trepeat with s in sessions of t\n\
+                 \t\t\t\tif tty of s is equal to \"{tty}\" then close s\n\
+                 \t\t\tend repeat\n\
+                 \t\tend repeat\n\
+                 \tend repeat\n\
+                 end tell"
+            );
+            osascript(&close_script).expect("关闭冒烟 tab");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tty, pids) = found.expect("新 tab 内未观测到 omp 进程");
+        assert!(!pids.is_empty(), "{tty}");
     }
 }

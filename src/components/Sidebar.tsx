@@ -29,6 +29,8 @@ interface SidebarProps {
   ompVersion: string | null;
   ompChecking: boolean;
   onCheckOmp: () => void;
+  onNewSession: () => void;
+  onNewSessionIn: (cwd: string) => void;
 }
 
 export function Sidebar({
@@ -55,6 +57,8 @@ export function Sidebar({
   ompVersion,
   ompChecking,
   onCheckOmp,
+  onNewSession,
+  onNewSessionIn,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   return (
@@ -76,6 +80,9 @@ export function Sidebar({
         </button>
         <button type="button" className="btn" onClick={onOpenCheatSheet}>
           速查
+        </button>
+        <button type="button" className="btn" onClick={onNewSession}>
+          新会话…
         </button>
         <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
           {loading ? <span className="spinner" aria-hidden="true" /> : null}
@@ -129,6 +136,16 @@ export function Sidebar({
                   name={name}
                   onToggle={() => onTogglePin("project", g.cwd)}
                 />
+                <button
+                  type="button"
+                  className="group-new"
+                  title={dirMissing ? "项目目录不存在" : "在此项目新会话"}
+                  aria-label={`在 ${name} 新会话`}
+                  disabled={dirMissing}
+                  onClick={() => onNewSessionIn(g.cwd)}
+                >
+                  +
+                </button>
               </div>
               {open ? (
                 <div className="group-rows">

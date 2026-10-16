@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appendBranchMarker,
   checkOmpUpdate,
+  chooseDirectory,
   deleteSessions,
   getOmpVersion,
   listSessions,
   normalizeError,
   openInIterm,
+  newSessionInIterm,
 } from "./api";
 import type {
   AppError,
@@ -191,6 +193,21 @@ function App() {
     [selectedPath, refreshAfterContinue],
   );
 
+  // 新开会话：cwd 为空时先让用户选择目录；用户取消（null）静默返回。
+  const handleNewSession = useCallback(
+    async (cwd: string | null) => {
+      try {
+        const target = cwd ?? (await chooseDirectory());
+        if (target === null) return;
+        await newSessionInIterm(target);
+        addToast("已在 iTerm 新开会话", "info");
+      } catch (e: unknown) {
+        addToast(errorText(normalizeError(e)), "error");
+      }
+    },
+    [addToast],
+  );
+
   const requestDelete = useCallback(
     async (paths: string[]): Promise<DeleteResult[]> => {
       const results = await deleteSessions({ paths });
@@ -268,6 +285,8 @@ function App() {
         ompChecking={ompChecking}
         onCheckOmp={handleCheckOmp}
         onOpenCheatSheet={() => setShowCheatSheet(true)}
+        onNewSession={() => void handleNewSession(null)}
+        onNewSessionIn={(cwd) => void handleNewSession(cwd)}
       />
       {view === "manage" ? (
         <ManageView

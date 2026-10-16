@@ -277,6 +277,7 @@ export async function installMockBackend(): Promise<MockHandle> {
   // 深拷贝夹具，保持跨测试/刷新有状态。
   let sessions: FixtureSession[] = structuredClone(FIXTURE_SESSIONS);
   const itermCalls: string[] = [];
+  const newSessionCalls: string[] = [];
   const mcp = createMcpMock();
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [
@@ -298,6 +299,7 @@ export async function installMockBackend(): Promise<MockHandle> {
 
   (window as unknown as { __ompMock?: unknown }).__ompMock = {
     calls: itermCalls,
+    newSessionCalls,
     get sessions() {
       return sessions;
     },
@@ -409,6 +411,14 @@ export async function installMockBackend(): Promise<MockHandle> {
         itermCalls.push(s.summary.path);
         return null;
       }
+      case "new_session_in_iterm": {
+        const cwd = args["cwd"];
+        if (typeof cwd !== "string" || !cwd.startsWith("/")) throw err("CWD_MISSING", "目录不存在或不是目录");
+        newSessionCalls.push(cwd);
+        return null;
+      }
+      case "choose_directory":
+        return params.get("pick") === "cancel" ? null : "/Users/chenjing/my/omp-resume";
       case "omp_version":
         return { version: "18.11.1", path: "/Users/chenjing/.local/bin/omp" };
       case "omp_update_check": {

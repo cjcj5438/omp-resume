@@ -7,3 +7,4 @@ pub mod commands;
 pub mod delete;
 pub mod iterm;
 pub mod marker;
+pub mod picker;

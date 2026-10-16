@@ -326,6 +326,52 @@ fn iterm_command_string_and_refusals() {
     assert!(!got.borrow().is_empty(), "PROBE_FAILED 应放行");
 }
 
+#[test]
+fn new_session_in_iterm_refusals_and_command() {
+    use std::cell::RefCell;
+    let t = tempfile::tempdir().unwrap();
+    let got = RefCell::new(None::<String>);
+    let opener = |cmd: &str| -> Result<(), AppError> {
+        got.replace(Some(cmd.to_owned()));
+        Ok(())
+    };
+
+    // 合法目录（空格 + 单引号 + 中文）：仅 `cd && omp`，无任何参数。
+    let cwd = t.path().join("my dir 未命名'x");
+    std::fs::create_dir_all(&cwd).unwrap();
+    ops_cmds::new_session_in_iterm_impl(&cwd.display().to_string(), &opener).unwrap();
+    assert_eq!(
+        got.borrow().as_deref(),
+        Some(
+            format!(
+                "cd '{}' && omp",
+                cwd.display().to_string().replace('\'', "'\"'\"'")
+            )
+            .as_str()
+        ),
+    );
+
+    // CWD_MISSING：不存在 / 是文件 / 相对路径；opener 均不得被调用。
+    got.replace(None);
+    let gone = t.path().join("gone");
+    let e = ops_cmds::new_session_in_iterm_impl(&gone.display().to_string(), &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+    let f = t.path().join("afile");
+    std::fs::write(&f, "x").unwrap();
+    let e = ops_cmds::new_session_in_iterm_impl(&f.display().to_string(), &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+    let e = ops_cmds::new_session_in_iterm_impl("relative/dir", &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+    assert!(got.borrow().is_none(), "拒绝路径不应调用 opener");
+
+    // 含换行的路径：拒绝（转义会静默剥离换行，改变 cd 目标）。
+    let nl = t.path().join("a\nb");
+    std::fs::create_dir_all(&nl).unwrap();
+    let e = ops_cmds::new_session_in_iterm_impl(&nl.display().to_string(), &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(got.borrow().is_none());
+}
+
 /// 真实回归冒烟（手动 `cargo test --test ops -- --ignored smoke_marker_real`）：
 /// 对隔离 agent 目录里的**分支**会话调用 `append_branch_marker_impl`
 /// 追加 marker，随后由 bash 用 `omp --resume` + tmux 验证转录止于目标节点。

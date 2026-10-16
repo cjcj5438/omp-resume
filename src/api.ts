@@ -125,6 +125,16 @@ export function openInIterm(req: OpenInItermRequest): Promise<void> {
   return call("open_in_iterm", { path: req.path });
 }
 
+/** 在 iTerm 新开 omp 会话（仅 `cd '<cwd>' && omp`，不带 prompt 或任何参数）。 */
+export function newSessionInIterm(cwd: string): Promise<void> {
+  return call("new_session_in_iterm", { cwd });
+}
+
+/** 原生选择项目目录；用户取消返回 null。 */
+export function chooseDirectory(): Promise<string | null> {
+  return call("choose_directory");
+}
+
 export function getOmpVersion(): Promise<OmpVersion> {
   return call("omp_version");
 }
