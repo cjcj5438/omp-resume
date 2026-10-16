@@ -1059,7 +1059,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   `retry.fallbackChains` 值必须是字符串数组。理由：omp 的 `config set` 实测
   只校验外层对象/数组（`{"a":1}`、`{"a":"b"}` 均可静默写入），内层垃圾由本应用拒绝。
 
-### 16.3 `list_models() -> ModelInfo[]`
+### 16.3 / 4.36 `list_models() -> ModelInfo[]`
 
 - 运行 `omp models --json`（60 秒超时，只读，不占写门禁；**绝不运行
   `omp models refresh`**）。每条取精简字段：
@@ -1072,7 +1072,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   模型选择器按 provider 分组、可搜索；当前值不在列表（别名 / 已下线）时
   原样显示并标「未知值 · 保留」，用户不动就不改写。
 
-### 16.4 `get_model_config() -> ModelConfig`
+### 16.4 / 4.37 `get_model_config() -> ModelConfig`
 
 - 白名单 5 个 key 逐个 `omp config get <key> --json`（60 秒，只读不占门禁） +
   agent 默认值。返回（camelCase）：
@@ -1105,7 +1105,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   引号剥壳（双引号处理 `\\` `\"` `\n`，单引号处理 `''`）；其余键
   （tools/output 等嵌套结构）忽略。缺 name 用文件名兜底、缺 thinkingLevel 为 null。
 
-### 16.5 `update_model_config { key, value, expected } -> UpdateModelConfigResult`
+### 16.5 / 4.38 `update_model_config { key, value, expected } -> UpdateModelConfigResult`
 
 - `value` / `expected` 为任意 JSON 值；返回 `{ key, value }`（写后复读的新值）。
 - 流程（整体持有 `OmpBusy` 单写门禁，多余的报 `BUSY`）：

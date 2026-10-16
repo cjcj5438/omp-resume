@@ -91,6 +91,7 @@ body {
 
 .sidebar-top {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px;
   border-bottom: 1px solid var(--border);
@@ -105,6 +106,10 @@ body {
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
+}
+
+.sidebar-top .filter-input {
+  flex-basis: 100%;
 }
 
 .sidebar-list {

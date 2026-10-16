@@ -91,8 +91,8 @@ export function Sidebar({
           onChange={(e) => onQuery(e.target.value)}
           aria-label="过滤会话"
         />
-        <button type="button" className="btn" aria-pressed={manageActive} onClick={onToggleManage}>
-          管理
+        <button type="button" className="btn" onClick={onNewSession}>
+          新会话…
         </button>
         <button type="button" className="btn" aria-pressed={statsActive} onClick={onToggleStats}>
           统计
@@ -100,14 +100,14 @@ export function Sidebar({
         <button type="button" className="btn" aria-pressed={cleanupActive} onClick={onToggleCleanup}>
           清理
         </button>
-        <button type="button" className="btn" onClick={onOpenCheatSheet}>
-          速查
-        </button>
-        <button type="button" className="btn" onClick={onNewSession}>
-          新会话…
-        </button>
         <button type="button" className="btn" aria-pressed={historyActive} onClick={onToggleHistory}>
           提示词历史
+        </button>
+        <button type="button" className="btn" aria-pressed={manageActive} onClick={onToggleManage}>
+          管理
+        </button>
+        <button type="button" className="btn" onClick={onOpenCheatSheet}>
+          速查
         </button>
         <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
           {loading ? <span className="spinner" aria-hidden="true" /> : null}

@@ -17,5 +17,3 @@
 .usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-bar { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .usage-bar > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-.sidebar-top { flex-wrap: wrap; }
-.sidebar-top .filter-input { flex-basis: 100%; }
