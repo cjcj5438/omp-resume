@@ -1,46 +1,151 @@
-/* omp-resume：macOS 原生风格，浅/深色跟随系统。 */
+/* omp-resume：语义颜色变量。实际主题由外观偏好写入的 data-theme 决定
+ * （浅色默认 / 深色覆盖），强调色由 data-accent 覆盖 accent 系列变量。
+ * 正文/徽章/按钮文字对比度均 ≥ WCAG AA（4.5:1），改色值时请用脚本复核。 */
 
-:root {
-  /* 让 WKWebView 原生滚动条/表单跟随系统深浅色（否则深色下滚动条轨道发白）。 */
-  color-scheme: light dark;
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  /* 背景分层 */
   --bg: #ffffff;
   --bg-sidebar: #f2f2f4;
+  --bg-card: #f7f7f9;
   --bg-hover: rgba(0, 0, 0, 0.05);
   --bg-selected: #d6e4fb;
-  --bg-card: #f7f7f9;
   --bg-bubble-user: #dce9ff;
+  --bg-overlay: rgba(0, 0, 0, 0.32);
+  --toast-bg: rgba(255, 255, 255, 0.96);
+  /* 文字：正文 / 次要 / 填充块上 */
   --text: #1d1d1f;
   --text-muted: #6e6e73;
+  --on-accent: #ffffff;
+  /* 边框与阴影 */
   --border: #d4d4d8;
+  --shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  /* 强调（默认蓝色；其余 5 色见下方 data-accent 覆盖） */
   --accent: #0a5fd0;
+  --accent-fill: #0a5fd0;
   --accent-soft: rgba(10, 95, 208, 0.12);
+  /* 危险 / 警告 */
   --danger: #c9291c;
+  --danger-fill: #c9291c;
   --danger-soft: rgba(201, 41, 28, 0.1);
   --warn-soft: rgba(200, 130, 0, 0.12);
-  --toast-bg: rgba(255, 255, 255, 0.96);
-  --shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  /* 徽章：占用中（橙）/ 树 label（黄） */
+  --badge-inuse-bg: #b25a00;
+  --badge-inuse-text: #ffffff;
+  --badge-label-bg: #e8c34a;
+  --badge-label-text: #4a3800;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1e20;
-    --bg-sidebar: #262629;
-    --bg-hover: rgba(255, 255, 255, 0.07);
-    --bg-selected: #2c4a7c;
-    --bg-card: #2a2a2d;
-    --bg-bubble-user: #2c3c57;
-    --text: #f2f2f4;
-    --text-muted: #a0a0a6;
-    --border: #3c3c40;
-    --accent: #6fb0ff;
-    --accent-soft: rgba(111, 176, 255, 0.16);
-    --danger: #ff6b5e;
-    --danger-soft: rgba(255, 107, 94, 0.14);
-    --warn-soft: rgba(255, 190, 80, 0.14);
-    --toast-bg: rgba(40, 40, 44, 0.96);
-    --shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1e1e20;
+  --bg-sidebar: #262629;
+  --bg-card: #2a2a2d;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-selected: #2c4a7c;
+  --bg-bubble-user: #2c3c57;
+  --bg-overlay: rgba(0, 0, 0, 0.55);
+  --toast-bg: rgba(40, 40, 44, 0.96);
+  --text: #f2f2f4;
+  --text-muted: #a0a0a6;
+  --on-accent: #ffffff;
+  --border: #3c3c40;
+  --shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  --accent: #6fb0ff;
+  --accent-fill: #2f6fd6;
+  --accent-soft: rgba(111, 176, 255, 0.16);
+  --danger: #ff6b5e;
+  --danger-fill: #c9291c;
+  --danger-soft: rgba(255, 107, 94, 0.14);
+  --warn-soft: rgba(255, 190, 80, 0.14);
+  --badge-inuse-bg: #b25a00;
+  --badge-inuse-text: #ffffff;
+  --badge-label-bg: #e8c34a;
+  --badge-label-text: #4a3800;
+}
+
+/* ---- 强调色覆盖：accent / fill（按钮填充）/ soft（淡底）/ 选中行 / 用户气泡 ---- */
+
+:root[data-theme="light"][data-accent="purple"] {
+  --accent: #7c3aed;
+  --accent-fill: #7c3aed;
+  --accent-soft: rgba(124, 58, 237, 0.12);
+  --bg-selected: #e6dcfa;
+  --bg-bubble-user: #ece4fb;
+}
+
+:root[data-theme="dark"][data-accent="purple"] {
+  --accent: #c4a8ff;
+  --accent-fill: #7c3aed;
+  --accent-soft: rgba(196, 168, 255, 0.16);
+  --bg-selected: #3b2d5e;
+  --bg-bubble-user: #352a52;
+}
+
+:root[data-theme="light"][data-accent="green"] {
+  --accent: #1a7f37;
+  --accent-fill: #1a7f37;
+  --accent-soft: rgba(26, 127, 55, 0.12);
+  --bg-selected: #d3e8d8;
+  --bg-bubble-user: #dbeedf;
+}
+
+:root[data-theme="dark"][data-accent="green"] {
+  --accent: #7ee2a8;
+  --accent-fill: #1a7f37;
+  --accent-soft: rgba(126, 226, 168, 0.16);
+  --bg-selected: #1e4432;
+  --bg-bubble-user: #1c3d2e;
+}
+
+:root[data-theme="light"][data-accent="orange"] {
+  --accent: #b25a00;
+  --accent-fill: #b25a00;
+  --accent-soft: rgba(178, 90, 0, 0.12);
+  --bg-selected: #f3ddc4;
+  --bg-bubble-user: #f6e3cd;
+}
+
+:root[data-theme="dark"][data-accent="orange"] {
+  --accent: #f0a35e;
+  --accent-fill: #b25a00;
+  --accent-soft: rgba(240, 163, 94, 0.16);
+  --bg-selected: #4a2f16;
+  --bg-bubble-user: #402914;
+}
+
+:root[data-theme="light"][data-accent="pink"] {
+  --accent: #c2337f;
+  --accent-fill: #c2337f;
+  --accent-soft: rgba(194, 51, 127, 0.12);
+  --bg-selected: #f5d7e6;
+  --bg-bubble-user: #f7deeb;
+}
+
+:root[data-theme="dark"][data-accent="pink"] {
+  --accent: #f093c0;
+  --accent-fill: #c2337f;
+  --accent-soft: rgba(240, 147, 192, 0.16);
+  --bg-selected: #4c2540;
+  --bg-bubble-user: #422038;
+}
+
+:root[data-theme="light"][data-accent="grey"] {
+  --accent: #5f6368;
+  --accent-fill: #5f6368;
+  --accent-soft: rgba(95, 99, 104, 0.14);
+  --bg-selected: #dfe1e3;
+  --bg-bubble-user: #e6e8ea;
+}
+
+:root[data-theme="dark"][data-accent="grey"] {
+  --accent: #b0b3b8;
+  --accent-fill: #5f6368;
+  --accent-soft: rgba(176, 179, 184, 0.16);
+  --bg-selected: #3a3d42;
+  --bg-bubble-user: #34373c;
 }
 
 * {
@@ -386,8 +491,8 @@ body {
 }
 
 .badge-accent {
-  background: #e2761c;
-  color: #fff;
+  background: var(--badge-inuse-bg);
+  color: var(--badge-inuse-text);
 }
 
 .badge-grey {
@@ -413,14 +518,14 @@ body {
 }
 
 .badge-label {
-  background: #e8c34a;
-  color: #4a3800;
+  background: var(--badge-label-bg);
+  color: var(--badge-label-text);
   flex: none;
 }
 
 .badge-leaf {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   flex: none;
 }
 
@@ -495,20 +600,20 @@ body {
 }
 
 .btn-accent {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
 }
 
 .btn-accent:hover:not(:disabled) {
-  background: var(--accent);
+  background: var(--accent-fill);
   filter: brightness(1.08);
 }
 
 .btn-danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
+  background: var(--danger-fill);
+  border-color: var(--danger-fill);
+  color: var(--on-accent);
 }
 
 .btn-danger:hover:not(:disabled) {
@@ -988,7 +1093,7 @@ pre.mono {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--bg-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1366,4 +1471,81 @@ pre.mono {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 320px;
+}
+
+/* ---- 外观面板（侧栏底部向上弹出） ---- */
+
+.appearance-wrap {
+  position: relative;
+}
+
+.appearance-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 248px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.appearance-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.appearance-seg {
+  display: flex;
+  gap: 4px;
+}
+
+.appearance-seg .btn {
+  flex: 1;
+  justify-content: center;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.appearance-seg .btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.appearance-swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.accent-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  color: var(--on-accent);
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.accent-swatch[aria-pressed="true"] {
+  outline-color: var(--accent);
+}
+
+.accent-swatch:focus-visible {
+  outline-color: var(--accent);
+  outline-offset: 2px;
 }

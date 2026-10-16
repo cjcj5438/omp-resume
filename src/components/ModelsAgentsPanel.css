@@ -1,7 +1,7 @@
 /* 「模型与 Agent」面板专用样式；通用管理类沿用 App.css。 */
 
 .models-agents .block-section {
-  border-top: 1px solid var(--border, #2a2a2e);
+  border-top: 1px solid var(--border);
   padding: 14px 0;
 }
 
@@ -66,10 +66,10 @@
   max-height: 320px;
   overflow: auto;
   padding: 8px;
-  background: var(--bg-panel, #1c1c20);
-  border: 1px solid var(--border, #2a2a2e);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow);
 }
 
 .model-picker-list,
@@ -81,7 +81,7 @@
 
 .model-picker-group {
   font-size: 12px;
-  color: var(--muted, #8a8a92);
+  color: var(--text-muted);
   padding: 6px 4px 2px;
 }
 
@@ -101,15 +101,15 @@
 }
 
 .model-picker-item:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--bg-hover);
 }
 
 .model-picker-item-active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--bg-selected);
 }
 
 .chain-row {
-  border: 1px solid var(--border, #2a2a2e);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
   margin: 8px 0;
