@@ -2,8 +2,8 @@
 
 macOS 原生桌面应用（Tauri 2 + React + TypeScript + Rust），用于管理
 `omp`（oh-my-pi）的编码会话与本地环境：按项目浏览会话历史、只读回顾对话
-与会话树、一键在 iTerm 中继续、永久删除、从任意树节点分叉继续，以及
-omp 版本、插件、技能与 MCP 配置。
+与会话树、一键在 iTerm 中继续、永久删除、从任意树节点分叉继续、新开会话、
+用量统计、清理与会话备注，以及 omp 版本、模型与 Agent、插件、技能与 MCP 配置。
 
 **为什么做它**：omp 的会话是一棵 append-only 的 JSONL 树。现有开源工具要么在
 浏览器/Electron 里重做一遍聊天界面（omp-web、ompweb、oh-my-pi-gui），要么是
@@ -11,7 +11,7 @@ pi 专用的 TUI 扩展（pi-session-manager）；没有一个能把会话交还
 `omp --resume` CLI，在 iTerm 新标签页里继续。
 UI 文案为中文。
 
-> 已针对 omp **v18.10.3** 验证（会话格式、占用租约、删除与分叉语义）。
+> 会话格式、占用租约、删除与分叉语义针对 omp **v18.10.3** 验证；模型/Agent 配置、用量、history.db 等新功能针对 **v18.11.1** 验证。
 
 ## 功能
 
@@ -29,7 +29,12 @@ UI 文案为中文。
 - **置顶**：项目（按 cwd）与会话两级置顶，置顶项排在各自列表最前；仅存于本机界面偏好，不修改会话文件。
 - **omp 版本与更新**：侧栏底部显示本机 omp 版本，可手动「检查 omp 更新」并一键更新（仅以版本号变化判定成功；已打开的 omp 会话需重启后生效；包管理器托管的安装会提示去其管理器更新）。
 - **复制会话 ID**：点击详情头里的会话 ID 即可复制。
-- **管理视图**：侧栏「管理」按钮打开插件 / Skills / MCP 三个标签页。
+- **管理视图**：侧栏「管理」按钮打开模型与 Agent（默认首页）/ 插件 / Skills / MCP 四个标签页。
+  模型与 Agent：模型角色、agent 模型覆盖 / 禁用 / advisor 与模型回退链集中管理，
+  经 `omp config set` 只写 5 个白名单配置键，不读 models.yml/models.json、不碰凭据；
+  模型选择按 provider 分组可搜索，未知值（`@smol` 别名、已下线模型）原样保留；
+  逐块保存/还原并带冲突保护；agent 内置默认读取顺序：`~/.omp/agent/agents/<name>.md`
+  存在则以它为准，否则取 `omp agents unpack` 的内置定义。
   插件（仅 user scope）：已安装列表的启用 / 禁用 / 升级 / 卸载，
   marketplace 的添加 / 移除 / 刷新 / 浏览安装；Skills：registry 技能列表
   与一键更新（`~/.agents/skills` 下的技能由其他工具管理，不受影响）；
@@ -37,6 +42,17 @@ UI 文案为中文。
   服务器列表 / 启停 / 新增 / 编辑 / 删除——列表只显示 env/headers 键名
   不显示值，编辑框才取真实值，保存前校验输入并以 revision 做冲突保护，
   原子写入（新文件权限 `0600`）；已运行的 omp 会话需 `/mcp reload` 或重启后生效。
+- **用量/花费**：详情页显示 token、消息数、模型与主对话/后台/子代理分项花费；
+  侧栏「统计」按项目/模型/按天汇总（近 30 天或全部），沿 fork 链去重不重复计费。
+- **新开会话**：侧栏「新会话…」选目录或项目分组头「+」，在 iTerm 新标签页只执行
+  `cd '<目录>' && omp`，不带参数、不发送任何内容。
+- **会话概要与提示词历史**：详情页显示 omp 生成的最新 recap；侧栏「提示词历史」
+  只读检索 `~/.omp/agent/history.db`（复制 / 跳到来源会话 / 在该目录新会话）；
+  库缺失或结构不符时静默隐藏。
+- **清理**：侧栏「清理」按规则（空会话、cwd 已删除、体积前 N 且 ≥5MB、超过 N 天）
+  列出候选与可释放空间（体积含附件目录与 .bak），勾选后走既有永久删除流程。
+- **别名/标签/备注**：应用侧存储（`meta.json`，revision 冲突保护 + 原子写入 + 0600），
+  不改会话文件；列表显示别名并附原标题小字，标签过滤条，过滤框同时匹配别名/标签/备注。
 - **全部更新**：按 marketplace 目录 → 插件 → registry skills → 检查 omp
   的顺序执行，首个失败即停并点名；有新版 omp 时只打开更新对话框，
   不自动执行 `omp update`。
@@ -52,8 +68,9 @@ UI 文案为中文。
   见「已知限制」。
 - **永久删除**：完全镜像 omp 自己的 `deleteSessionWithArtifacts`——删除
   `<file>.jsonl`、同名 sibling 附件目录、`<file>.jsonl.*.bak` 残留；
-  **不进回收站**（与 omp 一致的永久删除）；`~/.omp/agent/history.db` 永不触碰
-  （omp 自己也不碰）。写路径前先 canonicalize 并强制限定在会话根目录内
+  **不进回收站**（与 omp 一致的永久删除）；删除永远不碰 `~/.omp/agent/history.db`
+  （omp 自己删除时也不碰），会话概要与提示词历史以 `SQLITE_OPEN_READ_ONLY` 只读使用它。
+  写路径前先 canonicalize 并强制限定在会话根目录内
   `<项目>/<文件>.jsonl` 两段，符号链接逃逸一律拒绝。
 - **从此节点继续（分支标记）**：向会话文件末尾**只追加一行**
   `{"type":"custom","customType":"omp-resume-branch",...,"parentId":<节点>,...}`，
@@ -64,6 +81,11 @@ UI 文案为中文。
 - **拒绝规则**：占用中（`IN_USE`）、探测失败（`PROBE_FAILED`）、
   节点非法（`INVALID_NODE`）、路径逃出根（`OUTSIDE_ROOT`）、cwd 已删除时
   打开 iTerm（`CWD_MISSING`）、文件末尾不完整（`IO`）——宁可拒绝也不猜。
+- **模型配置**：只读写 5 个白名单键（`modelRoles`、`task.agentModelOverrides`、
+  `task.disabledAgents`、`task.agentAdvisor`、`retry.fallbackChains`），经 `omp config set`
+  写入；不读 models.yml/models.json、不运行 `omp config list`，不碰凭据。
+- **应用侧备注**：别名/标签/备注存于应用自己的 `meta.json`，revision 冲突保护 +
+  原子写入；孤儿条目（会话已删）惰性保留不自动修剪，仅本应用删除成功时联动清理。
 
 ## 构建与安装
 
@@ -158,6 +180,8 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 | 会话根 `sessionsDir` | `--sessions-dir <path>` 参数 > `OMP_RESUME_SESSIONS_DIR` | `$HOME/.omp/agent/sessions` |
 | 租约目录 `ownersDir` | `OMP_RESUME_OWNERS_DIR` | `$HOME/.omp/run/session-owners` |
 | omp 二进制 | `OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` > `~/.bun/bin/omp` | 逐项检查存在性，不依赖 PATH |
+| 提示词库 `history.db` | `OMP_RESUME_HISTORY_DB` | `$HOME/.omp/agent/history.db` |
+| 应用数据目录（含 `meta.json`） | `OMP_RESUME_DATA_DIR` | `$HOME/Library/Application Support/omp-resume` |
 
 带参数启动（GUI 的 argv 不易透传，可直接跑二进制）：
 
@@ -176,8 +200,10 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
   `clipboard.ts`（复制）、`dev/` 仅开发用 mock）。
 - `src-tauri/src/`：`config.rs`（配置 + 路径校验）、`lock.rs`（flock 探测）、
   `occupant.rs`（占用归属识别）、`sessions/`（解析 / 列表 / 对话 / 树）、
-  `ops/`（删除 / 标记 / iTerm）、`omp_cli.rs`（omp 路径解析 / 安全 runner /
-  版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
+  `ops/`（删除 / 标记 / iTerm）、`ops/picker.rs`（目录选择）、`omp_cli.rs`（omp 路径解析 /
+  安全 runner / 版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
+  `omp_models.rs`（模型与 Agent 白名单配置）、`usage.rs`（用量统计）、`history.rs`
+  （recap/提示词历史只读）、`cleanup.rs`（清理候选）、`meta.rs`（别名/标签/备注）、
   `mcp_config.rs`（MCP 原生配置读写）、`model.rs`（前后端共享类型）、
   `lib.rs`（命令注册）。
 - `docs/CONTRACT.md`：**权威规格**（数据格式、命令、语义、错误码）。
@@ -213,6 +239,7 @@ kill %1
 启用开发用 mock 后端（内存态，会话 / omp / 插件 / 技能 / MCP 命令全覆盖；
 仅 dev 构建包含）。可用参数：`?omp=new`（模拟有新版 omp）/
 `?omp=managed`（模拟包管理器托管）、`?fail=<命令名>`（强制该命令失败）、
+`?conflict=<命令名>`（强制该命令报 CONFLICT）、`?pick=cancel`（模拟取消选目录）、
 `?latency=<毫秒>`（所有命令延迟）。
 
 开发者注意：omp 收到绝对路径形式的 `PI_CONFIG_DIR` 时会把状态写到 `$HOME`
@@ -243,3 +270,11 @@ kill %1
 - 并发执行 plugin upgrade / skill 命令的行为未经实测，应用内同一时间
   只允许一个 omp 写操作，多余的报 `BUSY`。
 - omp 更新/升级期间若把窗口放到后台或其他桌面空间，WKWebView 可能延迟投递完成事件，对话框要等窗口回到前台才显示完成（后端已完成，最长受 15 分钟超时约束）；请保持窗口在前台。
+- 别名只在本应用显示，omp `/resume` 里仍是原标题。
+- `meta.json` 损坏/版本不兼容时拒绝读写，需手动修复；孤儿条目不自动清理。
+- 统计是逐文件扫描的瞬时快照；fork 归属仅在条目完全一致时认定复制，无法确认则计入自身。
+- 提示词历史大小写不敏感仅 ASCII、子串匹配；「跳到来源会话」仅在会话已加载时可用；
+  history.db 结构变化时功能静默消失。
+- `omp models --json` 约 10 秒，缓存只在进程内；回退链无法新建 `provider/*` 通配 key，
+  不支持任意新增角色键；Agent 表一次保存串行写多个 key，中途失败不回滚。
+- 目录选择对话框在应用未激活时可能出现在窗口后方。
