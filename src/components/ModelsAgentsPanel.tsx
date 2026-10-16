@@ -723,6 +723,7 @@ export function ModelsAgentsPanel(props: {
 }) {
   const { onToast } = props;
   const [models, setModels] = useState<ModelInfo[] | null>(modelsCache);
+  const [modelsLoading, setModelsLoading] = useState(modelsCache === null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModelConfig | null>(null);
   const [draft, setDraft] = useState<ModelDrafts | null>(null);
@@ -767,6 +768,7 @@ export function ModelsAgentsPanel(props: {
   const loadModels = useCallback(async (force: boolean) => {
     if (!force && modelsCache !== null) return;
     setModelsError(null);
+    setModelsLoading(true);
     try {
       const list = await listModels();
       if (!alive.current) return;
@@ -775,6 +777,8 @@ export function ModelsAgentsPanel(props: {
     } catch (e: unknown) {
       if (!alive.current) return;
       setModelsError(errorText(normalizeError(e)));
+    } finally {
+      if (alive.current) setModelsLoading(false);
     }
   }, []);
 
@@ -1110,7 +1114,7 @@ export function ModelsAgentsPanel(props: {
           <span>
             模型列表：
             {models !== null
-              ? `${models.length} 个模型`
+              ? `${models.length} 个模型${modelsLoading ? "（重新加载中…）" : ""}`
               : modelsError !== null
                 ? "加载失败"
                 : "加载中…"}
@@ -1118,9 +1122,10 @@ export function ModelsAgentsPanel(props: {
           <button
             type="button"
             className="btn btn-small"
-            disabled={busyBlock !== null}
+            disabled={busyBlock !== null || modelsLoading}
             onClick={() => void loadModels(true)}
           >
+            {modelsLoading ? <span className="spinner" aria-hidden="true" /> : null}
             刷新
           </button>
           <span>
@@ -1137,7 +1142,7 @@ export function ModelsAgentsPanel(props: {
         </div>
       ) : null}
       {models === null && modelsError === null ? (
-        <div className="muted">模型列表加载中（首次约 10 秒）…</div>
+        <div className="muted">模型列表加载中（首次加载可能需要几秒）…</div>
       ) : null}
       {retry.enabled === false ? (
         <div className="banner banner-warn" role="alert">
