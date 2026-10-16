@@ -32,6 +32,8 @@ pub enum ErrorCode {
     InvalidInput,
     Conflict,
     MetaCorrupt,
+    /// 配置键不在模型配置白名单内（仅 `update_model_config` 产生）。
+    InvalidKey,
     Unknown,
 }
 
@@ -742,6 +744,65 @@ pub struct CleanupCandidate {
     pub probe_ok: bool,
 }
 
+// ---------------------------------------------------------------------------
+// 模型与 Agent 配置（CONTRACT §4.36–§4.38）
+// ---------------------------------------------------------------------------
+
+/// `list_models` 单行：精简模型信息。绝不包含凭据字段（apiKey 等）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub selector: String,
+    pub provider: String,
+    pub id: String,
+    pub name: String,
+    pub thinking_levels: Vec<String>,
+    pub context_window: Option<u64>,
+    pub reasoning: bool,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+}
+
+/// agent 定义来源：内置（unpack 导出）或用户自建（`~/.omp/agent/agents`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentSource {
+    Builtin,
+    User,
+}
+
+/// `get_model_config` 的 agent 行：内置默认（模型 / thinking，只读展示）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDefinition {
+    pub name: String,
+    pub description: String,
+    pub source: AgentSource,
+    pub default_model: Vec<String>,
+    pub default_thinking_level: Option<String>,
+}
+
+/// `get_model_config` 返回：白名单 5 个 config key 的原始值 + agent 默认值。
+/// record / 数组内单个条目的值原样保留（可能不是字符串，前端只展示不改写）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelConfig {
+    pub roles: serde_json::Map<String, serde_json::Value>,
+    pub agent_overrides: serde_json::Map<String, serde_json::Value>,
+    pub disabled_agents: Vec<serde_json::Value>,
+    pub agent_advisor: serde_json::Map<String, serde_json::Value>,
+    pub fallback_chains: serde_json::Map<String, serde_json::Value>,
+    pub agents: Vec<AgentDefinition>,
+}
+
+/// `update_model_config` 返回：写后复读的新值。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateModelConfigResult {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,6 +897,44 @@ mod tests {
         assert!(!debug.contains("super-secret-bbb"), "{debug}");
         assert!(debug.contains("<redacted>"), "{debug}");
         assert!(debug.contains("secret"), "{debug}");
+    }
+
+    #[test]
+    fn model_config_types_use_camel_case_and_nulls() {
+        assert_eq!(
+            serde_json::to_value(ErrorCode::InvalidKey).unwrap(),
+            "INVALID_KEY"
+        );
+        let info = serde_json::to_value(ModelInfo {
+            selector: "5438/deepseek-v4.1-flash".into(),
+            provider: "5438".into(),
+            id: "deepseek-v4.1-flash".into(),
+            name: "DeepSeek v4.1 Flash".into(),
+            thinking_levels: vec!["low".into(), "high".into()],
+            context_window: None,
+            reasoning: true,
+            cost_input: Some(0.3),
+            cost_output: None,
+        })
+        .unwrap();
+        assert_eq!(info["selector"], "5438/deepseek-v4.1-flash");
+        assert_eq!(info["thinkingLevels"], serde_json::json!(["low", "high"]));
+        assert_eq!(info["contextWindow"], serde_json::Value::Null);
+        assert_eq!(info["costInput"], 0.3);
+        assert_eq!(info["costOutput"], serde_json::Value::Null);
+        let agent = serde_json::to_value(AgentDefinition {
+            name: "scout".into(),
+            description: "调研".into(),
+            source: AgentSource::Builtin,
+            default_model: vec!["@smol".into()],
+            default_thinking_level: None,
+        })
+        .unwrap();
+        assert_eq!(
+            agent,
+            serde_json::json!({"name": "scout", "description": "调研", "source": "builtin",
+                "defaultModel": ["@smol"], "defaultThinkingLevel": null})
+        );
     }
 
     #[test]

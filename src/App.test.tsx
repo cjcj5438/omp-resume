@@ -154,12 +154,13 @@ describe("从节点继续", () => {
 
     fireEvent.click(rowOf(S5));
     fireEvent.click(screen.getByRole("tab", { name: "树" }));
-    // 初始选中 = leaf（bx-L「当前位置」）
+    // 初始选中 = leaf（bx-L「当前位置」）；选中由被动 effect 落定后按钮才可用。
     await screen.findByText("当前位置");
-    await waitFor(() => expect(screen.getByRole("button", { name: "从此节点继续" })).toBeEnabled());
+    const contBtn = await screen.findByRole("button", { name: "从此节点继续" });
+    await waitFor(() => expect(contBtn).toBeEnabled());
 
-    fireEvent.click(screen.getByRole("button", { name: "从此节点继续" }));
-    const dialog = screen.getByRole("dialog");
+    fireEvent.click(contBtn);
+    const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("从此节点继续？");
     expect(dialog).toHaveTextContent("omp-resume-branch");
 

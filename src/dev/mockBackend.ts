@@ -7,10 +7,13 @@
  * - mock 的 revision 是规范 JSON 的 SHA（真后端是原始文件 bytes 的 SHA），且永不为 "unreadable"。
  * - `list_cleanup_candidates` 的 `bytes` 直接用夹具的 `sizeBytes`（真后端会额外递归统计
  *   sibling 附件目录与 `.bak`）；夹具里把几个会话的 `sizeBytes` 调大以覆盖 `large` 原因。
+ * - `?conflict=<命令名>`（逗号分隔）强制该命令报 CONFLICT（演示冲突刷新流程），
+ *   `update_model_config` 在 expected 不匹配时本来就会报 CONFLICT。
  */
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
-import type { AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import { deepEqual } from "../modelConfig";
+import type { AgentDefinition, AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry } from "../types";
 import {
@@ -267,6 +270,84 @@ export interface MockHandle {
   itermCalls: string[];
 }
 
+const MOCK_MODELS: ModelInfo[] = [
+  { selector: "5438/deepseek-v4.1-flash", provider: "5438", id: "deepseek-v4.1-flash", name: "DeepSeek v4.1 Flash (5438)", thinkingLevels: ["low", "high", "max"], contextWindow: 1000000, reasoning: true, costInput: 0.3, costOutput: 1.2 },
+  { selector: "5438/glm-5.3-flash", provider: "5438", id: "glm-5.3-flash", name: "GLM 5.3 Flash (5438)", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 1048576, reasoning: true, costInput: 0.15, costOutput: 0.5 },
+  { selector: "5438/mimo-v2.6-pro", provider: "5438", id: "mimo-v2.6-pro", name: "MiMo v2.6 Pro (5438)", thinkingLevels: ["low", "medium", "high"], contextWindow: 200000, reasoning: true, costInput: 1, costOutput: 4 },
+  { selector: "5438/muse-spark-1.3-contributor", provider: "5438", id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor", thinkingLevels: ["minimal", "low", "medium", "high", "max"], contextWindow: 256000, reasoning: true, costInput: 2, costOutput: 8 },
+  { selector: "5438-claude/claude-sonnet-5-5", provider: "5438-claude", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 400000, reasoning: true, costInput: 3, costOutput: 15 },
+  { selector: "5438-claude/claude-opus-5-5", provider: "5438-claude", id: "claude-opus-5-5", name: "Claude Opus 5.5", thinkingLevels: ["low", "medium", "high", "max"], contextWindow: 400000, reasoning: true, costInput: 15, costOutput: 75 },
+  { selector: "5438-claude/claude-haiku-5-5", provider: "5438-claude", id: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinkingLevels: ["low", "high"], contextWindow: 200000, reasoning: true, costInput: 1, costOutput: 5 },
+  { selector: "factory-droid/gpt-6.1-sol", provider: "factory-droid", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", thinkingLevels: ["medium", "high", "xhigh"], contextWindow: 300000, reasoning: true, costInput: 2, costOutput: 10 },
+  { selector: "factory-droid/claude-sonnet-5-5", provider: "factory-droid", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (factory-droid)", thinkingLevels: ["low", "high", "max"], contextWindow: 400000, reasoning: true, costInput: 3, costOutput: 15 },
+];
+
+const MOCK_AGENTS: AgentDefinition[] = [
+  { name: "task", description: "通用子 agent，委派多步任务", source: "builtin", defaultModel: ["@task"], defaultThinkingLevel: "auto" },
+  { name: "sonic", description: "低推理 agent，仅机械更新与数据收集", source: "builtin", defaultModel: ["@smol"], defaultThinkingLevel: "medium" },
+  { name: "scout", description: "快速只读调研", source: "builtin", defaultModel: ["@smol"], defaultThinkingLevel: "medium" },
+  { name: "reviewer", description: "代码评审专家", source: "builtin", defaultModel: ["@slow"], defaultThinkingLevel: null },
+  { name: "security-reviewer", description: "只读安全审查", source: "builtin", defaultModel: [], defaultThinkingLevel: null },
+  { name: "deployer", description: "自定义：发布与部署", source: "user", defaultModel: ["@smol"], defaultThinkingLevel: null },
+];
+
+/** 模型与 Agent 配置 mock：白名单 5 键的读-比-写 + 模型列表。 */
+function createModelMock(forceConflict: boolean) {
+  // 与后端一致的原始值（unknown 保留）；含别名 @smol 与未知 selector 演示。
+  const state: Record<string, unknown> = {
+    modelRoles: {
+      judge: "typesafe/jev-latest",
+      plan: "5438-claude/claude-sonnet-5-5:xhigh",
+      slow: "5438-claude/claude-opus-5-5:high",
+      task: "5438/muse-spark-1.3-contributor:max",
+      advisor: "5438/glm-5.3-flash:max",
+      commit: "5438/deepseek-v4.1-flash:max",
+      smol: "5438-claude/claude-haiku-5-5:high",
+      tiny: "5438/deepseek-v4.1-flash:low",
+      memory: "5438/deepseek-v4.1-flash:low",
+      default: "5438/muse-spark-1.3-contributor:max",
+    },
+    "task.agentModelOverrides": {
+      task: "5438/muse-spark-1.3-contributor:max",
+      sonic: "factory-droid/claude-haiku-5-5:high",
+      scout: "5438/deepseek-v4.1-flash",
+      reviewer: "5438/mimo-v2.6-pro",
+      "security-reviewer": "5438/mimo-v2.6-pro",
+    },
+    "task.disabledAgents": [],
+    "task.agentAdvisor": { sonic: "on", task: "on" },
+    "retry.fallbackChains": {
+      default: ["5438/muse-spark-1.3-contributor:max"],
+      task: ["5438/mimo-v2.6-pro", "factory-droid/gpt-6.1-sol"],
+      "5438/mimo-v2.6-pro": ["5438/muse-spark-1.3-contributor:max"],
+    },
+  };
+
+  return (cmd: string, args: Record<string, unknown>) => {
+    if (cmd === "list_models") return structuredClone(MOCK_MODELS);
+    if (cmd === "get_model_config") {
+      return {
+        roles: structuredClone(state["modelRoles"]) as Record<string, unknown>,
+        agentOverrides: structuredClone(state["task.agentModelOverrides"]) as Record<string, unknown>,
+        disabledAgents: structuredClone(state["task.disabledAgents"]) as unknown[],
+        agentAdvisor: structuredClone(state["task.agentAdvisor"]) as Record<string, unknown>,
+        fallbackChains: structuredClone(state["retry.fallbackChains"]) as Record<string, unknown>,
+        agents: structuredClone(MOCK_AGENTS),
+      } satisfies ModelConfig;
+    }
+    const key = args["key"];
+    if (typeof key !== "string" || !Object.hasOwn(state, key)) {
+      throw err("INVALID_KEY", `不支持的配置键：${String(key)}`);
+    }
+    if (forceConflict) throw err("CONFLICT", "配置已被外部修改，请刷新后重试");
+    if (!deepEqual(state[key], args["expected"])) {
+      throw err("CONFLICT", "配置已被外部修改，请刷新后重试");
+    }
+    state[key] = args["value"];
+    return { key, value: structuredClone(state[key]) };
+  };
+}
+
 export async function installMockBackend(): Promise<MockHandle> {
   const params = new URLSearchParams(window.location.search);
   const latency = Number(params.get("latency") ?? "0") || 0;
@@ -282,6 +363,9 @@ export async function installMockBackend(): Promise<MockHandle> {
   const itermCalls: string[] = [];
   const newSessionCalls: string[] = [];
   const mcp = createMcpMock();
+  const model = createModelMock(
+    (params.get("conflict") ?? "").split(",").includes("update_model_config"),
+  );
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [
     { ...metadata, id: "hello-plugin@probe-mkt", name: "hello-plugin", marketplace: "probe-mkt", version: "1.0.0", enabled: true },
@@ -620,6 +704,10 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "omp_skills_update":
         for (const skill of skills) if (skill.source === "registry") skill.description = "由 registry 管理的示例技能（已更新）";
         return streamedOutput(args, "✔ Updated registry-example\n");
+      case "list_models":
+      case "get_model_config":
+      case "update_model_config":
+        return model(cmd, args);
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }

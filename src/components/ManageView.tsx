@@ -14,6 +14,7 @@ import {
 import { errorText } from "../format";
 import type { OmpUpdateCheck, PluginUpgradeChange } from "../types";
 import { McpPanel } from "./McpPanel";
+import { ModelsAgentsPanel } from "./ModelsAgentsPanel";
 import { PluginsPanel, upgradeIsUpToDate } from "./PluginsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { useAlive, useOmpOp, type ToastFn } from "./useOmpOp";
@@ -31,7 +32,7 @@ interface ManageViewProps {
   onCheckOmp: () => void;
 }
 
-type ManageTab = "plugins" | "skills" | "mcp";
+type ManageTab = "models" | "plugins" | "skills" | "mcp";
 
 interface UpdateAllStep {
   name: string;
@@ -40,6 +41,7 @@ interface UpdateAllStep {
 }
 
 const TABS: { key: ManageTab; label: string }[] = [
+  { key: "models", label: "模型与 Agent" },
   { key: "plugins", label: "插件" },
   { key: "skills", label: "Skills" },
   { key: "mcp", label: "MCP" },
@@ -48,7 +50,7 @@ const TABS: { key: ManageTab; label: string }[] = [
 export function ManageView({ projects, onToast, onBack, onCheckOmp }: ManageViewProps) {
   const op = useOmpOp();
   const alive = useAlive();
-  const [tab, setTab] = useState<ManageTab>("plugins");
+  const [tab, setTab] = useState<ManageTab>("models");
   const [refreshToken, setRefreshToken] = useState(0);
   const [summary, setSummary] = useState<UpdateAllStep[] | null>(null);
   const busy = op.running !== null;
@@ -185,7 +187,11 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp }: ManageView
         aria-labelledby={`tab-manage-${tab}`}
         className="panel"
       >
-        {tab === "plugins" ? (
+        {tab === "models" ? (
+          <fieldset disabled={busy} className="manage-fieldset">
+            <ModelsAgentsPanel onToast={onToast} />
+          </fieldset>
+        ) : tab === "plugins" ? (
           <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} />
         ) : tab === "skills" ? (
           <SkillsPanel op={op} onToast={onToast} refreshToken={refreshToken} />

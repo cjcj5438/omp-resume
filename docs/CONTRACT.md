@@ -1022,3 +1022,145 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   详情编辑器 dirty/保存/还原行为正确。
 - 后端真实读写冒烟（`OMP_RESUME_DATA_DIR=/tmp/...`）：写入 meta.json
   权限 0600，删除会话后条目被联动清除。
+
+## 16. 模型与 Agent 配置（§4.36–§4.38，追加章节）
+
+> 管理视图「模型与 Agent」标签页的后端契约。三块 UI：模型角色
+> （`modelRoles`）、Agent 表（`task.agentModelOverrides` / `task.disabledAgents` /
+> `task.agentAdvisor` 三个键）、回退链（`retry.fallbackChains`）。
+> 应用内不聊天、不调用任何 LLM；配置写入全部经 `omp config set`。
+
+### 16.1 白名单与安全规则
+
+- **只允许读写 5 个 key**，其他 key 一律 `INVALID_KEY` 且**绝不调用 omp**：
+  `modelRoles`（record：角色 → `provider/model[:thinking]`）、
+  `task.agentModelOverrides`（record：agent → selector，值同上可带 `:thinking`）、
+  `task.disabledAgents`（array：agent 名）、
+  `task.agentAdvisor`（record：agent → `"on"` / `"off"`）、
+  `retry.fallbackChains`（record：角色或 selector（可含 `provider/*` 通配） →
+  有序 selector 字符串数组）。
+- 绝不读取凭据文件（`~/.omp/agent/models.yml` / `models.json` 等，含明文 apiKey），
+  绝不运行 `omp config list`（会输出 token 类设置）；`omp models --json` 本身
+  不含凭据。任何 omp 输出都不写日志、测试输出不打印配置值。
+- 不触碰 omp 自己的库（`~/.omp/agent/*.db`）；不读项目级 `.omp/agents`（仅 user scope）。
+- record 整体读-改-写（omp 的 `config set` 不支持点号子键，实测
+  `modelRoles.plan` → Unknown setting），**未被用户触碰的键与值原样保留**
+  （包括不认识的角色 / agent / 回退链键、别名 `@smol`、已下线 selector）；
+  删除某项 = 写不含该项的 record，没有 reset 按钮。
+
+### 16.2 值形状校验（读宽松、写严格）
+
+- 读取（`omp config get <key> --json` 取 `value`）：只校验外层形状
+  （record 必须对象、array 必须数组），不符 → `OMP_FAILED`（点名 key）；
+  内层条目**原样保留**（可能是非字符串脏值，UI 原样展示且未触碰不改写）。
+- 写入：外层形状 + 内层全量校验 → 否则 `INVALID_INPUT`（点名 key）：
+  `modelRoles` / `task.agentModelOverrides` 值必须是字符串；
+  `task.agentAdvisor` 值必须 `"on"`/`"off"`；`task.disabledAgents` 必须是字符串数组；
+  `retry.fallbackChains` 值必须是字符串数组。理由：omp 的 `config set` 实测
+  只校验外层对象/数组（`{"a":1}`、`{"a":"b"}` 均可静默写入），内层垃圾由本应用拒绝。
+
+### 16.3 `list_models() -> ModelInfo[]`
+
+- 运行 `omp models --json`（60 秒超时，只读，不占写门禁；**绝不运行
+  `omp models refresh`**）。每条取精简字段：
+  `ModelInfo { selector, provider, id, name, thinkingLevels: string[],
+  contextWindow: number|null, reasoning: boolean,
+  costInput: number|null, costOutput: number|null }`（camelCase）。
+  无 selector 的条目跳过；缺字段容忍为 null/空。坏 JSON → `OMP_FAILED`。
+- 可能较慢（本机实测约 10.3 秒 / 65 个模型）：前端异步加载 + 进程内缓存
+  （模块级，跨挂载复用），「刷新模型列表」按钮只重跑本命令。
+  模型选择器按 provider 分组、可搜索；当前值不在列表（别名 / 已下线）时
+  原样显示并标「未知值 · 保留」，用户不动就不改写。
+
+### 16.4 `get_model_config() -> ModelConfig`
+
+- 白名单 5 个 key 逐个 `omp config get <key> --json`（60 秒，只读不占门禁） +
+  agent 默认值。返回（camelCase）：
+
+  ```jsonc
+  {
+    "roles":            { "<角色>": "<selector[:thinking]>" },   // 原始 JSON 值
+    "agentOverrides":   { "<agent>": "<selector[:thinking]>" },
+    "disabledAgents":   ["<agent>"],
+    "agentAdvisor":     { "<agent>": "on|off" },
+    "fallbackChains":   { "<角色|selector>": ["<selector>"] },
+    "agents": [{ "name", "description", "source": "builtin|user",
+                 "defaultModel": ["<selector>"], "defaultThinkingLevel": "<级>|null" }]
+  }
+  ```
+
+  record / 数组条目值类型不作强制（原样透传），外层形状见 §16.2。
+
+- **agent「内置默认」读取顺序**（每条只取一处）：
+  1. `~/.omp/agent/agents/<name>.md` 存在 → 以它的 frontmatter 为默认值；
+  2. 否则取 `omp agents unpack --dir <临时目录> --json` 导出的内置定义
+     （用完删除临时目录；结果按 omp 版本 + 二进制路径缓存在进程内存）。
+  `~/.omp/agent/agents/` 下用户自建的额外 agent md 一并列出，`source:"user"`
+  （UI 标「自定义」）；内置 agent 即使被用户文件覆盖默认值仍为 `source:"builtin"`。
+  列表顺序：内置（按文件名序）在前，用户自建在后。目录不存在或单个文件读取
+  失败 → 静默跳过该文件；`agents unpack` 失败 → `OMP_FAILED`。
+- frontmatter 只解析 `name` / `description` / `model` / `thinkingLevel` 四个顶层键
+  （手写轻量解析，不引 YAML 依赖）：`model` 支持字符串（`model: "@smol"`）、
+  块列表（`model:` + `  - x`）与行内 `["a","b"]` 三种写法，统一归一为字符串数组；
+  引号剥壳（双引号处理 `\\` `\"` `\n`，单引号处理 `''`）；其余键
+  （tools/output 等嵌套结构）忽略。缺 name 用文件名兜底、缺 thinkingLevel 为 null。
+
+### 16.5 `update_model_config { key, value, expected } -> UpdateModelConfigResult`
+
+- `value` / `expected` 为任意 JSON 值；返回 `{ key, value }`（写后复读的新值）。
+- 流程（整体持有 `OmpBusy` 单写门禁，多余的报 `BUSY`）：
+  1. `key` 白名单校验 → 不在表内报 `INVALID_KEY`（不调用 omp）；
+  2. `value` 形状校验（§16.2）→ 不符报 `INVALID_INPUT`（不调用 omp）；
+  3. 复读该 key 现值，与 `expected` **深度比较**（对象按键集合、数组按顺序），
+     不一致 → `CONFLICT`「配置已被外部修改，请刷新后重试」，不写入；
+  4. `omp config set <key> <紧凑 JSON>`（60 秒超时；`require_success` 错误语义）；
+  5. 写后再读校验并返回新值。
+- 前端每块独立「保存 / 还原」+ dirty 状态；保存只写值有变化的 key，
+  逐 key 串行（Agent 表一次保存最多写 3 个 key，中途失败即停止并整体重载，
+  已写入的 key 不回滚）；`CONFLICT` 提示「配置已被外部修改，请刷新」并重新载入。
+- 错误码：`INVALID_KEY`（新）、`INVALID_INPUT`、`CONFLICT`、`BUSY`、`OMP_FAILED`、
+  `TIMEOUT`、`OMP_NOT_FOUND`、`IO`（语义同 §7）。`INVALID_KEY` 仅本命令产生。
+
+### 16.6 前端形态（无新命令）
+
+- 管理视图新增「模型与 Agent」标签页并作为**默认页**。
+- 模型角色行：default 排最前，其后为已有角色（record 顺序）+ 常见角色
+  （default/task/plan/judge/commit/advisor/slow/smol/tiny/memory）；
+  每行 = 模型选择（provider 分组、可搜索，另有「未设置」= 保存时删除该键）
+  + thinking 档位（取所选模型的 `thinkingLevels`，另有「默认」= 无后缀；
+  当前后缀不在档位表时原样保留为额外选项）。值格式 `provider/model[:thinking]`：
+  仅末段为 `[A-Za-z0-9_-]+` 才拆为 thinking 后缀，否则 selector 原样保留。
+- Agent 行：名称（自定义标「自定义」）、内置默认（只读）、模型覆盖
+  （选择器同上，另有「不覆盖」= 保存时删除 `task.agentModelOverrides[name]`）、
+  禁用开关（`task.disabledAgents` 成员）、advisor 三态（默认 = 删键 /
+  on / off）。不在 agent 列表中的旧覆盖 / 禁用 / advisor 条目原样保留。
+- 回退链行：按 key 列出有序 selector，支持添加 / 删除 / 上移 / 下移（按钮），
+  可删除整条链、可新增链（key 从角色或模型 selector 里选）；空链拒绝保存。
+- 页脚提示：「新开的 omp 会话使用新配置；已运行的会话可能需重启后生效」。
+- `?mock=1` 下 `dev/mockBackend.ts` 实现三个命令：白名单外 `INVALID_KEY`、
+  expected 不匹配 `CONFLICT`、`?conflict=update_model_config` 强制冲突、
+  `?fail=` / `?latency=` 沿用（慢加载与强制失败）。
+
+### 16.7 实测记录（omp 18.11.1，2026-10-16）
+
+- `omp models --json`：65 个模型，10.3 秒；字段与 §16.3 一致，无凭据；
+  `thinking` 档位集合有 `minimal/low/medium/high/xhigh/max` 的多种组合。
+- `omp config get <key> --json` → `{"key","value","type","description"}`；
+  5 个 key 的 type 分别为 record/record/array/record/record。
+  `omp config set <key> <json>`：不支持点号子键；只校验外层对象/数组，
+  内层垃圾值（数字、伪 on/off、链条目非数组）会静默写入 → 由本应用 §16.2 拦截。
+- `omp agents unpack --dir <不存在的目录> --json` 会自建目录并写 5 个内置
+  md（task/sonic/scout/reviewer/security-reviewer），frontmatter 含
+  name/description/model/thinkingLevel（如 `model:\n  - "@task"`、
+  `model: "@smol"`；security-reviewer 无 model 与 thinkingLevel）。
+- 沙箱冒烟（`cargo test --test models_sandbox -- --ignored --nocapture`，
+  单测试串行）：真实 HOME 只读 `get_model_config` 仅打印条数（roles 10、
+  overrides 5、disabled 0、advisor 2、chains 9）与 5 个内置 agent 名；
+  随后 `HOME=<临时目录>` 用真实 omp 对 5 个 key 各 set 一遍（含
+  `modelRoles` 的 `:thinking` 后缀、`retry.fallbackChains` 数组值、
+  `task.disabledAgents` 数组），断言 `$HOME/.omp/agent/config.yml` 落盘内容
+  与复读结果一致，并验证旧 expected 写入报 `CONFLICT`。
+- 已知限制：回退链的 key 只能从角色 / 模型 selector 里选，无法新建
+  `provider/*` 通配 key（已有通配 key 正常显示与保存）；一个块里存在
+  脏值（非字符串条目）时该块保存会被 `INVALID_INPUT` 拒绝（点名 key，
+  需在 omp 侧手动修复）；新增角色只能来自常见角色列表。

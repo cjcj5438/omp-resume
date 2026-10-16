@@ -20,6 +20,7 @@ export type ErrorCode =
   | "INVALID_INPUT"
   | "CONFLICT"
   | "META_CORRUPT"
+  | "INVALID_KEY"
   | "UNKNOWN";
 
 export interface AppError {
@@ -423,4 +424,46 @@ export interface SessionMetaInput {
   alias?: string | null;
   tags: string[];
   note?: string | null;
+}
+
+// 模型与 Agent 配置（CONTRACT §4.36–§4.38）。
+
+/** `list_models` 单行：精简模型信息，不含凭据字段。 */
+export interface ModelInfo {
+  selector: string;
+  provider: string;
+  id: string;
+  name: string;
+  thinkingLevels: string[];
+  contextWindow: number | null;
+  reasoning: boolean;
+  costInput: number | null;
+  costOutput: number | null;
+}
+
+export type AgentSource = "builtin" | "user";
+
+/** agent 内置默认值（只读展示）；source 为 user 时是用户自建 agent。 */
+export interface AgentDefinition {
+  name: string;
+  description: string;
+  source: AgentSource;
+  defaultModel: string[];
+  defaultThinkingLevel: string | null;
+}
+
+/** 白名单 config key 的原始值；条目值保持 unknown，未识别的键/值原样保留。 */
+export interface ModelConfig {
+  roles: Record<string, unknown>;
+  agentOverrides: Record<string, unknown>;
+  disabledAgents: unknown[];
+  agentAdvisor: Record<string, unknown>;
+  fallbackChains: Record<string, unknown>;
+  agents: AgentDefinition[];
+}
+
+/** `update_model_config` 返回：写后复读的新值。 */
+export interface UpdateModelConfigResult {
+  key: string;
+  value: unknown;
 }

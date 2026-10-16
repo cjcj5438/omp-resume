@@ -1,0 +1,153 @@
+/* 「模型与 Agent」面板专用样式；通用管理类沿用 App.css。 */
+
+.models-agents .block-section {
+  border-top: 1px solid var(--border, #2a2a2e);
+  padding: 14px 0;
+}
+
+.models-agents .block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.models-agents .block-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.models-agents .agent-desc {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.models-agents .agent-thinking {
+  margin-left: 8px;
+}
+
+.selector-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-select {
+  min-width: 88px;
+}
+
+.model-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.model-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 8px;
+}
+
+.model-picker-pop {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  width: 340px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  background: var(--bg-panel, #1c1c20);
+  border: 1px solid var(--border, #2a2a2e);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.model-picker-list,
+.model-picker-list ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.model-picker-group {
+  font-size: 12px;
+  color: var(--muted, #8a8a92);
+  padding: 6px 4px 2px;
+}
+
+.model-picker-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+.model-picker-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.model-picker-item-active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.chain-row {
+  border: 1px solid var(--border, #2a2a2e);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.chain-key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chain-entries {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.chain-entries li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.chain-entry-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chain-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.chain-add .filter-input,
+.chain-add select {
+  max-width: 320px;
+}

@@ -69,8 +69,12 @@ export function McpPanel(props: {
   const [editing, setEditing] = useState<EditState | null>(null);
   const [deleting, setDeleting] = useState<{ scope: McpScope; name: string } | null>(null);
   const alive = useRef(true);
-  useEffect(() => () => {
-    alive.current = false;
+  useEffect(() => {
+    // StrictMode 双挂载会先跑一次清理；不复位会导致首次加载被跳过、永远停在加载中。
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
 
   const projectCwd = scopeKey === "user" ? null : scopeKey;

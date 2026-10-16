@@ -22,6 +22,7 @@ pub mod mcp_config;
 pub mod meta;
 pub mod occupant;
 pub mod omp_cli;
+pub mod omp_models;
 pub mod omp_plugins;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
 pub mod ops;
@@ -308,7 +309,10 @@ pub fn run() {
             omp_plugins::omp_marketplace_add,
             omp_plugins::omp_marketplace_remove,
             omp_plugins::omp_skills_list,
-            omp_plugins::omp_skills_update
+            omp_plugins::omp_skills_update,
+            omp_models::list_models,
+            omp_models::get_model_config,
+            omp_models::update_model_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

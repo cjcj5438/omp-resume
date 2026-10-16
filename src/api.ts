@@ -26,6 +26,8 @@ import type {
   McpSaveServerRequest,
   McpServerRaw,
   McpSetEnabledRequest,
+  ModelConfig,
+  ModelInfo,
   OpenInItermRequest,
   PromptHistoryEntry,
   OmpVersion,
@@ -41,6 +43,7 @@ import type {
   TreeData,
   SessionUsage,
   UsageStats,
+  UpdateModelConfigResult,
 } from "./types";
 
 const KNOWN_CODES: Record<string, true> = {
@@ -60,6 +63,7 @@ const KNOWN_CODES: Record<string, true> = {
   INVALID_INPUT: true,
   CONFLICT: true,
   META_CORRUPT: true,
+  INVALID_KEY: true,
   UNKNOWN: true,
 };
 
@@ -279,4 +283,25 @@ export function setSessionMeta(
   expectedRevision: number,
 ): Promise<MetaSnapshot> {
   return call("set_session_meta", { sessionId, meta, expectedRevision });
+}
+
+export function listModels(): Promise<ModelInfo[]> {
+  return call("list_models");
+}
+
+export function getModelConfig(): Promise<ModelConfig> {
+  return call("get_model_config");
+}
+
+/** 白名单 key 的读-比-写；`expected` 为前端读到的原值，冲突时后端报 `CONFLICT`。 */
+export function updateModelConfig(req: {
+  key: string;
+  value: unknown;
+  expected: unknown;
+}): Promise<UpdateModelConfigResult> {
+  return call("update_model_config", {
+    key: req.key,
+    value: req.value,
+    expected: req.expected,
+  });
 }

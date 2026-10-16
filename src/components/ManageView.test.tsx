@@ -85,12 +85,15 @@ beforeEach(() => {
 });
 
 describe("ManageView 页签", () => {
-  it("默认插件页，可切 Skills 与 MCP，返回会话回调", async () => {
+  it("默认模型与 Agent 页，可切 插件 / Skills / MCP，返回会话回调", async () => {
     await installMockBackend();
     const { onBack } = renderManageView();
 
     expect(screen.getByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "插件", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "模型与 Agent", selected: true })).toBeInTheDocument();
+    expect(await screen.findByText("模型角色")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("已安装插件");
 
     fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
@@ -130,6 +133,7 @@ describe("全部更新", () => {
     const calls: string[] = [];
     stubOmpCalls(calls);
     const { onToast, onCheckOmp } = renderManageView();
+    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("尚未安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -155,6 +159,7 @@ describe("全部更新", () => {
       error: { code: "OMP_FAILED", message: "升级炸了" },
     });
     const { onToast, onCheckOmp } = renderManageView();
+    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("尚未安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -185,6 +190,7 @@ describe("全部更新", () => {
   it("omp 已是最新时只记一行，不开对话框", async () => {
     await installMockBackend();
     const { onToast, onCheckOmp } = renderManageView();
+    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("已安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -198,6 +204,7 @@ describe("全部更新", () => {
     window.history.replaceState({}, "", "/?latency=100");
     await installMockBackend();
     renderManageView();
+    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("已安装插件");
 
     fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
