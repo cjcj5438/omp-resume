@@ -22,6 +22,7 @@ pub mod omp_plugins;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
 pub mod ops;
 pub mod sessions;
+pub mod usage;
 
 use crate::model::{AppError, ErrorCode};
 
@@ -203,9 +204,12 @@ pub fn run() {
         .manage(cfg)
         .manage(omp_cli::OmpBusy::default())
         .manage(mcp_config::McpWriteState::default())
+        .manage(std::sync::Arc::new(usage::UsageCache::default()))
         .invoke_handler(tauri::generate_handler![
             get_config,
             list_sessions,
+            usage::get_session_usage,
+            usage::get_usage_stats,
             get_conversation,
             get_tree,
             check_session,

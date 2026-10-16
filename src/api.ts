@@ -35,6 +35,8 @@ import type {
   PluginUpgradeResult,
   SkillsListResult,
   TreeData,
+  SessionUsage,
+  UsageStats,
 } from "./types";
 
 const KNOWN_CODES: Record<string, true> = {
@@ -225,4 +227,12 @@ export function deleteMcpServer(req: McpDeleteServerRequest): Promise<McpSaveRes
     name: req.name,
     expectedRevision: req.expectedRevision,
   });
+}
+
+export function getSessionUsage(req: { path: string }): Promise<SessionUsage> {
+  return call("get_session_usage", { path: req.path });
+}
+
+export function getUsageStats(req: { sinceDays?: number | null } = {}): Promise<UsageStats> {
+  return call("get_usage_stats", { sinceDays: req.sinceDays ?? null });
 }

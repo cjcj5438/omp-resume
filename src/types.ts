@@ -338,3 +338,41 @@ export interface SkillsListResult {
   skills: SkillSummary[];
   warnings: string[];
 }
+
+/** 只读用量统计；USD，沿 fork 链归属，详见 CONTRACT。 */
+export interface UsageTokens {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export interface UsageCost {
+  total: number;
+  main: number;
+  background: number;
+  subagent: number;
+}
+
+export interface UsageModel {
+  provider: string;
+  model: string;
+  messages: number;
+  cost: number;
+  tokens: UsageTokens;
+}
+
+export interface SessionUsage {
+  messages: { user: number; assistant: number };
+  tokens: UsageTokens;
+  cost: UsageCost;
+  models: UsageModel[];
+}
+
+export interface UsageStats {
+  total: SessionUsage;
+  byProject: { cwd: string; cost: number; tokens: UsageTokens; sessions: number }[];
+  byModel: UsageModel[];
+  byDay: { date: string; cost: number; tokens: UsageTokens }[];
+}

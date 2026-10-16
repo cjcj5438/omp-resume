@@ -17,6 +17,7 @@ import {
   generateLargeConversation,
   type FixtureSession,
 } from "./fixtures";
+import { mockSessionUsage, mockUsageStats } from "./usageMock";
 
 interface FailAs {
   code: string;
@@ -328,6 +329,14 @@ export async function installMockBackend(): Promise<MockHandle> {
         };
       case "list_sessions":
         return buildListResult(sessions);
+      case "get_session_usage": {
+        const s = find(args["path"] as string);
+        if (!s) throw err("NOT_FOUND", "会话文件不存在");
+        if (!s.summary.formatSupported) throw err("UNSUPPORTED_FORMAT", "该会话格式暂不支持用量统计");
+        return structuredClone(mockSessionUsage);
+      }
+      case "get_usage_stats":
+        return mockUsageStats((args["sinceDays"] as number | null) ?? null);
       case "check_session": {
         const s = find(args["path"] as string);
         if (!s) throw err("NOT_FOUND", "会话文件不存在");

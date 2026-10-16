@@ -156,6 +156,7 @@ describe("从节点继续", () => {
     fireEvent.click(screen.getByRole("tab", { name: "树" }));
     // 初始选中 = leaf（bx-L「当前位置」）
     await screen.findByText("当前位置");
+    await waitFor(() => expect(screen.getByRole("button", { name: "从此节点继续" })).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "从此节点继续" }));
     const dialog = screen.getByRole("dialog");

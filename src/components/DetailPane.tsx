@@ -8,6 +8,7 @@ import { copyText } from "../clipboard";
 import { ConversationView } from "./ConversationView";
 import { TreeView } from "./TreeView";
 import { SessionBadges } from "./ui";
+import { UsageSummary } from "./UsageSummary";
 
 interface DetailPaneProps {
   session: SessionSummary | null;
@@ -116,6 +117,7 @@ export function DetailPane({
               </span>
             ) : null}
           </div>
+          <UsageSummary path={session.path} supported={session.formatSupported} revision={`${session.modifiedAt}:${session.sizeBytes}:${refreshKey}`} />
           {!session.formatSupported ? (
             <div className="banner banner-warn">
               该会话格式（版本 {session.version ?? "?"}）暂不支持预览，仍可继续或删除

@@ -18,6 +18,8 @@ interface SidebarProps {
   onOpenCheatSheet: () => void;
   manageActive: boolean;
   onToggleManage: () => void;
+  statsActive: boolean;
+  onToggleStats: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   selectedPath: string | null;
@@ -42,6 +44,8 @@ export function Sidebar({
   onOpenCheatSheet,
   manageActive,
   onToggleManage,
+  statsActive,
+  onToggleStats,
   checked,
   onToggleCheck,
   selectedPath,
@@ -66,6 +70,9 @@ export function Sidebar({
         />
         <button type="button" className="btn" aria-pressed={manageActive} onClick={onToggleManage}>
           管理
+        </button>
+        <button type="button" className="btn" aria-pressed={statsActive} onClick={onToggleStats}>
+          统计
         </button>
         <button type="button" className="btn" onClick={onOpenCheatSheet}>
           速查

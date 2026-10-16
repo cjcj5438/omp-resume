@@ -727,3 +727,90 @@ bashExecution（无 content 数组）与 developer：
   如遇上游变更以后端探测单测为准。
 - `open_in_iterm` 用 bare `omp`（走 PATH）；若用户 PATH 无 omp，
   后续 worker 可在 CONTRACT 修订中改用 `~/.local/bin/omp` 兜底。
+
+## 12. 用量与花费统计（只读，omp 18.11.1）
+
+本节新增统计能力，取代开篇「无统计」的旧范围声明；不改动既有会话浏览、树与写命令语义。
+不调用 LLM，不启动 omp，不读取 models.yml / models.json 或其他凭据；绝不写入会话 JSONL。
+
+### 12.1 命令与类型
+
+- `get_session_usage { path: string } -> SessionUsage`：沿用 §6 顶层路径校验，
+  返回此会话归属的全部历史（非 active 路径），包含 sibling 附件目录内递归的子代理 JSONL。
+- `get_usage_stats { sinceDays?: number|null } -> UsageStats`：null / 省略为全部，
+  UI 默认传 30。sinceDays 为非负 u32，按**每条消息/后台调用自身时间**与当前时刻减 N×24 小时比较，
+  不是按文件 mtime；时间缺失条目计入全部，但无法进入限时范围或按天表。
+- `UsageTokens { input, output, cacheRead, cacheWrite, total }`：非负整数；
+  total 优先使用 usage.totalTokens，缺失则四项相加；reasoningTokens 不重复加到输出或总数。
+- `UsageCost { total, main, background, subagent }`：USD 浮点数，
+  total = main + background + subagent；直接用上游 usage.cost.total，缺失则 cost 四项相加，
+  无 usage 时为 0，不读取价目表、不自行估价。
+- `UsageMessages { user, assistant }`：归属后全历史中对应角色的消息数（含子代理），
+  toolResult / custom / developer 不计消息数；model_usage 不是 assistant 消息。
+- `UsageModel { provider, model, messages, cost, tokens }`：provider/model 缺失为空字符串；
+  messages 为 assistant + model_usage 的调用条数（包括无 usage 的 assistant）。
+- `SessionUsage { messages: UsageMessages, tokens: UsageTokens, cost: UsageCost, models: UsageModel[] }`。
+- `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[], byDay: UsageDay[] }`；
+  `UsageProject { cwd, cost, tokens, sessions }`，sessions 为范围内有归属条目的顶层会话数；
+  `UsageDay { date, cost, tokens }`，date 为**本机时区** YYYY-MM-DD（本节按日标签例外于 §0 的 UTC 时间字符串规则）。
+  cwd 取顶层 owner 的 header.cwd。项目/模型按花费降序（相同时按名称），按天按日期降序。
+  按天表不包含无合法时间的条目，但总计和项目/模型表的全部范围仍保留其花费。
+
+### 12.2 口径与 fork 归属
+
+1. 顶层主文件 `message.role=assistant` 的 usage.cost →「主对话」。
+2. **所有 `model_usage`（含嵌套文件里的）→「后台」**。
+3. sibling 目录递归 JSONL 的 assistant usage.cost →「子代理」；
+   这些文件只作为所属顶层会话的成本来源，不额外生成统计会话。
+4. 不从 task / 其他工具的 toolResult、文本、details、progress 里提取任何 cost，
+   因为那是工具状态/转述而非独立模型账单；账单只认以上两种条目形状。
+5. **绝不全局按 8 位 entry id 去重**。仅沿 header.parentSession 的可解析、仍存在的 fork 祖先链找复制来源。
+   parentSession 可为已扫描会话 id 或会话路径；previousSessionFiles 是迁移指针，不建立 fork 边。
+   同 id 且时间、parentId、角色/类型、provider/model、tokens/cost 一致才确认复制，
+   条目归链上最早的仍存在会话（父文件正常计，子文件跳过）。链外同 id 各自计入，
+   链内同 id 但内容不符也视为无法确认来源而计自身。
+6. 父文件删除 / 无法解析 / 不在安全扫描集合 / 血缘成环 / 时间缺失，无法确认来源则计自身；
+   祖先中间文件已删时不猜测跨过它的血缘。统计筛时间之前先确定归属，避免 fork 复制重复入账。
+7. 只支持 header.version=3，详情非 v3 报 `UNSUPPORTED_FORMAT`，前端静默隐藏；
+   统计忽略非 v3 顶层会话及其附件。坏 JSON、非 UTF-8 行、形状/字段类型损坏行跳过；
+   合法 user/assistant 无 usage 仍计消息数、tokens/cost 为 0。
+
+### 12.3 IO、缓存与错误
+
+逐行复用 buffer，以 serde 最小字段结构解析，content/details 等直接跳过，不构造完整 Value 树。
+两个命令的阻塞扫描均在 spawn_blocking。进程内缓存只保存解析结果与索引，不落盘：
+key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + inode。
+每次请求重新枚举全部顶层/嵌套 JSONL 并检查各文件 metadata（比「目录最新 mtime + 文件数」更严格，
+能覆盖旧嵌套文件追加、删除/新建及同尺寸替换），读前/读后 metadata 不一致的解析不入缓存。
+运行中的会话持续追加时下次调用必失效；这是读取过程的快照，不声称跨文件事务一致性。
+目录/文件软链接不跟随；子文件 canonicalize 后必须仍在会话根及其 owner sibling 目录内。
+失效路径 `NOT_FOUND`、顶层路径不合法/逃逸 `OUTSIDE_ROOT`、其他 IO 失败 `IO`；
+详情所有失败静默隐藏，统计有加载/空数据/错误与重试状态。
+
+### 12.4 真实数据只读调查（2026-10-16）
+
+方法：只遍历 ~/.omp/agent/sessions 的顶层与 sibling 目录 JSONL，逐行解析，
+按 entry id 收集「文件、行号、type、原文规范化内容」；分别比较同文件重复、跨文件完全复制、
+跨无关文件同 id 不同内容；再对照 header.parentSession 与 previousSessionFiles，未读任何模型凭据。
+
+- 首次快照：68 顶层 + 269 嵌套（相较简报 264，运行中会继续增加），无坏行。
+- 顶层有 173 种重复 entry id，均为唯一 fork 父子复制，**103 次 message id 重复全部来自这对 fork**：
+  48 assistant、51 toolResult、4 user；其余重复为 custom/配置等类型及 3 条 model_usage。
+  父会话 `01a134a7-…` → 子会话 `01a134fa-…`，复制条目内容完全一致；没有同文件内重复。
+- 全部顶层 + 嵌套另发现 **1 个跨无关 advisor 文件真实撞 id：a417d51d**，
+  分别为不同 owner 会话 advisor 中的 user 与 toolResult，时间/内容不同，无 fork 血缘；
+  **不去重**。单测还覆盖两个无关 advisor 即使 id/时间/用量完全相同也分别计费。
+- previousSessionFiles 仅 1 个迁移记录，不建立去重关系；嵌套 parentSession 也有指向 owner 的正常情况，
+  不据此合并不相同条目。
+- task 核实方法：检查所有 toolName=task 的 toolResult.details 中递归 numeric cost，
+  并与 sibling JSONL 的 assistant/model_usage 对照。首次快照有 47 条带 cost 字样的 task toolResult，
+  74 个 cost 数值均为 progress.*.cost=0，results=[]（async 状态），并非新增账单；
+  这些状态不参与花费提取，嵌套 usage 单独求和，杜绝后续非零转述与嵌套重复入账。
+- fork 复制涉及主对话 $0.27746302、后台 $0.00673590，去重后总账相应扣除。
+  首次 Python 只读粗合计（去重前）：主 $124.66452912、顶层后台 $8.89896352、
+  嵌套 assistant $25.29857611、嵌套后台 $0.24156056；与简报的出入来自运行中的追加与嵌套后台纳入。
+
+- Rust 实现只读回归（同日稍后，debug 构建）：337 文件 = 68 顶层 + 269 嵌套；
+  去重后主对话 **$124.49429938**、后台（含嵌套）**$9.35127952**、子代理 **$26.77144350**，
+  总计 **$160.61702240**，Token **2,131,166,844**；冷扫描 **2.244 秒**，缓存再扫描 **75.94 毫秒**。
+  比首次快照仍有少量增量，来自同时运行的会话追加；上述两次计时均只读、不改写原始数据。

@@ -746,3 +746,75 @@ mod tests {
         assert!(debug.contains("secret"), "{debug}");
     }
 }
+
+// 用量统计（只读，CONTRACT「用量与花费统计」）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTokens {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageCost {
+    pub total: f64,
+    pub main: f64,
+    pub background: f64,
+    pub subagent: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMessages {
+    pub user: u64,
+    pub assistant: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+    pub messages: UsageMessages,
+    pub tokens: UsageTokens,
+    pub cost: UsageCost,
+    pub models: Vec<UsageModel>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageModel {
+    pub provider: String,
+    pub model: String,
+    pub messages: u64,
+    pub cost: f64,
+    pub tokens: UsageTokens,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageProject {
+    pub cwd: String,
+    pub cost: f64,
+    pub tokens: UsageTokens,
+    pub sessions: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDay {
+    pub date: String,
+    pub cost: f64,
+    pub tokens: UsageTokens,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageStats {
+    pub total: SessionUsage,
+    pub by_project: Vec<UsageProject>,
+    pub by_model: Vec<UsageModel>,
+    pub by_day: Vec<UsageDay>,
+}

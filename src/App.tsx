@@ -24,6 +24,7 @@ import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pi
 import { Sidebar } from "./components/Sidebar";
 import { DetailPane } from "./components/DetailPane";
 import { ManageView } from "./components/ManageView";
+import { StatsView } from "./components/StatsView";
 import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetDialog } from "./components/CheatSheetDialog";
@@ -46,7 +47,7 @@ function App() {
   const [deleteTargets, setDeleteTargets] = useState<SessionSummary[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
-  const [view, setView] = useState<"sessions" | "manage">("sessions");
+  const [view, setView] = useState<"sessions" | "manage" | "stats">("sessions");
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
   // 手动重新检查：重启应用即可。
   const [update, setUpdate] = useState<Update | null>(null);
@@ -245,6 +246,8 @@ function App() {
         onRefresh={() => void load()}
         manageActive={view === "manage"}
         onToggleManage={() => setView((v) => (v === "manage" ? "sessions" : "manage"))}
+        statsActive={view === "stats"}
+        onToggleStats={() => setView((v) => (v === "stats" ? "sessions" : "stats"))}
         checked={checked}
         onToggleCheck={(path, on) =>
           setChecked((prev) => {
@@ -273,7 +276,7 @@ function App() {
           onBack={() => setView("sessions")}
           onCheckOmp={handleCheckOmp}
         />
-      ) : (
+      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} /> : (
         <DetailPane
           session={selected}
           gone={selectedGone}
