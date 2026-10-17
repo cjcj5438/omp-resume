@@ -1,6 +1,6 @@
 //! 托盘图标 / 下拉菜单装配与事件路由（需 tauri `tray-icon` 特性）。
 //!
-//! - 图标：单色模板图（`icons/tray.png`，黑 + alpha），`icon_as_template(true)`；
+//! - 图标：单色模板图（`icons/tray-icon.png`，黑 + alpha），`icon_as_template(true)`；
 //! - 菜单内容来自 [`crate::menubar::menu::MenuModel`]，只在模型变化时重建；
 //! - 事件：会话行 = 聚焦 iTerm 标签；勾选 = 设置落盘；退出 = 真退出。
 

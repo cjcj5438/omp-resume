@@ -2,7 +2,7 @@
  * 「模型与 Agent」页的视图模型（纯函数）：角色卡合并、兜底归属、Agent 实际模型
  * 解析、兜底状态文案，以及草稿的整形与写回。
  *
- * 语义依据见 CONTRACT §16.7「语义调研」（2026-10-16）：角色清单与别名解析来自
+ * 语义依据见 CONTRACT §16.8「兜底语义调研」（2026-10-16）：角色清单与别名解析来自
  * omp 二进制字符串反编译 + 沙箱验证；未验证的匹配细节在文案里用保守措辞。
  */
 import type { AgentDefinition, ModelConfig, ModelInfo, RetryStatus } from "./types";
