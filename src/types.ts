@@ -401,12 +401,82 @@ export interface SessionUsage {
   models: UsageModel[];
 }
 
+/** 用量统计范围：今天（自然日）/ 近 24 小时 / 近 7 天 / 近 30 天 / 全部。 */
+export type UsageRange = "today" | "24h" | "7d" | "30d" | "all";
+
+export type UsageTrendUnit = "hour" | "day";
+
+export interface UsageTrendPoint {
+  /** hour 桶为本地时区 "YYYY-MM-DD HH"，day 桶为 "YYYY-MM-DD"。 */
+  key: string;
+  cost: number;
+  tokens: UsageTokens;
+}
+
+export interface UsageTrend {
+  unit: UsageTrendUnit;
+  points: UsageTrendPoint[];
+}
+
 export interface UsageStats {
   total: SessionUsage;
   byProject: { cwd: string; cost: number; tokens: UsageTokens; sessions: number }[];
   byModel: UsageModel[];
-  byDay: { date: string; cost: number; tokens: UsageTokens }[];
+  trend: UsageTrend;
 }
+
+/** 运行看板错误类型。 */
+export type ErrorKind = "quota" | "rate_limit" | "auth" | "timeout" | "network" | "server" | "other";
+
+export interface UsageHealthError {
+  time: number;
+  provider: string;
+  model: string;
+  kind: ErrorKind;
+  message: string;
+}
+
+export interface UsageHealthFallback {
+  time: number;
+  from: { provider: string; model: string } | null;
+  to: { provider: string; model: string };
+}
+
+export interface UsageHealthTimelinePoint {
+  key: string;
+  requests: number;
+  errors: number;
+  fallbacks: number;
+  cacheRead: number;
+  promptTokens: number;
+}
+
+export interface UsageHealth {
+  requests: number;
+  errors: {
+    /** 不含 aborted；aborted 为用户中断，另计。 */
+    total: number;
+    aborted: number;
+    byKind: { kind: ErrorKind; count: number }[];
+    /** ≤20 条，新→旧。 */
+    recent: UsageHealthError[];
+  };
+  fallbacks: {
+    total: number;
+    byTarget: { provider: string; model: string; count: number }[];
+    recent: UsageHealthFallback[];
+  };
+  cache: {
+    /** 0..1；null = 上游不报缓存或无数据。 */
+    hitRate: number | null;
+    read: number;
+    write: number;
+    input: number;
+    byModel: { provider: string; model: string; requests: number; hitRate: number | null }[];
+  };
+  timeline: { unit: UsageTrendUnit; points: UsageHealthTimelinePoint[] };
+}
+
 // 会话别名 / 标签 / 备注（应用侧 meta.json，以会话 id 为键）。
 export interface SessionMeta {
   alias: string | null;

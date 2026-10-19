@@ -42,6 +42,8 @@ import type {
   SkillsListResult,
   TreeData,
   SessionUsage,
+  UsageHealth,
+  UsageRange,
   UsageStats,
   UpdateModelConfigResult,
 } from "./types";
@@ -270,9 +272,14 @@ export function getSessionUsage(req: { path: string }): Promise<SessionUsage> {
   return call("get_session_usage", { path: req.path });
 }
 
-export function getUsageStats(req: { sinceDays?: number | null } = {}): Promise<UsageStats> {
-  return call("get_usage_stats", { sinceDays: req.sinceDays ?? null });
+export function getUsageStats(req: { range: UsageRange }): Promise<UsageStats> {
+  return call("get_usage_stats", { range: req.range });
 }
+
+export function getUsageHealth(req: { range: UsageRange }): Promise<UsageHealth> {
+  return call("get_usage_health", { range: req.range });
+}
+
 export function getMeta(): Promise<MetaSnapshot> {
   return call("get_meta");
 }

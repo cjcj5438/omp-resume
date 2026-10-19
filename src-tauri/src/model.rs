@@ -1054,12 +1054,43 @@ pub struct UsageProject {
     pub sessions: u64,
 }
 
+/// 用量时间范围（JSON 为 "today" | "24h" | "7d" | "30d" | "all"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UsageRange {
+    #[serde(rename = "today")]
+    Today,
+    #[serde(rename = "24h")]
+    Last24Hours,
+    #[serde(rename = "7d")]
+    Last7Days,
+    #[serde(rename = "30d")]
+    Last30Days,
+    #[serde(rename = "all")]
+    All,
+}
+
+/// 趋势 / 时间线分桶单位（JSON 为 "hour" | "day"）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrendUnit {
+    Hour,
+    #[default]
+    Day,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UsageDay {
-    pub date: String,
+pub struct UsageTrendPoint {
+    pub key: String,
     pub cost: f64,
     pub tokens: UsageTokens,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrend {
+    pub unit: TrendUnit,
+    pub points: Vec<UsageTrendPoint>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1068,5 +1099,128 @@ pub struct UsageStats {
     pub total: SessionUsage,
     pub by_project: Vec<UsageProject>,
     pub by_model: Vec<UsageModel>,
-    pub by_day: Vec<UsageDay>,
+    pub trend: UsageTrend,
+}
+
+/// 运行错误分类（启发式，见 usage.rs `classify_error`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    Quota,
+    RateLimit,
+    Auth,
+    Timeout,
+    Network,
+    Server,
+    #[default]
+    Other,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorKindCount {
+    pub kind: ErrorKind,
+    pub count: u64,
+}
+
+/// 最近错误：time 为 epoch 毫秒；message 已截断为单行 ≤200 字符并脱敏。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorRecent {
+    pub time: i64,
+    pub provider: String,
+    pub model: String,
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+/// 错误统计：total 只计 stopReason=="error"；aborted（用户中断）单独计，不含在内。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageErrors {
+    pub total: u64,
+    pub aborted: u64,
+    pub by_kind: Vec<ErrorKindCount>,
+    pub recent: Vec<ErrorRecent>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelRef {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FallbackTarget {
+    pub provider: String,
+    pub model: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FallbackRecent {
+    pub time: i64,
+    pub from: Option<ModelRef>,
+    pub to: ModelRef,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageFallbacks {
+    pub total: u64,
+    pub by_target: Vec<FallbackTarget>,
+    pub recent: Vec<FallbackRecent>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheByModel {
+    pub provider: String,
+    pub model: String,
+    pub requests: u64,
+    pub hit_rate: Option<f64>,
+}
+
+/// 缓存统计：hitRate = cacheRead / (input + cacheRead + cacheWrite)；
+/// 分母为 0，或范围内 cacheRead + cacheWrite 全为 0（上游不报缓存）时为 null。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageCacheStats {
+    pub hit_rate: Option<f64>,
+    pub read: u64,
+    pub write: u64,
+    pub input: u64,
+    pub by_model: Vec<CacheByModel>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelinePoint {
+    pub key: String,
+    pub requests: u64,
+    pub errors: u64,
+    pub fallbacks: u64,
+    pub cache_read: u64,
+    pub prompt_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTimeline {
+    pub unit: TrendUnit,
+    pub points: Vec<TimelinePoint>,
+}
+
+/// 运行健康统计：requests = assistant（含子代理，含 error/aborted）+ model_usage。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageHealth {
+    pub requests: u64,
+    pub errors: UsageErrors,
+    pub fallbacks: UsageFallbacks,
+    pub cache: UsageCacheStats,
+    pub timeline: UsageTimeline,
 }

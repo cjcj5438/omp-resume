@@ -15,7 +15,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
 import type { AgentDefinition, AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
-import type { PromptHistoryEntry } from "../types";
+import type { PromptHistoryEntry, UsageRange } from "../types";
 import {
   FIXTURE_SESSIONS,
   buildListResult,
@@ -23,7 +23,7 @@ import {
   generateLargeConversation,
   type FixtureSession,
 } from "./fixtures";
-import { mockSessionUsage, mockUsageStats } from "./usageMock";
+import { mockEmptyUsageHealth, mockEmptyUsageStats, mockSessionUsage, mockUsageHealth, mockUsageStats } from "./usageMock";
 
 interface FailAs {
   code: string;
@@ -487,7 +487,12 @@ export async function installMockBackend(): Promise<MockHandle> {
         return structuredClone(mockSessionUsage);
       }
       case "get_usage_stats":
-        return mockUsageStats((args["sinceDays"] as number | null) ?? null);
+      case "get_usage_health": {
+        const range = (args["range"] as UsageRange | undefined) ?? "30d";
+        const empty = params.get("usage") === "empty";
+        if (cmd === "get_usage_health") return (empty ? mockEmptyUsageHealth : mockUsageHealth)(range);
+        return (empty ? mockEmptyUsageStats : mockUsageStats)(range);
+      }
       case "check_session": {
         const s = find(args["path"] as string);
         if (!s) throw err("NOT_FOUND", "会话文件不存在");

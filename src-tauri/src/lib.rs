@@ -326,6 +326,7 @@ pub fn run() {
             list_sessions,
             usage::get_session_usage,
             usage::get_usage_stats,
+            usage::get_usage_health,
             get_conversation,
             get_tree,
             check_session,
