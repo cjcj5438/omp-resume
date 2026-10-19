@@ -1138,8 +1138,12 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   另有「未设置」= 保存时删除该键）+ thinking 分段控件（取所选模型的
   `thinkingLevels`，另有「默认」= 无后缀；当前后缀不在档位表时原样保留为
   额外选项）+ **同卡内的有序「兜底模型」**（chain key = 角色名的那条）：
-  ①②③ 顺序 chip（名称 + 档位徽章 + ↑↓✕ 小图标按钮，aria-label + title，
-  hover/聚焦增强），读作「主模型出错时，按顺序改用」。添加入口是每区一个
+  ①②③ 顺序 chip（名称 + provider 徽章 + 档位徽章 + ↑↓✕ 小图标按钮，
+  aria-label + title，hover/聚焦增强），读作「主模型出错时，按顺序改用」。
+  provider 徽章一律取 `ModelInfo.provider`（omp 的 `name` 只对部分 provider
+  自带「(账号)」后缀，不解析、不依赖它判断供应商；未知 selector 无此徽章）；
+  档位徽章对带 `:thinking` 条目显示后缀、对裸条目与通配显示「继承」
+  （语义见 §16.8，title 说明），不再省略。添加入口是每区一个
   「＋ 添加兜底模型」小按钮，点开面板：ModelPicker 弹层选模型 → 思考强度
   分段（默认「继承」）→ 添加；「使用自定义值…」承载手动输入 / 通配 key
   （如 `p1/*`）；空链拒绝保存（点名，不发请求）。
@@ -1204,6 +1208,11 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 已知限制：一个 chain 里存在脏值（非字符串条目）时该 chain 保存会被
   `INVALID_INPUT` 拒绝（点名，需在 omp 侧手动修复）；新增角色只能来自
   常见角色列表；`provider/*` 通配 key 可经手动输入新建（与旧限制不同）。
+- （2026-10-18，omp 18.12.2，只读 `omp models --json`）120 条模型、6 个
+  provider：`name` 只对**部分账号**自带「(账号)」后缀（本机 10 条带、其余
+  不带；个别条目的括号里是产品名而非账号，如「… (New)」），不能靠 `name`
+  判断供应商；另有 4 条 `thinking: null`，档位表为空。据此 chip 一律显示
+  `ModelInfo.provider` 徽章，档位徽章不再省略（§16.6）。
 
 ### 16.8 兜底语义调研（2026-10-16，omp 18.11.2；UI 文案依据）
 
