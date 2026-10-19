@@ -1162,7 +1162,19 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   §16.8 的角色回退链（advisor→slow、memory→tiny→smol→default），
   解析不到显示「omp 内置默认」。能力类角色（image/web/speech/dictation/
   vision/judge）默认折叠在「更多角色」里（已配置的成卡、未配置的紧凑行）。
-- **Agent 行**：名称（自定义标「自定义」）+ 说明 + 「当前使用」（行内：
+- **Agent 编排流程图**（只读，纯前端；不写配置、不加后端命令）：Agent 区顶部
+  一张手绘 SVG 流程图（`AgentFlow.tsx`，不引图表库，viewBox 宽度固定、高度随
+  agent 数；配色走主题变量）——左「主代理（编排器）」显示 default 角色的当前
+  模型（未配置显示「omp 内置默认」），派发总线指向右侧每个 agent 节点；节点 =
+  中文标签 +「当前使用：<模型> · <档位>」+ 状态 pill（已停用 = 虚线描边 /
+  顾问开 / 顾问关 / 自定义）；底部虚线「结果回传」回到主代理；节点 `<title>`
+  悬停给完整职责与来源。**中文职责表 `AGENT_INFO`**（roleCards.ts）：内置
+  6 个（task/sonic/scout/reviewer/security-reviewer/seance）是 omp 英文
+  description 的意译；自定义 agent 用 frontmatter 的 description 原文
+  （标签回退「自定义」/「内置」）。不解析 `spawns`/`tools`（语义未验证，
+  不展示）。
+- **Agent 行**：名称（自定义标「自定义」）+ 说明（内置走 `AGENT_INFO`
+  中文职责，`title` 保留原文）+ 「当前使用」（行内：
   覆盖模型 / 内置默认解析结果 / 跟随当前会话模型；`@角色` 别名解析成
   该角色的当前模型，如「内置默认 @smol → 轻快任务角色」；未知值标
   「未知值 · 保留」）+ 改用模型（「不改用」= 保存时删除覆盖条目）+
@@ -1212,7 +1224,10 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   provider：`name` 只对**部分账号**自带「(账号)」后缀（本机 10 条带、其余
   不带；个别条目的括号里是产品名而非账号，如「… (New)」），不能靠 `name`
   判断供应商；另有 4 条 `thinking: null`，档位表为空。据此 chip 一律显示
-  `ModelInfo.provider` 徽章，档位徽章不再省略（§16.6）。
+  `ModelInfo.provider` 徽章，档位徽章不再省略（§16.6）。同版本
+  `omp agents unpack` 实测内置 agent 为 6 个（新增 seance，含
+  `spawns`/`tools` frontmatter；§16.6 流程图与 `AGENT_INFO` 只覆盖
+  name/description，不解析 spawns/tools）。
 
 ### 16.8 兜底语义调研（2026-10-16，omp 18.11.2；UI 文案依据）
 
