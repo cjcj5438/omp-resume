@@ -13,6 +13,7 @@ import { errorText } from "../format";
 import { deepEqual, rawValueText } from "../modelConfig";
 import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
 import {
+  AGENT_INFO,
   attachedChainKeys,
   buildAdvisor,
   buildChains,
@@ -36,6 +37,7 @@ import {
   type ModelDrafts,
   type SelectorRow,
 } from "../roleCards";
+import { AgentFlow } from "./AgentFlow";
 import { ModelPicker } from "./ModelPicker";
 import { useAlive } from "./useOmpOp";
 
@@ -665,7 +667,9 @@ function AgentRow(props: {
           {agent.source === "user" ? <span className="badge badge-fork">自定义</span> : null}
           {disabledChecked ? <span className="badge badge-danger">已停用</span> : null}
         </div>
-        <div className="muted">{agent.description}</div>
+        <div className="muted" title={agent.description}>
+          {AGENT_INFO[agent.name]?.duty ?? agent.description}
+        </div>
         <div className="agent-effective" data-testid={`agent-effective-${agent.name}`}>
           <span className="muted">当前使用：</span>
           <strong>{effectiveModel}</strong>
@@ -1120,6 +1124,26 @@ export function ModelsAgentsPanel(props: {
     );
   };
 
+  const agentNodes = config.agents.map((agent) => ({
+    agent,
+    row: draft.overrides.get(agent.name) ?? { selector: null, thinking: "", touched: false },
+    effective: resolveAgentEffective(
+      agent,
+      config.agentOverrides[agent.name],
+      config.roles,
+      modelsList,
+    ),
+    disabled: draft.disabled.has(agent.name),
+    advisor: draft.advisor.get(agent.name) ?? "default",
+  }));
+  const defaultRow = draft.roles.get("default") ?? null;
+  const orchestratorText =
+    defaultRow !== null && defaultRow.selector !== null
+      ? `${friendlyModelName(defaultRow.selector, modelsList) ?? defaultRow.selector}${
+          defaultRow.thinking !== "" ? ` · ${defaultRow.thinking}` : ""
+        }`
+      : "omp 内置默认";
+
   return (
     <div className="manage-section models-agents">
       <div className="ma-top">
@@ -1237,54 +1261,44 @@ export function ModelsAgentsPanel(props: {
         {config.agents.length === 0 ? (
           <div className="pane-note">没有可配置的 Agent。</div>
         ) : null}
-        {config.agents.map((agent) => {
-          const row = draft.overrides.get(agent.name) ?? {
-            selector: null,
-            thinking: "",
-            touched: false,
-          };
-          const effective = resolveAgentEffective(
-            agent,
-            config.agentOverrides[agent.name],
-            config.roles,
-            modelsList,
-          );
-          return (
-            <AgentRow
-              key={agent.name}
-              agent={agent}
-              row={row}
-              effectiveModel={effective.modelText}
-              effectiveUnknown={effective.modelUnknown}
-              effectiveThinking={effective.thinking}
-              effectiveSource={effective.sourceText}
-              disabledChecked={draft.disabled.has(agent.name)}
-              advisor={draft.advisor.get(agent.name) ?? "default"}
-              models={modelsList}
-              busy={busyBlock !== null}
-              onRow={(next) => setRow("overrides", agent.name, next)}
-                onDisabled={(checked) => {
-                  setDraft((prev) => {
-                    if (!prev) return prev;
-                    const disabled = new Set(prev.disabled);
-                    if (checked) disabled.add(agent.name);
-                    else disabled.delete(agent.name);
-                    return { ...prev, disabled };
-                  });
-                }}
-                onAdvisor={(state) => {
-                  setDraft((prev) => {
-                    if (!prev) return prev;
-                    const advisor = new Map(prev.advisor);
-                    advisor.set(agent.name, state);
-                    const advisorTouched = new Set(prev.advisorTouched);
-                    advisorTouched.add(agent.name);
-                    return { ...prev, advisor, advisorTouched };
-                  });
-              }}
-            />
-          );
-        })}
+        {config.agents.length > 0 ? (
+          <AgentFlow nodes={agentNodes} orchestratorText={orchestratorText} />
+        ) : null}
+        {agentNodes.map(({ agent, row, effective, disabled, advisor }) => (
+          <AgentRow
+            key={agent.name}
+            agent={agent}
+            row={row}
+            effectiveModel={effective.modelText}
+            effectiveUnknown={effective.modelUnknown}
+            effectiveThinking={effective.thinking}
+            effectiveSource={effective.sourceText}
+            disabledChecked={disabled}
+            advisor={advisor}
+            models={modelsList}
+            busy={busyBlock !== null}
+            onRow={(next) => setRow("overrides", agent.name, next)}
+            onDisabled={(checked) => {
+              setDraft((prev) => {
+                if (!prev) return prev;
+                const disabledNames = new Set(prev.disabled);
+                if (checked) disabledNames.add(agent.name);
+                else disabledNames.delete(agent.name);
+                return { ...prev, disabled: disabledNames };
+              });
+            }}
+            onAdvisor={(state) => {
+              setDraft((prev) => {
+                if (!prev) return prev;
+                const advisorState = new Map(prev.advisor);
+                advisorState.set(agent.name, state);
+                const advisorTouched = new Set(prev.advisorTouched);
+                advisorTouched.add(agent.name);
+                return { ...prev, advisor: advisorState, advisorTouched };
+              });
+            }}
+          />
+        ))}
         {dirty.agents ? (
           <div className="save-bar" role="status">
             <span>{agentsChangeCount} 处未保存修改</span>

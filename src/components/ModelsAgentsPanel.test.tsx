@@ -499,3 +499,36 @@ describe("未配置角色与吸底保存条", () => {
     );
   });
 });
+
+describe("Agent 编排流程图", () => {
+  it("主代理显示 default 角色当前模型；节点显示中文职责与当前使用", async () => {
+    stubConfig([]);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "Agent" });
+
+    const flow = screen.getByTestId("agent-flow");
+    const orchestrator = within(flow).getByTestId("agent-flow-node-orchestrator");
+    expect(orchestrator).toHaveTextContent("主代理");
+    expect(orchestrator).toHaveTextContent("编排器");
+    expect(orchestrator).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
+
+    // 内置 agent：中文职责（fixture 里的英文/占位描述换成职责文案）。
+    const task = within(flow).getByTestId("agent-flow-node-task");
+    expect(task).toHaveTextContent("完整能力的通用子代理，执行多步委派任务");
+    expect(task).toHaveTextContent("当前使用：");
+    // 自定义 agent：保留 frontmatter 描述，打「自定义」标签。
+    const deployer = within(flow).getByTestId("agent-flow-node-deployer");
+    expect(deployer).toHaveTextContent("自定义");
+  });
+
+  it("停用后流程图节点标注「已停用」", async () => {
+    stubConfig([]);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "Agent" });
+
+    fireEvent.click(screen.getByLabelText("停用 task"));
+    expect(
+      within(screen.getByTestId("agent-flow-node-task")).getByText("已停用"),
+    ).toBeInTheDocument();
+  });
+});

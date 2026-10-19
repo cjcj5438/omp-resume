@@ -49,6 +49,23 @@ export const COMMON_ROLES: string[] = ROLE_INFO.filter((info) => info.kind === "
   (info) => info.id,
 );
 
+/** 内置 agent 的中文职责（omp 18.12.2 自带 6 个；英文 description 的意译）。 */
+export interface AgentDutyInfo {
+  /** 中文短标签（流程图节点标题用）。 */
+  label: string;
+  /** 一句话职责。 */
+  duty: string;
+}
+
+export const AGENT_INFO: Record<string, AgentDutyInfo> = {
+  task: { label: "通用执行", duty: "完整能力的通用子代理，执行多步委派任务" },
+  sonic: { label: "机械处理", duty: "低推理，只做机械更新与数据收集" },
+  scout: { label: "只读调研", duty: "快速只读调研，返回压缩上下文" },
+  reviewer: { label: "代码评审", duty: "代码质量与安全评审专家" },
+  "security-reviewer": { label: "安全审查", duty: "只读安全审查，找仓库漏洞证据" },
+  seance: { label: "历史咨询", duty: "读历史会话与嵌套记录，回答一次咨询" },
+};
+
 /** 兜底 chain key 的分类：角色名 / 模型 selector / provider 通配。 */
 export type ChainKeyKind = "role" | "model" | "wildcard";
 

@@ -509,3 +509,98 @@
   margin-top: 8px;
   font-size: 12px;
 }
+
+/* Agent 编排流程图：只读 SVG，配色全部走主题变量（不用字面量颜色）。 */
+.models-agents .agent-flow {
+  margin: 2px 0 14px;
+}
+
+.models-agents .agent-flow svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.models-agents .agent-flow text {
+  fill: var(--text);
+  font-size: 13px;
+}
+
+.models-agents .agent-flow .flow-mono {
+  font-family: var(--mono);
+}
+
+.models-agents .agent-flow .flow-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.models-agents .agent-flow .flow-muted {
+  fill: var(--text-muted);
+  font-size: 12px;
+}
+
+.models-agents .agent-flow .flow-node {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+
+.models-agents .agent-flow .flow-node-off {
+  fill: var(--bg-card);
+  stroke-dasharray: 5 4;
+}
+
+.models-agents .agent-flow .flow-orch {
+  fill: var(--bg-card);
+  stroke: var(--accent);
+}
+
+.models-agents .agent-flow .flow-edge {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.2;
+}
+
+.models-agents .agent-flow .flow-edge-off {
+  stroke: var(--border);
+  stroke-dasharray: 5 4;
+}
+
+.models-agents .agent-flow .flow-return {
+  stroke-dasharray: 5 4;
+}
+
+.models-agents .agent-flow .flow-head {
+  fill: var(--text-muted);
+}
+
+.models-agents .agent-flow .flow-head-off {
+  fill: var(--border);
+}
+
+.models-agents .agent-flow .flow-pill {
+  fill: var(--bg-hover);
+}
+
+.models-agents .agent-flow .flow-pill-danger {
+  fill: var(--danger-soft);
+}
+
+.models-agents .agent-flow .flow-pill-accent {
+  fill: var(--accent-soft);
+}
+
+.models-agents .agent-flow .flow-pill-text-danger {
+  fill: var(--danger);
+  font-size: 11px;
+}
+
+.models-agents .agent-flow .flow-pill-text-accent {
+  fill: var(--accent);
+  font-size: 11px;
+}
+
+.models-agents .agent-flow .flow-pill-text-grey {
+  fill: var(--text-muted);
+  font-size: 11px;
+}
