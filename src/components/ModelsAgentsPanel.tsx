@@ -25,14 +25,17 @@ import {
   describeRoleFallback,
   draftFromConfig,
   friendlyModelName,
+  modelProvider,
   orderNumeral,
   resolveAgentEffective,
   roleInfo,
+  rowAfterModelChange,
   SAVE_KEY_LABELS,
   selectorBase,
   selectorThinking,
   wildcardTitle,
   type AdvisorState,
+  type AgentEffective,
   type ChainDraft,
   type ModelDrafts,
   type SelectorRow,
@@ -135,15 +138,7 @@ function SelectorCell(props: {
           unsetLabel={unsetLabel}
           disabled={disabled}
           label={label}
-          onChange={(selector) => {
-            const nextLevels =
-              selector !== null
-                ? (models.find((m) => m.selector === selector)?.thinkingLevels ?? [])
-                : [];
-            const thinking =
-              row.thinking !== "" && nextLevels.includes(row.thinking) ? row.thinking : "";
-            onChange({ selector, thinking, touched: true });
-          }}
+          onChange={(selector) => onChange(rowAfterModelChange(row, selector, models))}
         />
       </div>
       <ThinkingSegment
@@ -624,11 +619,38 @@ function RoleCompactRow(props: {
   );
 }
 
+/** 「当前使用」行：Agent 行与 Vibe 档位行共用，保证两处展示完全一致。 */
+function EffectiveLine(props: {
+  testId: string;
+  modelText: string;
+  provider: string | null;
+  unknown: boolean;
+  thinking: string;
+  source: string;
+}) {
+  const { testId, modelText, provider, unknown, thinking, source } = props;
+  return (
+    <div className="agent-effective" data-testid={testId}>
+      <span className="muted">当前使用：</span>
+      <strong>{modelText}</strong>
+      {provider !== null && provider !== "" ? (
+        <span className="badge badge-grey" title="供应商">
+          {provider}
+        </span>
+      ) : null}
+      {unknown ? <span className="badge badge-grey">未知值 · 保留</span> : null}
+      {thinking !== "" ? <span className="muted"> · 思考强度 {thinking}</span> : null}
+      <div className="muted">{source}</div>
+    </div>
+  );
+}
+
 /** Agent 行：当前实际使用的模型 + 改用/停用/顾问。 */
 function AgentRow(props: {
   agent: AgentDefinition;
   row: SelectorRow;
   effectiveModel: string;
+  effectiveProvider: string | null;
   effectiveUnknown: boolean;
   effectiveThinking: string;
   effectiveSource: string;
@@ -644,6 +666,7 @@ function AgentRow(props: {
     agent,
     row,
     effectiveModel,
+    effectiveProvider,
     effectiveUnknown,
     effectiveThinking,
     effectiveSource,
@@ -670,15 +693,14 @@ function AgentRow(props: {
         <div className="muted" title={agent.description}>
           {AGENT_INFO[agent.name]?.duty ?? agent.description}
         </div>
-        <div className="agent-effective" data-testid={`agent-effective-${agent.name}`}>
-          <span className="muted">当前使用：</span>
-          <strong>{effectiveModel}</strong>
-          {effectiveUnknown ? <span className="badge badge-grey">未知值 · 保留</span> : null}
-          {effectiveThinking !== "" ? (
-            <span className="muted"> · 思考强度 {effectiveThinking}</span>
-          ) : null}
-          <div className="muted">{effectiveSource}</div>
-        </div>
+        <EffectiveLine
+          testId={`agent-effective-${agent.name}`}
+          modelText={effectiveModel}
+          provider={effectiveProvider}
+          unknown={effectiveUnknown}
+          thinking={effectiveThinking}
+          source={effectiveSource}
+        />
       </div>
       <div className="agent-controls">
         <div className="field">
@@ -690,15 +712,7 @@ function AgentRow(props: {
             unsetLabel="不改用"
             disabled={busy}
             label={`${agent.name} 改用的模型`}
-            onChange={(selector) => {
-              const nextLevels =
-                selector !== null
-                  ? (models.find((m) => m.selector === selector)?.thinkingLevels ?? [])
-                  : [];
-              const thinking =
-                row.thinking !== "" && nextLevels.includes(row.thinking) ? row.thinking : "";
-              onRow({ selector, thinking, touched: true });
-            }}
+            onChange={(selector) => onRow(rowAfterModelChange(row, selector, models))}
           />
         </div>
         <ThinkingSegment
@@ -732,6 +746,178 @@ function AgentRow(props: {
           </select>
         </label>
       </div>
+    </div>
+  );
+}
+
+/** Vibe 工作会话两档：fast→sonic、good→task（omp `vibe_spawn` 的档位路由）。 */
+const VIBE_TIERS = [
+  { tier: "fast", title: "快速工作会话", agent: "sonic" },
+  { tier: "good", title: "强力工作会话", agent: "task" },
+] as const;
+
+/**
+ * 按名取 Agent 定义；缺失时托底为空默认（只读展示走覆盖或跟随会话，
+ * 编辑与保存不受影响——覆盖本就是按 agent 名写的 record）。
+ */
+function vibeAgentDef(name: string, agents: AgentDefinition[]): AgentDefinition {
+  return (
+    agents.find((a) => a.name === name) ?? {
+      name,
+      description: AGENT_INFO[name]?.duty ?? "",
+      source: "builtin",
+      defaultModel: [],
+      defaultThinkingLevel: null,
+    }
+  );
+}
+
+/**
+ * Vibe 档位行：展示与「改用模型」编辑都与同名 Agent 行共用同一份草稿
+ * （row 与 effective 均由调用方按 agent 名取出），两处天然同步。
+ */
+function VibeTierRow(props: {
+  tier: "fast" | "good";
+  title: string;
+  agentName: string;
+  row: SelectorRow;
+  effective: AgentEffective;
+  models: ModelInfo[];
+  busy: boolean;
+  onRow: (row: SelectorRow) => void;
+}) {
+  const { tier, title, agentName, row, effective, models, busy, onRow } = props;
+  const levels =
+    row.selector !== null
+      ? (models.find((m) => m.selector === row.selector)?.thinkingLevels ?? [])
+      : [];
+  const label = `Vibe ${title}（${tier}）`;
+  return (
+    <div className="vibe-tier" data-testid={`vibe-tier-${tier}`}>
+      <div className="agent-main">
+        <div className="agent-head">
+          <strong>{title}</strong>
+          <span className="badge badge-grey">{tier}</span>
+          <span className="mono muted" title={`对应子代理 ${agentName}`}>
+            → {agentName}
+          </span>
+        </div>
+        <div className="muted">{AGENT_INFO[agentName]?.duty ?? ""}</div>
+        <EffectiveLine
+          testId={`vibe-effective-${tier}`}
+          modelText={effective.modelText}
+          provider={effective.provider}
+          unknown={effective.modelUnknown}
+          thinking={effective.thinking}
+          source={effective.sourceText}
+        />
+      </div>
+      <div className="agent-controls">
+        <div className="field">
+          <span className="field-label">改用模型</span>
+          <ModelPicker
+            models={models}
+            value={row.selector}
+            allowUnset
+            unsetLabel="不改用"
+            disabled={busy}
+            label={`${label}改用的模型`}
+            onChange={(selector) => onRow(rowAfterModelChange(row, selector, models))}
+          />
+        </div>
+        <ThinkingSegment
+          levels={levels}
+          value={row.selector !== null ? row.thinking : effective.thinking}
+          disabled={busy || row.selector === null}
+          label={`${label}改用模型的思考强度`}
+          onChange={(thinking) => onRow({ ...row, thinking, touched: true })}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 「Vibe 工作会话」卡：fast / good 两档的模型入口。编辑写入的仍是
+ * `task.agentModelOverrides.sonic` / `.task`，与 Agent 块共用草稿与保存条。
+ */
+function VibeCard(props: {
+  config: ModelConfig;
+  roleRow: SelectorRow | null;
+  overrides: Map<string, SelectorRow>;
+  models: ModelInfo[];
+  busy: boolean;
+  onRow: (agentName: string, row: SelectorRow) => void;
+}) {
+  const { config, roleRow, overrides, models, busy, onRow } = props;
+  // 指挥者模型：「主对话」角色的当前值，只读展示；读的是同一份角色草稿，
+  // 所以在上面角色卡里改主对话，这里立即跟着变。脏值原样保留展示。
+  // 清空主模型（草稿 selector 为 null）时也必须以草稿为准回落到内置默认，
+  // 否则会继续展示已被删掉的旧值。
+  const commanderRoles: Record<string, unknown> = { ...config.roles };
+  if (roleRow !== null && roleRow.touched) {
+    if (roleRow.selector === null) delete commanderRoles["default"];
+    else
+      commanderRoles["default"] =
+        roleRow.thinking !== "" ? `${roleRow.selector}:${roleRow.thinking}` : roleRow.selector;
+  }
+  const fallback = describeRoleFallback("default", commanderRoles, models);
+  const selected = roleRow !== null && roleRow.selector !== null ? roleRow.selector : null;
+  const selectedName = selected !== null ? friendlyModelName(selected, models) : null;
+  const selectedThinking = roleRow?.thinking ?? "";
+  const commanderText =
+    selected !== null
+      ? `${selectedName ?? selected}${selectedThinking !== "" ? ` · ${selectedThinking}` : ""}`
+      : commanderRoles["default"] !== undefined && typeof commanderRoles["default"] !== "string"
+        ? rawValueText(commanderRoles["default"])
+        : fallback.modelText;
+  const commanderUnknown =
+    selected !== null ? selectedName === null : fallback.modelUnknown;
+  const commanderProvider = selected !== null ? modelProvider(selected, models) : null;
+  const sonicLabel = AGENT_INFO["sonic"]?.label ?? "sonic";
+  const taskLabel = AGENT_INFO["task"]?.label ?? "task";
+  return (
+    <div className="role-card vibe-card" data-testid="vibe-card">
+      <div className="role-card-head">
+        <div className="role-card-title">
+          <strong className="role-card-name">Vibe 工作会话</strong>
+          <span className="mono muted role-key">/vibe</span>
+        </div>
+        <div className="muted role-card-blurb">
+          在 omp 中输入 /vibe 进入该模式：指挥者（主会话，只有只读工具）按两档把活派给工作会话。
+        </div>
+      </div>
+      <div className="vibe-conductor" data-testid="vibe-conductor">
+        <span className="muted">指挥者模型（「主对话」角色，只读）：</span>
+        <strong>{commanderText}</strong>
+        {commanderProvider !== null && commanderProvider !== "" ? (
+          <span className="badge badge-grey" title="供应商">
+            {commanderProvider}
+          </span>
+        ) : null}
+        {commanderUnknown ? <span className="badge badge-grey">未知值 · 保留</span> : null}
+      </div>
+      {VIBE_TIERS.map(({ tier, title, agent }) => (
+        <VibeTierRow
+          key={tier}
+          tier={tier}
+          title={title}
+          agentName={agent}
+          row={overrides.get(agent) ?? { selector: null, thinking: "", touched: false }}
+          effective={resolveAgentEffective(
+            vibeAgentDef(agent, config.agents),
+            config.agentOverrides[agent],
+            config.roles,
+            models,
+          )}
+          models={models}
+          busy={busy}
+          onRow={(next) => onRow(agent, next)}
+        />
+      ))}
+      <p className="muted vibe-note">
+        这两个档位与『{sonicLabel}』『{taskLabel}』子代理共用模型，修改会同时影响普通子代理。
+      </p>
     </div>
   );
 }
@@ -1258,6 +1444,14 @@ export function ModelsAgentsPanel(props: {
             {blockErrors.agents}
           </div>
         ) : null}
+        <VibeCard
+          config={config}
+          roleRow={draft.roles.get("default") ?? null}
+          overrides={draft.overrides}
+          models={modelsList}
+          busy={busyBlock !== null}
+          onRow={(agentName, next) => setRow("overrides", agentName, next)}
+        />
         {config.agents.length === 0 ? (
           <div className="pane-note">没有可配置的 Agent。</div>
         ) : null}
@@ -1270,6 +1464,7 @@ export function ModelsAgentsPanel(props: {
             agent={agent}
             row={row}
             effectiveModel={effective.modelText}
+            effectiveProvider={effective.provider}
             effectiveUnknown={effective.modelUnknown}
             effectiveThinking={effective.thinking}
             effectiveSource={effective.sourceText}

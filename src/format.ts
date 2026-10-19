@@ -1,4 +1,6 @@
-/** 时间 / 大小 / 路径展示：纯函数，中文 UI。 */
+/** 时间 / 大小 / 路径展示、官方外链常量与打开：中文 UI 共用。 */
+import { isTauri } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 export function formatRelativeTime(iso: string, nowMs = Date.now()): string {
   const t = Date.parse(iso);
@@ -68,4 +70,22 @@ export function formatTreeTime(iso: string, nowMs = Date.now()): string {
 export function errorText(e: { code: string; message: string }): string {
   if (e.code === "UNKNOWN") return `未知错误：${e.message}`;
   return e.message;
+}
+/** omp 官方更新日志（文件顶部即最新版本；不要拼版本锚点）。 */
+export const OMP_CHANGELOG_URL =
+  "https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/CHANGELOG.md";
+
+/**
+ * 在系统浏览器打开 omp 官方更新日志（侧栏版本行与更新对话框共用）。
+ * 仅在非 Tauri 环境（浏览器 mock / 测试）回退到 window.open；
+ * 打包应用里 window.open 可能落到应用内窗口，无意义且有风险。
+ */
+export async function openOmpChangelog(): Promise<void> {
+  try {
+    await openUrl(OMP_CHANGELOG_URL);
+  } catch {
+    if (!isTauri()) {
+      window.open(OMP_CHANGELOG_URL, "_blank", "noopener");
+    }
+  }
 }

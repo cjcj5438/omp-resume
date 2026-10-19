@@ -1,6 +1,14 @@
-/** 命令速查过滤单测：只测过滤行为，不锁中文文案与数据条数。 */
+/**
+ * 命令速查单测：过滤行为、版本提示、组合引用的命令必须真实存在。
+ * 不锁中文文案与数据条数。
+ */
 import { describe, expect, it } from "vitest";
-import { OMP_COMMANDS, filterOmpCommands } from "./ompCommands";
+import {
+  OMP_COMMANDS,
+  OMP_VERSION,
+  filterOmpCommands,
+  versionMismatch,
+} from "./ompCommands";
 
 describe("filterOmpCommands", () => {
   it("空查询返回原分组引用", () => {
@@ -48,5 +56,25 @@ describe("filterOmpCommands", () => {
     const order = OMP_COMMANDS.map((g) => g.group);
     const got = groups.map((g) => g.group);
     expect(got).toEqual(order.filter((name) => got.includes(name)));
+  });
+});
+
+describe("版本提示", () => {
+  it("已安装版本与基准一致或未知时不提示", () => {
+    expect(versionMismatch(OMP_VERSION)).toBe(false);
+    expect(versionMismatch(` ${OMP_VERSION} `)).toBe(false);
+    expect(versionMismatch(null)).toBe(false);
+    expect(versionMismatch(undefined)).toBe(false);
+    expect(versionMismatch("")).toBe(false);
+    expect(versionMismatch("   ")).toBe(false);
+  });
+
+  it("版本不同即提示，不做 semver 比较", () => {
+    expect(versionMismatch("18.10.3")).toBe(true);
+    expect(versionMismatch("18.12.2-beta.1")).toBe(true);
+  });
+
+  it("OMP_VERSION 固定为速查基准版本", () => {
+    expect(OMP_VERSION).toBe("18.12.2");
   });
 });

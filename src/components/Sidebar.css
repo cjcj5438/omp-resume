@@ -1,0 +1,110 @@
+/* 侧栏：置顶区、批量选择条、项目组三态勾选、更新日志入口。
+ * 只使用 App.css 已有的语义变量，浅深色主题通用。 */
+
+/* ---- 置顶区：强调色小标签 + 填充图钉，与普通项目组明显区分 ---- */
+
+.pinned-group {
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pinned-group .group-header {
+  gap: 5px;
+}
+
+.pinned-pin {
+  flex: none;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.pinned-name {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.pinned-count {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 置顶行：左侧强调色竖条 + 淡底；选中态优先于置顶底色。 */
+.row.row-pinned {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.row.row-pinned:hover {
+  background: var(--accent-soft);
+}
+
+.row.row-pinned.row-selected {
+  background: var(--bg-selected);
+}
+
+/* 脱离项目上下文的置顶行：小号等宽项目名。 */
+.row-project {
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+/* ---- 批量选择条 ---- */
+
+.select-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.select-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: default;
+}
+
+.select-link:hover {
+  text-decoration: underline;
+}
+
+.select-link:focus-visible {
+  outline: 2px solid var(--accent);
+  border-radius: 3px;
+}
+
+/* ---- 组头三态勾选 ---- */
+
+.group-check {
+  flex: none;
+  /* 与行内勾选框同列（行：22px 内边距 + 3px 竖条 + 4px 勾选框偏移）。 */
+  margin: 0 0 0 29px;
+}
+
+/* 项目会话全部置顶后的占位说明：与行标题同列，克制一行。 */
+.group-empty-note {
+  padding: 4px 10px 8px 53px;
+  font-size: 11px;
+  color: var(--text-muted);
+}

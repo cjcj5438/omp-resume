@@ -1,7 +1,7 @@
 /** omp CLI 更新：展示检查结果、实时日志，仅以版本变化判定已更新。 */
 import { useRef, useState } from "react";
 import { normalizeError, runOmpUpdate } from "../api";
-import { errorText } from "../format";
+import { errorText, openOmpChangelog } from "../format";
 import type { OmpUpdateCheck, OmpUpdateResult } from "../types";
 import { Modal } from "./ui";
 
@@ -57,7 +57,17 @@ export function OmpUpdateDialog({ check, onClose, onUpdated }: OmpUpdateDialogPr
         </>
       }
     >
-      <p>当前 omp {check.current ?? "未知"}</p>
+      <p>
+        当前 omp {check.current ?? "未知"}
+        <button
+          type="button"
+          className="changelog-link"
+          title="在浏览器打开 omp 官方更新日志"
+          onClick={() => void openOmpChangelog()}
+        >
+          查看更新日志
+        </button>
+      </p>
       {phase === "ready" ? (
         check.latest ? <p>可更新到 {check.latest}</p> : check.upToDate ? <p>已是最新版本</p> : (
           <>

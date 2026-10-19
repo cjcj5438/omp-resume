@@ -18,6 +18,7 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
   render(
     <Sidebar
       groups={list.groups}
+      pinnedSessions={[]}
       totalCount={10}
       hiddenEmpty={0}
       query=""
@@ -39,6 +40,8 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
       onToggleHistory={noop}
       checked={new Set()}
       onToggleCheck={noop}
+      onToggleChecks={noop}
+      onClearChecks={noop}
       selectedPath={null}
       onSelect={noop}
       pins={{ projects: [], sessions: [] }}

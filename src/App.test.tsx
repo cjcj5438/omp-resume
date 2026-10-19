@@ -44,7 +44,7 @@ describe("列表：过滤与跨刷新保持", () => {
     expect(rowOf(S4)).toBeInTheDocument();
     expect(screen.queryByText(S1)).toBeNull();
 
-    fireEvent.change(input, { target: { value: "obsidian" } });
+    fireEvent.change(input, { target: { value: "notes" } });
     expect(rowOf(S4)).toBeInTheDocument();
     expect(rowOf(S5)).toBeInTheDocument();
     expect(screen.queryByText(S1)).toBeNull();
@@ -286,6 +286,20 @@ function groupNames(): string[] {
   return Array.from(document.querySelectorAll(".group-name"), (el) => el.textContent ?? "");
 }
 
+function groupByName(name: string): HTMLElement {
+  for (const section of document.querySelectorAll(".group:not(.pinned-group)")) {
+    const el = section.querySelector(".group-name");
+    if (el?.textContent === name && section instanceof HTMLElement) return section;
+  }
+  throw new Error(`未找到项目组：${name}`);
+}
+
+function pinnedSection(): HTMLElement {
+  const el = document.querySelector(".pinned-group");
+  if (!(el instanceof HTMLElement)) throw new Error("未找到置顶区");
+  return el;
+}
+
 describe("置顶", () => {
   it("置顶项目排到最前，重新挂载后顺序保持", async () => {
     await installMockBackend();
@@ -304,33 +318,67 @@ describe("置顶", () => {
     expect(storedPins().projects).toHaveLength(1);
   });
 
-  it("置顶会话只在所属项目组内上浮，项目顺序不变", async () => {
+  it("置顶会话跨项目聚合进置顶区，并从原组移出、不重复出现", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
     const namesBefore = groupNames();
-    const titles = rowTitlesIn(groupOf(S1));
-    const target = titles[titles.length - 1];
 
-    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${target}` }));
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S4}` }));
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S1}` }));
 
-    expect(rowTitlesIn(groupOf(S1))[0]).toBe(target);
+    const pinned = pinnedSection();
+    // 按修改时间新→旧：S1（3 分钟前）在 S4（30 小时前）之前。
+    expect(rowTitlesIn(pinned)).toEqual([S1, S4]);
+    // 置顶行脱离项目上下文：显示所属项目名。
+    expect(Array.from(pinned.querySelectorAll(".row-project"), (el) => el.textContent)).toEqual([
+      "omp-resume",
+      "notes-app",
+    ]);
+    // 原组仍存在但不再包含这两个会话；全列表各出现一次。
     expect(groupNames()).toEqual(namesBefore);
+    expect(screen.getAllByText(S1)).toHaveLength(1);
+    expect(screen.getAllByText(S4)).toHaveLength(1);
+    for (const section of document.querySelectorAll(".group:not(.pinned-group)")) {
+      expect(rowTitlesIn(section as HTMLElement)).not.toContain(S1);
+      expect(rowTitlesIn(section as HTMLElement)).not.toContain(S4);
+    }
   });
 
-  it("过滤后仍保持置顶顺序", async () => {
+  it("项目的会话全部置顶后组头保留并提示，新会话入口不丢", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
-    const titles = rowTitlesIn(groupOf(S1));
-    const target = titles[titles.length - 1];
+    const project = groupOf(S1);
+    const name = project.querySelector(".group-name")?.textContent ?? "";
+    const titles = rowTitlesIn(project);
 
+    for (const t of titles) {
+      fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${t}` }));
+    }
+
+    const emptied = groupByName(name);
+    expect(rowTitlesIn(emptied)).toEqual([]);
+    expect(within(emptied).getByText("该项目的会话均已置顶")).toBeInTheDocument();
+    expect(within(emptied).getByRole("button", { name: `置顶项目 ${name}` })).toBeInTheDocument();
+    expect(within(emptied).getByRole("button", { name: `在 ${name} 新会话` })).toBeInTheDocument();
+    expect(rowTitlesIn(pinnedSection())).toHaveLength(titles.length);
+  });
+
+  it("过滤同时作用于置顶区：无匹配时整区隐藏", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const project = groupOf(S1);
+    const target = rowTitlesIn(project).find((t) => t !== S1) ?? S1;
     fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${target}` }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "过滤会话" }), {
-      target: { value: "omp-resume" },
-    });
 
-    expect(rowTitlesIn(groupOf(target))).toEqual([target, ...titles.slice(0, -1)]);
+    const filter = screen.getByRole("searchbox", { name: "过滤会话" });
+    fireEvent.change(filter, { target: { value: "notes" } });
+    expect(document.querySelector(".pinned-group")).toBeNull();
+
+    fireEvent.change(filter, { target: { value: "omp-resume" } });
+    expect(rowTitlesIn(pinnedSection())).toEqual([target]);
   });
 
   it("详情工具栏的置顶与列表同步", async () => {
@@ -346,8 +394,12 @@ describe("置顶", () => {
       "aria-pressed",
       "true",
     );
-    fireEvent.click(screen.getByRole("button", { name: "取消置顶" }));
+    const detailToggle = screen.getByRole("button", { name: "已置顶" });
+    expect(detailToggle).toHaveAttribute("aria-pressed", "true");
+    expect(detailToggle).toHaveClass("btn-accent");
+    fireEvent.click(detailToggle);
     expect(storedPins().sessions).toEqual([]);
+    expect(screen.getByRole("button", { name: "置顶" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("删除成功的会话清理其置顶，其余置顶保留", async () => {
@@ -380,6 +432,70 @@ describe("置顶", () => {
       expect(document.querySelector(".delete-results")).toHaveTextContent("占用探测失败"),
     );
     expect(storedPins().sessions).toEqual([idOf(S9)]);
+  });
+});
+
+describe("批量选择", () => {
+  function groupBox(name: string): HTMLElement {
+    return within(groupByName(name)).getByRole("checkbox", {
+      name: `选择项目 ${name} 的全部会话`,
+    });
+  }
+
+  it("组头全选勾选该组全部会话，选择条计数与清除同步", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const project = groupOf(S1);
+    const name = project.querySelector(".group-name")?.textContent ?? "";
+    const paths = Array.from(project.querySelectorAll(".row"), (row) =>
+      row.querySelector("input[type=checkbox]"),
+    ).filter((el): el is HTMLInputElement => el != null);
+
+    fireEvent.click(groupBox(name));
+    expect(paths.every((box) => box.checked)).toBe(true);
+    expect(screen.getByText(`已选 ${paths.length} 项`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /删除所选 \(\d+\)/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
+    expect(screen.queryByText(/已选 \d+ 项/)).toBeNull();
+    expect(paths.some((box) => box.checked)).toBe(false);
+  });
+
+  it("取消组头勾选清空该组；过滤后只勾选可见会话", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const project = groupOf(S1);
+    const name = project.querySelector(".group-name")?.textContent ?? "";
+
+    fireEvent.click(groupBox(name));
+    fireEvent.click(groupBox(name));
+    expect(screen.queryByText(/已选 \d+ 项/)).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "过滤会话" }), {
+      target: { value: "DEMO4" },
+    });
+    fireEvent.click(groupBox(name));
+    const checkedRows = document.querySelectorAll(".row input[type=checkbox]:checked");
+    expect(checkedRows).toHaveLength(1);
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+  });
+
+  it("置顶区全选只含置顶会话，原组不再重复", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S4}` }));
+
+    fireEvent.click(
+      within(pinnedSection()).getByRole("checkbox", { name: "选择全部置顶会话" }),
+    );
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "全选当前列表" }));
+    const rows = document.querySelectorAll(".row");
+    expect(screen.getByText(`已选 ${rows.length} 项`)).toBeInTheDocument();
   });
 });
 

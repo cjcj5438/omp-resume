@@ -19,9 +19,11 @@ import {
   formatContextWindow,
   formatCost,
   orderNumeral,
+  modelProvider,
   parseRoleAlias,
   resolveAgentEffective,
   roleInfo,
+  rowAfterModelChange,
   selectorBase,
   wildcardTitle,
 } from "./roleCards";
@@ -126,6 +128,7 @@ describe("Agent 实际使用模型", () => {
     expect(got).toEqual({
       modelText: "Big One",
       modelUnknown: false,
+      provider: "p1",
       sourceText: "来自「改用模型」",
       thinking: "max",
     });
@@ -161,6 +164,7 @@ describe("Agent 实际使用模型", () => {
     expect(got).toEqual({
       modelText: "Fast One",
       modelUnknown: false,
+      provider: "p1",
       sourceText: "内置默认 @smol → 轻快任务角色",
       thinking: "low",
     });
@@ -209,6 +213,42 @@ describe("Agent 实际使用模型", () => {
     const got = resolveAgentEffective(agent({ defaultModel: [] }), undefined, roles, MODELS);
     expect(got.modelText).toBe("跟随当前会话模型");
     expect(got.sourceText).toBe("该 Agent 未指定默认模型");
+  });
+
+  it("供应商只在解析到具体模型时给出", () => {
+    // 别名覆盖解析到底层模型，供应商跟底层走。
+    expect(resolveAgentEffective(agent(), "@smol:high", roles, MODELS).provider).toBe("p1");
+    // 直接指定的字面模型。
+    expect(
+      resolveAgentEffective(agent({ defaultModel: ["p2/other"] }), undefined, roles, MODELS)
+        .provider,
+    ).toBe("p2");
+    // 未知值 / 未配置别名 / 跟随会话：不打供应商标。
+    expect(resolveAgentEffective(agent(), "retired/old", roles, MODELS).provider).toBeNull();
+    expect(resolveAgentEffective(agent(), undefined, {}, MODELS).provider).toBeNull();
+    expect(
+      resolveAgentEffective(agent({ defaultModel: [] }), undefined, roles, MODELS).provider,
+    ).toBeNull();
+  });
+
+  it("modelProvider：命中返回供应商，落空返回 null", () => {
+    expect(modelProvider("p2/other", MODELS)).toBe("p2");
+    expect(modelProvider("retired/old", MODELS)).toBeNull();
+    expect(modelProvider("@smol", MODELS)).toBeNull();
+  });
+
+  it("换模型后 thinking 只保留仍在档位表里的，并标脏", () => {
+    // p1/fast 的档位是 low/high：max 只属于 p1/big，换过去要回到默认。
+    expect(
+      rowAfterModelChange({ selector: "p1/big", thinking: "max", touched: false }, "p1/fast", MODELS),
+    ).toEqual({ selector: "p1/fast", thinking: "", touched: true });
+    expect(
+      rowAfterModelChange({ selector: "p1/big", thinking: "low", touched: false }, "p1/fast", MODELS),
+    ).toEqual({ selector: "p1/fast", thinking: "low", touched: true });
+    // 不改用：thinking 清空，同样标脏（保存时删除该条目）。
+    expect(
+      rowAfterModelChange({ selector: "p1/fast", thinking: "low", touched: false }, null, MODELS),
+    ).toEqual({ selector: null, thinking: "", touched: true });
   });
 });
 

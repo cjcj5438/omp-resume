@@ -532,3 +532,237 @@ describe("Agent 编排流程图", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Vibe 工作会话", () => {
+  const VIBE_AGENTS: AgentDefinition[] = [
+    ...AGENTS,
+    {
+      name: "sonic",
+      description: "机械",
+      source: "builtin",
+      defaultModel: ["@smol"],
+      defaultThinkingLevel: "medium",
+    },
+  ];
+
+  function vibeConfig(overrides: Partial<ModelConfig> = {}): ModelConfig {
+    return { ...structuredClone(BASE_CONFIG), agents: VIBE_AGENTS, ...overrides };
+  }
+
+  it("两档展示当前生效模型，@别名解析到底层模型", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves, {
+      config: vibeConfig({
+        roles: { ...BASE_CONFIG.roles, smol: "5438/deepseek-v4.1-flash:low" },
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "@smol" },
+      }),
+    });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // fast：别名展开到底层模型展示，注明跟随链路与底层档位。
+    const fast = screen.getByTestId("vibe-effective-fast");
+    expect(fast).toHaveTextContent("DeepSeek v4.1 Flash");
+    expect(fast).toHaveTextContent("来自「改用模型」@smol → 轻快任务角色");
+    expect(fast).toHaveTextContent("思考强度 low");
+    // good：字面覆盖直接展示。
+    const good = screen.getByTestId("vibe-effective-good");
+    expect(good).toHaveTextContent("MiMo v2.6 Pro (5438)");
+    expect(good).toHaveTextContent("来自「改用模型」");
+    expect(good).toHaveTextContent("思考强度 max");
+  });
+
+  it("在卡片改 fast 后保存：只写 sonic 覆盖，其余键原样不动", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves, { config: vibeConfig() });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    const tier = screen.getByTestId("vibe-tier-fast");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 快速工作会话（fast）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    fireEvent.click(within(tier).getByRole("radio", { name: "low" }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    // 只发 overrides 一个 key（停用/顾问没动就不发）。
+    expect(saves.map((s) => s.key)).toEqual(["task.agentModelOverrides"]);
+    expect(saves[0].value).toEqual({
+      task: "5438/mimo-v2.6-pro:max",
+      scout: "5438/deepseek-v4.1-flash",
+      sonic: "5438/deepseek-v4.1-flash:low",
+    });
+  });
+
+  it("别名覆盖保存时不被展开改写", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves, {
+      config: vibeConfig({
+        roles: { ...BASE_CONFIG.roles, smol: "5438/deepseek-v4.1-flash:low" },
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "@smol" },
+      }),
+    });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 只动 good 档，保存后 fast 的别名必须原样保留。
+    const tier = screen.getByTestId("vibe-tier-good");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 强力工作会话（good）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    expect(saves[0].value).toEqual({
+      task: "factory-droid/gpt-6.1-sol",
+      scout: "5438/deepseek-v4.1-flash",
+      sonic: "@smol",
+    });
+  });
+
+  it("卡片与 Agent 行双向同步（同一份草稿）", async () => {
+    stubConfig([], { config: vibeConfig() });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 卡片改 good → sonic…task 的 Agent 行同步。
+    const tier = screen.getByTestId("vibe-tier-good");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 强力工作会话（good）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    const agentPicker = within(screen.getByTestId("agent-row-task")).getByRole("button", {
+      name: "task 改用的模型",
+    });
+    expect(agentPicker).toHaveTextContent("DeepSeek v4.1 Flash");
+
+    // Agent 行改回 → 卡片同步。
+    fireEvent.click(agentPicker);
+    const agentRow = screen.getByTestId("agent-row-task");
+    fireEvent.click(
+      within(agentRow).getByRole("button", { name: /MiMo v2\.6 Pro/ }),
+    );
+    expect(
+      within(tier).getByRole("button", { name: "Vibe 强力工作会话（good）改用的模型" }),
+    ).toHaveTextContent("MiMo v2.6 Pro (5438)");
+  });
+
+  it("Agent 定义缺失时档位仍可展示与保存（托底）", async () => {
+    const saves: SaveCall[] = [];
+    // BASE_CONFIG 里没有 sonic：展示走托底，保存照写 sonic 覆盖。
+    stubConfig(saves);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    expect(screen.getByTestId("vibe-effective-fast")).toHaveTextContent("跟随当前会话模型");
+    const tier = screen.getByTestId("vibe-tier-fast");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 快速工作会话（fast）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    expect(saves.map((s) => s.key)).toEqual(["task.agentModelOverrides"]);
+    expect(saves[0].value).toEqual({
+      task: "5438/mimo-v2.6-pro:max",
+      scout: "5438/deepseek-v4.1-flash",
+      sonic: "5438/deepseek-v4.1-flash",
+    });
+  });
+
+  it("指挥者行只读展示主对话模型，并注明共用与 /vibe 入口", async () => {
+    stubConfig([], { config: vibeConfig() });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    const conductor = screen.getByTestId("vibe-conductor");
+    expect(conductor).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
+    // 只读：没有任何可点控件。
+    expect(within(conductor).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(conductor).queryByRole("combobox")).not.toBeInTheDocument();
+
+    const card = screen.getByTestId("vibe-card");
+    expect(card).toHaveTextContent("在 omp 中输入 /vibe 进入该模式");
+    expect(card).toHaveTextContent(
+      "这两个档位与『机械处理』『通用执行』子代理共用模型，修改会同时影响普通子代理",
+    );
+  });
+
+  it("清空主对话主模型后指挥者行回落到内置默认，不再显示旧值", async () => {
+    stubConfig([], { config: vibeConfig() });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+    expect(screen.getByTestId("vibe-conductor")).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
+
+    fireEvent.click(within(roleCard("default")).getByRole("button", { name: "主对话的主模型" }));
+    fireEvent.click(screen.getByRole("button", { name: "未设置" }));
+
+    const conductor = screen.getByTestId("vibe-conductor");
+    expect(conductor).toHaveTextContent("omp 内置默认");
+    expect(conductor).not.toHaveTextContent("MiMo v2.6 Pro");
+    expect(within(conductor).queryByText("未知值 · 保留")).toBeNull();
+  });
+
+  it("改主对话角色时指挥者行同步，且不参与任何保存键", async () => {
+    const saves: SaveCall[] = [];
+    stubConfig(saves, { config: vibeConfig() });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 在角色卡里换主对话模型 → Vibe 卡的指挥者行立即跟随（同一份草稿）。
+    fireEvent.click(within(roleCard("default")).getByRole("button", { name: "主对话的主模型" }));
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    expect(screen.getByTestId("vibe-conductor")).toHaveTextContent("DeepSeek v4.1 Flash");
+
+    // 保存落在 modelRoles，不会因为展示了指挥者就多写 overrides。
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }));
+    await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    expect(saves.map((s) => s.key)).toEqual(["modelRoles"]);
+  });
+
+  it("真实形态多覆盖保存：只改 sonic，其余多项与未知值原样保留", async () => {
+    const saves: SaveCall[] = [];
+    // 贴近本机 ~/.omp/agent/config.yml：5 项覆盖 + reviewer 用已下线模型。
+    const agents: AgentDefinition[] = [
+      ...VIBE_AGENTS,
+      { name: "reviewer", description: "评审", source: "builtin", defaultModel: ["@slow"], defaultThinkingLevel: null },
+      { name: "security-reviewer", description: "安全", source: "builtin", defaultModel: [], defaultThinkingLevel: null },
+    ];
+    stubConfig(saves, {
+      config: vibeConfig({
+        agents,
+        agentOverrides: {
+          task: "5438/mimo-v2.6-pro:max",
+          sonic: "5438/deepseek-v4.1-flash:max",
+          scout: "5438/deepseek-v4.1-flash",
+          reviewer: "retired/old:max",
+          "security-reviewer": "5438/mimo-v2.6-pro",
+        },
+      }),
+    });
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    const tier = screen.getByTestId("vibe-tier-fast");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 快速工作会话（fast）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
+    fireEvent.click(within(tier).getByRole("radio", { name: "high" }));
+    fireEvent.click(within(blockOf("Agent")).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(saves.length).toBeGreaterThan(0));
+    expect(saves.map((s) => s.key)).toEqual(["task.agentModelOverrides"]);
+    expect(saves[0].value).toEqual({
+      task: "5438/mimo-v2.6-pro:max",
+      sonic: "factory-droid/gpt-6.1-sol:high",
+      scout: "5438/deepseek-v4.1-flash",
+      reviewer: "retired/old:max",
+      "security-reviewer": "5438/mimo-v2.6-pro",
+    });
+  });
+});

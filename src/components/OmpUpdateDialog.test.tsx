@@ -4,6 +4,10 @@ import { Channel } from "@tauri-apps/api/core";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { OmpUpdateCheck, OmpUpdateResult } from "../types";
 import { OmpUpdateDialog } from "./OmpUpdateDialog";
+import { OMP_CHANGELOG_URL } from "../format";
+import { openUrl } from "@tauri-apps/plugin-opener";
+
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 const check: OmpUpdateCheck = {
   current: "18.11.1",
@@ -93,6 +97,14 @@ describe("omp 更新对话框", () => {
     render(<OmpUpdateDialog check={{ ...check, latest: null, upToDate: true }} onClose={vi.fn()} onUpdated={vi.fn()} />);
     expect(screen.getByText("已是最新版本")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "更新 omp" })).toBeNull();
+  });
+
+  it("检查结果区提供更新日志入口，打开官方地址", () => {
+    const mocked = vi.mocked(openUrl);
+    mocked.mockClear();
+    render(<OmpUpdateDialog check={check} onClose={vi.fn()} onUpdated={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "查看更新日志" }));
+    expect(mocked).toHaveBeenCalledExactlyOnceWith(OMP_CHANGELOG_URL);
   });
 
   it("双击更新只调用一次 omp_update_run", async () => {

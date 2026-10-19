@@ -155,8 +155,13 @@ export function DetailPane({
             </button>
           ) : null}
           {session ? (
-            <button type="button" className="btn" onClick={onTogglePin}>
-              {pinned ? "取消置顶" : "置顶"}
+            <button
+              type="button"
+              className={pinned ? "btn btn-accent" : "btn"}
+              aria-pressed={pinned}
+              onClick={onTogglePin}
+            >
+              {pinned ? "已置顶" : "置顶"}
             </button>
           ) : null}
           <button type="button" className="btn btn-danger" onClick={onDelete}>

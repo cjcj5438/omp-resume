@@ -123,7 +123,7 @@ function withPath(
 }
 
 // ---- 会话 1：普通 ----
-const s1id = "01a13834-80db-70cb-83b5-2f528fc1d96c";
+const s1id = "01a10000-0000-7000-8000-000000000001";
 const s1path = sessPath(
   "-my-omp-resume",
   "2026-10-14T02-18-47-387Z",
@@ -250,7 +250,7 @@ const s3: FixtureSession = withPath(
 
 // ---- 会话 4：fork（父已不存在） ----
 const s4id = "01a12ecf-77aa-88bb-99cc-0d528fc1cc03";
-const s4path = sessPath("-my-Obsidian-doc", "2026-10-12T06-31-48-446Z", s4id);
+const s4path = sessPath("-my-notes-app", "2026-10-12T06-31-48-446Z", s4id);
 const s4lin = linearTree("s4", [
   { role: "user", preview: "用 DEMO3 跑本地模型总结笔记", item: U("用 DEMO3 跑本地模型总结这批笔记。") },
   { role: "assistant", preview: "已连上 llama3，开始总结…", item: A("已连上 `llama3`，开始总结……") },
@@ -260,7 +260,7 @@ const s4: FixtureSession = withPath(
     summary: baseSummary({
       id: s4id,
       path: s4path,
-      cwd: "/Users/chenjing/my/Obsidian-doc",
+      cwd: "/Users/chenjing/my/notes-app",
       title: "🦙 DEMO3: 本地模型总结笔记",
       fork: { parentRaw: "01a00000-dead-beef-0000-000000000000", parentTitle: null, parentPath: null },
       messageCount: 12,
@@ -274,7 +274,7 @@ const s4: FixtureSession = withPath(
 
 // ---- 会话 5：分支树（3 分支，嵌套 fork，label，compaction，leaf 非文件末） ----
 const s5id = "01a12eaa-12ab-34cd-56ef-8d528fc1dd04";
-const s5path = sessPath("-my-Obsidian-doc", "2026-10-12T09-15-20-200Z", s5id);
+const s5path = sessPath("-my-notes-app", "2026-10-12T09-15-20-200Z", s5id);
 const s5nodes: TreeNode[] = [
   tn("bx-r1", null, ["bx-m1"], "message", "user", "帮我看看这个项目的结构", 900),
   tn("bx-m1", "bx-r1", ["bx-m2"], "message", "assistant", "我先看一下目录结构…", 890),
@@ -357,7 +357,7 @@ const s5: FixtureSession = {
   summary: baseSummary({
     id: s5id,
     path: s5path,
-    cwd: "/Users/chenjing/my/Obsidian-doc",
+    cwd: "/Users/chenjing/my/notes-app",
     title: "🔀 分支很多的会话：鉴权方案 A/B 对比",
     messageCount: 9,
     branchCount: 3,
@@ -377,12 +377,12 @@ const s5: FixtureSession = {
 
 // ---- 会话 6：不支持的格式 v2 ----
 const s6id = "0199-old-format-0000-000000000006";
-const s6path = sessPath("-my-Obsidian-doc", "2025-08-01T10-00-00-000Z", s6id);
+const s6path = sessPath("-my-notes-app", "2025-08-01T10-00-00-000Z", s6id);
 const s6: FixtureSession = {
   summary: baseSummary({
     id: s6id,
     path: s6path,
-    cwd: "/Users/chenjing/my/Obsidian-doc",
+    cwd: "/Users/chenjing/my/notes-app",
     title: "很老的会话（格式 v2）",
     formatSupported: false,
     version: 2,

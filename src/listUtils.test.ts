@@ -1,4 +1,4 @@
-/** 列表过滤 / 标签过滤 / 选择保持 / focus 节流单测。 */
+/** 列表过滤 / 标签过滤 / 置顶拆分 / 三态勾选 / 选择保持 / focus 节流单测。 */
 import { describe, expect, it } from "vitest";
 import type { MetaSnapshot, ProjectGroup, SessionSummary } from "./types";
 import {
@@ -6,8 +6,11 @@ import {
   applyPins,
   canFocusRefresh,
   collectTagCounts,
+  checkState,
   filterByTags,
   filterGroups,
+  filterSessions,
+  filterSessionsByTags,
   retainExisting,
 } from "./listUtils";
 
@@ -49,10 +52,10 @@ const groups: ProjectGroup[] = [
     ],
   },
   {
-    cwd: "/Users/chenjing/my/Obsidian-doc",
-    dirName: "-my-Obsidian-doc",
+    cwd: "/Users/chenjing/my/notes-app",
+    dirName: "-my-notes-app",
     sessions: [
-      s({ path: "/p/c.jsonl", cwd: "/Users/chenjing/my/Obsidian-doc", title: "笔记总结" }),
+      s({ path: "/p/c.jsonl", cwd: "/Users/chenjing/my/notes-app", title: "笔记总结" }),
     ],
   },
 ];
@@ -66,7 +69,7 @@ describe("filterGroups", () => {
       "/p/b.jsonl",
     ]);
     // cwd 命中（大小写不敏感）
-    expect(filterGroups(groups, "obsidian")[0].sessions).toHaveLength(1);
+    expect(filterGroups(groups, "notes")[0].sessions).toHaveLength(1);
     // 标题命中
     expect(filterGroups(groups, "笔记")[0].sessions[0].path).toBe("/p/c.jsonl");
   });
@@ -172,45 +175,105 @@ describe("canFocusRefresh", () => {
 });
 
 describe("applyPins", () => {
-  const group = (cwd: string, paths: string[]): ProjectGroup => ({
+  const group = (cwd: string, paths: string[], minute = 0): ProjectGroup => ({
     cwd,
     dirName: cwd,
-    sessions: paths.map((p) => s({ path: p, cwd })),
+    sessions: paths.map((p, i) =>
+      s({ path: p, id: p, cwd, modifiedAt: `2026-10-14T00:0${minute}:0${i}.000Z` }),
+    ),
   });
   const order = (gs: ProjectGroup[]) => gs.map((g) => [g.cwd, ...g.sessions.map((x) => x.path)]);
   const base = [
-    group("/w/a", ["/p/a1", "/p/a2"]),
-    group("/w/b", ["/p/b1", "/p/b2"]),
-    group("/w/c", ["/p/c1", "/p/c2"]),
+    group("/w/a", ["/p/a1", "/p/a2"], 1),
+    group("/w/b", ["/p/b1", "/p/b2"], 2),
+    group("/w/c", ["/p/c1", "/p/c2"], 3),
   ];
 
-  it("置顶项之间保持后端顺序（不按置顶先后排序），其余保持原顺序", () => {
+  it("项目置顶上浮；置顶之间保持后端顺序，其余保持原顺序", () => {
     const out = applyPins(base, { projects: ["/w/c", "/w/a"], sessions: [] });
-    expect(out.map((g) => g.cwd)).toEqual(["/w/a", "/w/c", "/w/b"]);
+    expect(out.groups.map((g) => g.cwd)).toEqual(["/w/a", "/w/c", "/w/b"]);
+    expect(out.pinnedSessions).toEqual([]);
   });
 
-  it("两级排序：会话置顶只在其所属项目组内上浮，不改变项目顺序", () => {
-    const out = applyPins(base, { projects: [], sessions: ["/p/b2"] });
-    expect(order(out)).toEqual([
-      ["/w/a", "/p/a1", "/p/a2"],
-      ["/w/b", "/p/b2", "/p/b1"],
-      ["/w/c", "/p/c1", "/p/c2"],
+  it("会话置顶跨项目聚合，并从原组移出（不出现两次）", () => {
+    const out = applyPins(base, { projects: [], sessions: ["/p/a2", "/p/c1"] });
+    expect(order(out.groups)).toEqual([
+      ["/w/a", "/p/a1"],
+      ["/w/b", "/p/b1", "/p/b2"],
+      ["/w/c", "/p/c2"],
+    ]);
+    expect(out.pinnedSessions.map((x) => x.path)).toEqual(["/p/c1", "/p/a2"]);
+  });
+
+  it("置顶区按修改时间新→旧，与置顶先后无关", () => {
+    const out = applyPins(base, { projects: [], sessions: ["/p/a1", "/p/c2", "/p/b2"] });
+    expect(out.pinnedSessions.map((x) => x.path)).toEqual(["/p/c2", "/p/b2", "/p/a1"]);
+  });
+
+  it("会话全部置顶后保留空组壳（组头入口不丢）", () => {
+    const out = applyPins(base, { projects: [], sessions: ["/p/b1", "/p/b2"] });
+    expect(out.groups.map((g) => [g.cwd, g.sessions.length])).toEqual([
+      ["/w/a", 2],
+      ["/w/b", 0],
+      ["/w/c", 2],
     ]);
   });
 
   it("不修改入参", () => {
     const snapshot = order(base);
     const out = applyPins(base, { projects: ["/w/c"], sessions: ["/p/a2"] });
-    expect(out).not.toBe(base);
+    expect(out.groups).not.toBe(base);
     expect(order(base)).toEqual(snapshot);
   });
 
   it("空置顶保持原有顺序", () => {
-    expect(applyPins(base, { projects: [], sessions: [] })).toEqual(base);
+    expect(applyPins(base, { projects: [], sessions: [] }).groups).toEqual(base);
   });
 
   it("忽略无对应项的置顶键", () => {
     const out = applyPins(base, { projects: ["/w/none"], sessions: ["/p/none"] });
-    expect(out).toEqual(base);
+    expect(out.groups).toEqual(base);
+    expect(out.pinnedSessions).toEqual([]);
+  });
+});
+
+describe("checkState", () => {
+  it("全选 / 部分 / 无三态，组外路径不影响", () => {
+    const checks = new Set(["/p/a1", "/p/other"]);
+    expect(checkState(["/p/a1", "/p/a2"], checks)).toBe("some");
+    expect(checkState(["/p/a1"], checks)).toBe("all");
+    expect(checkState(["/p/a2"], checks)).toBe("none");
+    expect(checkState([], checks)).toBe("none");
+  });
+});
+
+describe("置顶区的会话级过滤", () => {
+  const pinned = [
+    s({ path: "/p/a1", id: "a1", title: "构建桌面应用", cwd: "/w/a" }),
+    s({ path: "/p/c1", id: "c1", title: "笔记总结", cwd: "/w/c" }),
+  ];
+
+  it("文本过滤与分组同一口径（标题 / cwd / 首条用户消息 / 别名）", () => {
+    expect(filterSessions(pinned, "", null)).toBe(pinned);
+    expect(filterSessions(pinned, "构建", null).map((x) => x.path)).toEqual(["/p/a1"]);
+    expect(filterSessions(pinned, "w/c", null).map((x) => x.path)).toEqual(["/p/c1"]);
+    const meta: MetaSnapshot = {
+      revision: 1,
+      sessions: { c1: { alias: "周报素材", tags: ["文档"], note: null, updatedAt: "" } },
+    };
+    expect(filterSessions(pinned, "周报", meta).map((x) => x.path)).toEqual(["/p/c1"]);
+  });
+
+  it("标签过滤：多选为 AND，空选中返回同一引用", () => {
+    const meta: MetaSnapshot = {
+      revision: 1,
+      sessions: {
+        a1: { alias: null, tags: ["bug", "高优"], note: null, updatedAt: "" },
+        c1: { alias: null, tags: ["文档"], note: null, updatedAt: "" },
+      },
+    };
+    expect(filterSessionsByTags(pinned, [], meta)).toBe(pinned);
+    expect(filterSessionsByTags(pinned, ["bug"], meta).map((x) => x.path)).toEqual(["/p/a1"]);
+    expect(filterSessionsByTags(pinned, ["bug", "文档"], meta)).toEqual([]);
   });
 });

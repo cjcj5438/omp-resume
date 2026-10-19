@@ -112,6 +112,11 @@ export function friendlyModelName(selector: string, models: ModelInfo[]): string
   return models.find((m) => m.selector === selector)?.name ?? null;
 }
 
+/** 模型供应商；不在列表里返回 null（调用方不打供应商标）。 */
+export function modelProvider(selector: string, models: ModelInfo[]): string | null {
+  return models.find((m) => m.selector === selector)?.provider ?? null;
+}
+
 /**
  * 未配置角色实际用谁：沿 omp 的回退规则展开（与 `mv()`/`abe` 一致）——
  * advisor 只认已配置的 slow；memory→tiny→smol→default 逐级找已配置的；
@@ -176,6 +181,8 @@ export interface AgentEffective {
   modelText: string;
   /** 主行是否为未知值（原样保留，不在模型列表里）。 */
   modelUnknown: boolean;
+  /** 实际生效模型的供应商；跟随会话 / 内置默认 / 未知值时为 null（不打标）。 */
+  provider: string | null;
   /** 次行：来源说明。 */
   sourceText: string;
   /** 思考强度（"" 表示默认）。 */
@@ -185,6 +192,7 @@ export interface AgentEffective {
 export interface AliasResolved {
   modelText: string;
   modelUnknown: boolean;
+  provider: string | null;
   thinking: string;
   /** `@smol → 轻快任务角色`；兜底时附 `（smol未配置）`；内置时为 `@smol`。 */
   arrowText: string;
@@ -211,6 +219,7 @@ function resolveAliasValue(
     return {
       modelText: `${display}角色未配置，用 omp 内置默认`,
       modelUnknown: false,
+      provider: null,
       thinking: alias.thinking || fallbackThinking,
       arrowText: `@${alias.role}`,
       builtin: true,
@@ -221,6 +230,7 @@ function resolveAliasValue(
     return {
       modelText: `${display}角色未配置，用 omp 内置默认`,
       modelUnknown: false,
+      provider: null,
       thinking: alias.thinking || fallbackThinking,
       arrowText: `@${alias.role}`,
       builtin: true,
@@ -233,6 +243,7 @@ function resolveAliasValue(
   return {
     modelText: name ?? resolved.selector,
     modelUnknown: name === null,
+    provider: name === null ? null : modelProvider(parsed.selector, models),
     thinking: alias.thinking || parsed.thinking || fallbackThinking,
     arrowText:
       viaDisplay === null
@@ -261,6 +272,7 @@ export function resolveAgentEffective(
       return {
         modelText: resolved.modelText,
         modelUnknown: resolved.modelUnknown,
+        provider: resolved.provider,
         sourceText: resolved.builtin
           ? `改用 ${resolved.arrowText}（跟随该角色）`
           : `来自「改用模型」${resolved.arrowText}`,
@@ -272,6 +284,7 @@ export function resolveAgentEffective(
     return {
       modelText: name ?? raw,
       modelUnknown: name === null,
+      provider: name === null ? null : modelProvider(parsed.selector, models),
       sourceText: "来自「改用模型」",
       thinking: parsed.thinking || fallbackThinking,
     };
@@ -281,6 +294,7 @@ export function resolveAgentEffective(
     return {
       modelText: "跟随当前会话模型",
       modelUnknown: false,
+      provider: null,
       sourceText: "该 Agent 未指定默认模型",
       thinking: fallbackThinking,
     };
@@ -292,6 +306,7 @@ export function resolveAgentEffective(
     return {
       modelText: resolvedDefault.modelText,
       modelUnknown: resolvedDefault.modelUnknown,
+      provider: resolvedDefault.provider,
       sourceText: `内置默认 ${resolvedDefault.arrowText}${more}`,
       thinking: resolvedDefault.thinking,
     };
@@ -301,6 +316,7 @@ export function resolveAgentEffective(
   return {
     modelText: name ?? first,
     modelUnknown: name === null,
+    provider: name === null ? null : modelProvider(parsed.selector, models),
     sourceText: `内置默认（直接指定模型）${more}`,
     thinking: parsed.thinking || fallbackThinking,
   };
@@ -415,6 +431,24 @@ export interface ModelDrafts {
 export function rowFrom(raw: unknown): SelectorRow {
   const parsed = parseSelectorValue(rawValueText(raw));
   return { selector: parsed.selector, thinking: parsed.thinking, touched: false };
+}
+
+/**
+ * 换模型后的行状态：原 thinking 仍在新模型的档位表里才保留，否则回默认；
+ * 换模型即视为一次修改（touched）。角色卡、Agent 行、Vibe 档位行共用。
+ */
+export function rowAfterModelChange(
+  row: SelectorRow,
+  selector: string | null,
+  models: ModelInfo[],
+): SelectorRow {
+  const nextLevels =
+    selector !== null
+      ? (models.find((m) => m.selector === selector)?.thinkingLevels ?? [])
+      : [];
+  const thinking =
+    row.thinking !== "" && nextLevels.includes(row.thinking) ? row.thinking : "";
+  return { selector, thinking, touched: true };
 }
 
 export function draftFromConfig(config: ModelConfig): ModelDrafts {

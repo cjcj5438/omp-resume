@@ -1,14 +1,17 @@
-/** 左侧会话列表：过滤、标签过滤、分组折叠、批量勾选、刷新。 */
+/** 左侧会话列表：置顶区、过滤、标签过滤、分组折叠、批量勾选、刷新。 */
 import { useState } from "react";
 import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
-import type { TagCount } from "../listUtils";
+import { checkState, type TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
-import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
+import { displayCwd, errorText, formatRelativeTime, formatSize, openOmpChangelog } from "../format";
 import { SessionBadges } from "./ui";
 import { AppearancePanel } from "./AppearancePanel";
+import "./Sidebar.css";
 
 interface SidebarProps {
   groups: ProjectGroup[];
+  /** 跨项目聚合的置顶会话（已过滤、按修改时间新→旧；空时不渲染置顶区）。 */
+  pinnedSessions: SessionSummary[];
   totalCount: number;
   hiddenEmpty: number;
   query: string;
@@ -26,6 +29,10 @@ interface SidebarProps {
   onToggleCleanup: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
+  /** 批量勾选/取消：paths 为目标会话 path 列表。 */
+  onToggleChecks: (paths: string[], on: boolean) => void;
+  /** 清除全部勾选。 */
+  onClearChecks: () => void;
   selectedPath: string | null;
   onSelect: (path: string) => void;
   pins: Pins;
@@ -47,6 +54,7 @@ interface SidebarProps {
 
 export function Sidebar({
   groups,
+  pinnedSessions,
   totalCount,
   hiddenEmpty,
   query,
@@ -64,6 +72,8 @@ export function Sidebar({
   onToggleCleanup,
   checked,
   onToggleCheck,
+  onToggleChecks,
+  onClearChecks,
   selectedPath,
   onSelect,
   pins,
@@ -81,6 +91,18 @@ export function Sidebar({
   onToggleTag,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleCollapsed = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  // 当前可见的全部会话 path（置顶区 + 各组；置顶已从原组移出，不重复）。
+  const visiblePaths = pinnedSessions
+    .map((s) => s.path)
+    .concat(groups.flatMap((g) => g.sessions.map((s) => s.path)));
+  const hasUncheckedVisible = visiblePaths.some((p) => !checked.has(p));
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -115,6 +137,23 @@ export function Sidebar({
           刷新
         </button>
       </div>
+      {checked.size > 0 ? (
+        <div className="select-bar">
+          <span>已选 {checked.size} 项</span>
+          {hasUncheckedVisible ? (
+            <button
+              type="button"
+              className="select-link"
+              onClick={() => onToggleChecks(visiblePaths, true)}
+            >
+              全选当前列表
+            </button>
+          ) : null}
+          <button type="button" className="select-link" onClick={onClearChecks}>
+            清除选择
+          </button>
+        </div>
+      ) : null}
       {tagCounts.length > 0 ? (
         <div className="tag-bar" role="group" aria-label="按标签过滤">
           {tagCounts.map(({ tag, count }) => {
@@ -143,29 +182,76 @@ export function Sidebar({
             </button>
           </div>
         ) : null}
-        {groups.length === 0 ? (
+        {groups.length === 0 && pinnedSessions.length === 0 ? (
           <div className="pane-note">没有匹配的会话</div>
+        ) : null}
+        {pinnedSessions.length > 0 ? (
+          <section className="group pinned-group" aria-label="置顶会话">
+            <div className="group-header-row">
+              <GroupCheck
+                label="选择全部置顶会话"
+                paths={pinnedSessions.map((s) => s.path)}
+                checked={checked}
+                onToggle={onToggleChecks}
+              />
+              <button
+                type="button"
+                className="group-header"
+                aria-expanded={!collapsed.has(PINNED_KEY)}
+                onClick={() => toggleCollapsed(PINNED_KEY)}
+              >
+                <span className="group-arrow" aria-hidden="true">
+                  {collapsed.has(PINNED_KEY) ? "▸" : "▾"}
+                </span>
+                <span className="pinned-pin" aria-hidden="true">
+                  📌
+                </span>
+                <span className="pinned-name">置顶</span>
+                <span className="pinned-count">{pinnedSessions.length}</span>
+              </button>
+            </div>
+            {!collapsed.has(PINNED_KEY) ? (
+              <div className="group-rows">
+                {pinnedSessions.map((s) => (
+                  <Row
+                    key={s.path}
+                    s={s}
+                    meta={meta?.sessions[s.id] ?? null}
+                    checked={checked.has(s.path)}
+                    selected={s.path === selectedPath}
+                    onToggleCheck={onToggleCheck}
+                    onSelect={onSelect}
+                    pinned
+                    onTogglePin={() => onTogglePin("session", s.id)}
+                    projectName={s.cwd.split("/").filter(Boolean).pop() ?? s.cwd}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
         ) : null}
         {groups.map((g) => {
           const open = !collapsed.has(g.cwd);
-          const dirMissing = g.sessions.every((s) => !s.cwdExists);
+          // 空组是“会话均已置顶”的占位组：目录状态未知，不展示“目录不存在”。
+          const dirMissing = g.sessions.length > 0 && g.sessions.every((s) => !s.cwdExists);
           const name = g.cwd.split("/").filter(Boolean).pop() ?? g.cwd;
           const pinnedProject = pins.projects.includes(g.cwd);
           return (
             <section className="group" key={g.cwd}>
               <div className="group-header-row">
+                {g.sessions.length > 0 ? (
+                  <GroupCheck
+                    label={`选择项目 ${name} 的全部会话`}
+                    paths={g.sessions.map((s) => s.path)}
+                    checked={checked}
+                    onToggle={onToggleChecks}
+                  />
+                ) : null}
                 <button
                   type="button"
                   className="group-header"
                   aria-expanded={open}
-                  onClick={() =>
-                    setCollapsed((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(g.cwd)) next.delete(g.cwd);
-                      else next.add(g.cwd);
-                      return next;
-                    })
-                  }
+                  onClick={() => toggleCollapsed(g.cwd)}
                 >
                   <span className="group-arrow" aria-hidden="true">
                     {open ? "▾" : "▸"}
@@ -173,7 +259,9 @@ export function Sidebar({
                   <span className="group-name">{name}</span>
                   <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
                   {dirMissing ? <span className="badge badge-danger">目录不存在</span> : null}
-                  <span className="group-count">{g.sessions.length}</span>
+                  {g.sessions.length > 0 ? (
+                    <span className="group-count">{g.sessions.length}</span>
+                  ) : null}
                 </button>
                 <PinToggle
                   pinned={pinnedProject}
@@ -194,19 +282,23 @@ export function Sidebar({
               </div>
               {open ? (
                 <div className="group-rows">
-                  {g.sessions.map((s) => (
-                    <Row
-                      key={s.path}
-                      s={s}
-                      meta={meta?.sessions[s.id] ?? null}
-                      checked={checked.has(s.path)}
-                      selected={s.path === selectedPath}
-                      onToggleCheck={onToggleCheck}
-                      onSelect={onSelect}
-                      pinned={pins.sessions.includes(s.id)}
-                      onTogglePin={() => onTogglePin("session", s.id)}
-                    />
-                  ))}
+                  {g.sessions.length === 0 ? (
+                    <div className="group-empty-note">该项目的会话均已置顶</div>
+                  ) : (
+                    g.sessions.map((s) => (
+                      <Row
+                        key={s.path}
+                        s={s}
+                        meta={meta?.sessions[s.id] ?? null}
+                        checked={checked.has(s.path)}
+                        selected={s.path === selectedPath}
+                        onToggleCheck={onToggleCheck}
+                        onSelect={onSelect}
+                        pinned={pins.sessions.includes(s.id)}
+                        onTogglePin={() => onTogglePin("session", s.id)}
+                      />
+                    ))
+                  )}
                 </div>
               ) : null}
             </section>
@@ -227,6 +319,14 @@ export function Sidebar({
               {ompChecking ? <span className="spinner" aria-hidden="true" /> : null}
               检查 omp 更新
             </button>
+            <button
+              type="button"
+              className="changelog-link"
+              title="在浏览器打开 omp 官方更新日志"
+              onClick={() => void openOmpChangelog()}
+            >
+              更新日志
+            </button>
           </div>
         ) : null}
         <div className="omp-row">
@@ -234,6 +334,34 @@ export function Sidebar({
         </div>
       </footer>
     </aside>
+  );
+}
+
+/** 置顶区在折叠集中的键（cwd 均为绝对路径，不会冲突）。 */
+const PINNED_KEY = "__pinned__";
+
+interface GroupCheckProps {
+  label: string;
+  /** 该组当前可见会话的 path（已过滤、含已折叠）。 */
+  paths: string[];
+  checked: Set<string>;
+  onToggle: (paths: string[], on: boolean) => void;
+}
+
+/** 组头三态复选框：全选 / 部分（indeterminate）/ 无。 */
+function GroupCheck({ label, paths, checked, onToggle }: GroupCheckProps) {
+  const state = checkState(paths, checked);
+  return (
+    <input
+      type="checkbox"
+      className="group-check"
+      aria-label={label}
+      checked={state === "all"}
+      ref={(el) => {
+        if (el) el.indeterminate = state === "some";
+      }}
+      onChange={(e) => onToggle(paths, e.target.checked)}
+    />
   );
 }
 
@@ -247,16 +375,18 @@ interface RowProps {
   onSelect: (path: string) => void;
   pinned: boolean;
   onTogglePin: () => void;
+  /** 置顶行展示所属项目名；普通行不传。 */
+  projectName?: string;
 }
 
 /** 会话行：有别名时别名作主标题、原标题小号灰字附后；至多 3 个标签徽章（多余计 `+N`）。 */
-function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin }: RowProps) {
+function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin, projectName }: RowProps) {
   const alias = meta?.alias ?? null;
   const shownTags = (meta?.tags ?? []).slice(0, 3);
   const extraTags = (meta?.tags ?? []).length - shownTags.length;
   return (
     <div
-      className={selected ? "row row-selected" : "row"}
+      className={`row${selected ? " row-selected" : ""}${pinned ? " row-pinned" : ""}`}
       onClick={() => onSelect(s.path)}
     >
       <input
@@ -279,6 +409,11 @@ function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTo
           )}
         </div>
         <div className="row-meta">
+          {projectName ? (
+            <span className="row-project" title={`所属项目：${projectName}`}>
+              {projectName}
+            </span>
+          ) : null}
           <span>{formatRelativeTime(s.modifiedAt)}</span>
           <span>{s.messageCount} 条消息</span>
           <span>{formatSize(s.sizeBytes)}</span>
@@ -312,7 +447,7 @@ interface PinToggleProps {
   onToggle: () => void;
 }
 
-/** 置顶按钮：已置顶时常显；未置顶时仅在所在行 hover/focus 时显示（见 App.css）。 */
+/** 置顶按钮：已置顶常显（彩色 + 淡底）；未置顶灰色，仅在所在行 hover/focus 时显示（见 App.css）。 */
 function PinToggle({ pinned, kindLabel, name, onToggle }: PinToggleProps) {
   const action = pinned ? "取消置顶" : "置顶";
   return (

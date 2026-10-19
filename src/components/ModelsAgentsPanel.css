@@ -375,6 +375,35 @@
   flex-wrap: wrap;
 }
 
+/* Vibe 工作会话卡：与角色卡同形，左侧一条强调线标明入口地位。 */
+.models-agents .vibe-card {
+  border-left: 3px solid var(--accent);
+}
+
+.models-agents .vibe-conductor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 10px 0 4px;
+  font-size: 12px;
+}
+
+.models-agents .vibe-tier {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.models-agents .vibe-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
 /* 其他模型的兜底（折叠）。 */
 .models-agents .others-details {
   margin-top: 4px;

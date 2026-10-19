@@ -1,17 +1,18 @@
 /**
  * omp 内置斜杠命令速查数据（手写静态表）。
  *
- * 来源：omp 18.10.3 编译产物内嵌的统一内置注册表
- * （`BUILTIN_SLASH_COMMAND_DEFS`，由 U2e / W2e / Tot / wot / bot / Cot / Aot
- * 七个数组拼接而成），命令名与参数语法取自 omp 自身的英文 hint，
- * 中文说明为手写翻译。
- *
- * 复核方法：`echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
- * 会在启动帧 `available_commands_update` 与命令回包中返回机器可读的
- * [{name, description, input.hint, subcommands}]（仅含可在 RPC 下执行的命令，
- * 是本表的子集）。改动本表后请用该命令抽查名称拼写与参数提示。
+ * 基准：omp 18.12.2 编译产物内嵌的统一内置注册表（86 条内置命令）。
+ * 复核方法：
+ * 1. `echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
+ *    返回启动帧 `available_commands_update` 与命令回包中机器可读的
+ *    [{name, description, input.hint, aliases, subcommands}]，但只覆盖可在
+ *    RPC 下执行的子集（本次 45 条）。
+ * 2. TUI 补全列表覆盖全部内置命令：输入 `/` 后按前缀滚动，可从每行的名称、
+ *    图标与英文说明核对；再对每条命令按 Tab，用输入行的参数提示（ghost hint）
+ *    校对 args。
+ * 改动本表后请用这两种方式抽查名称拼写、参数提示与别名。
  */
-export const OMP_VERSION = "18.10.3";
+export const OMP_VERSION = "18.12.2";
 
 export interface OmpCommand {
   /** 不带前导 `/` 的命令名，如 "compact"。 */
@@ -36,19 +37,20 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "new", aliases: [], args: "", zh: "开始一个新会话" },
       { name: "delete", aliases: [], args: "", zh: "删除当前会话并开始新会话" },
       { name: "resume", aliases: [], args: "[session id|@claude|@codex]", zh: "恢复另一个会话，可按编号选择" },
-      { name: "pin", aliases: [], args: "[session id]", zh: "把会话置顶到恢复列表顶部" },
+      { name: "pin", aliases: [], args: "[session id]", zh: "把会话置顶到恢复列表顶部（再执行一次取消置顶）" },
       { name: "rename", aliases: [], args: "[title]", zh: "重命名当前会话，缺省自动生成" },
       { name: "move", aliases: [], args: "[<path>]", zh: "把当前会话搬到另一目录" },
       { name: "branch", aliases: ["rewind"], args: "", zh: "回退到某条消息，原路径保留为分支" },
-      { name: "fork", aliases: [], args: "[pane|window|tab]", zh: "分叉当前会话，可在新终端面板打开" },
+      { name: "fork", aliases: [], args: "[pane|window|tab]", zh: "分叉当前会话，在新终端面板或窗口打开" },
       { name: "tree", aliases: [], args: "", zh: "浏览会话树并切换分支" },
-      { name: "session", aliases: [], args: "[info|delete|pin [account]]", zh: "会话管理：查看信息、删除、绑定服务商账号" },
-      { name: "queue", aliases: [], args: "<message>", zh: "把消息排到本轮结束后发送" },
+      { name: "session", aliases: [], args: "[info|delete|pin [account]]", zh: "会话管理：查看信息、删除、给本会话绑定 OAuth 账号" },
+      { name: "queue", aliases: [], args: "<message>", zh: "把消息排到 agent 本轮结束后发送" },
       { name: "btw", aliases: [], args: "[question]", zh: "提一个旁支问题，或浏览本会话的旁问历史" },
       { name: "copy", aliases: [], args: "", zh: "从对话中挑选文本或代码复制" },
       { name: "open", aliases: [], args: "", zh: "在浏览器打开对话中的链接" },
       { name: "export", aliases: [], args: "[--themes] [path]", zh: "导出会话为 HTML 文件" },
-      { name: "dump", aliases: [], args: "[all|anon]", zh: "复制会话记录并写出请求快照" },
+      { name: "dump", aliases: [], args: "[all|anon]", zh: "复制会话记录到剪贴板，并写出 LLM 请求 JSON（all/anon 打包含子 agent 的 zip）" },
+      { name: "seance", aliases: [], args: "[session id|path] [--model selector]", zh: "只读咨询另一个已保存的会话，不恢复它" },
     ],
   },
   {
@@ -79,10 +81,10 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
     commands: [
       { name: "model", aliases: ["models"], args: "", zh: "切换本会话的模型" },
       { name: "switch", aliases: [], args: "[model]", zh: "模糊切换模型，支持 @角色与 :档位" },
-      { name: "fast", aliases: [], args: "[on|ultra|off|status]", zh: "切换极速服务档" },
-      { name: "slow", aliases: [], args: "[on|off|status]", zh: "切换慢速档，低优先级续跑" },
+      { name: "fast", aliases: [], args: "[on|ultra|off|status]", zh: "切换极速服务档（OpenAI priority/ultrafast、Anthropic fast、Google priority）" },
+      { name: "slow", aliases: [], args: "[on|off|status]", zh: "切换慢速档：OpenAI/Google 走 flex 档，Anthropic 限额后低优先级续跑" },
       { name: "effort", aliases: [], args: "[level]", zh: "设置推理强度档位" },
-      { name: "modelpreset", aliases: [], args: "[save|switch|delete|list] [name]", zh: "保存与切换模型预设" },
+      { name: "modelpreset", aliases: [], args: "[list|save|switch|delete] [name]", zh: "保存与切换模型预设（角色模型 + 推理强度）" },
       { name: "prewalk", aliases: [], args: "[restart|off]", zh: "预约、重启或取消一次性的模型交接" },
       { name: "extended-context", aliases: [], args: "[on|off|status]", zh: "开关扩展上下文窗口" },
     ],
@@ -91,7 +93,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
     group: "智能体与任务",
     commands: [
       { name: "tan", aliases: [], args: "<work>", zh: "后台起 agent 处理旁支任务" },
-      { name: "omfg", aliases: [], args: "<complaint>", zh: "把一次抱怨沉淀为防重犯规则" },
+      { name: "omfg", aliases: [], args: "<complaint>", zh: "把一次抱怨沉淀为 TTSR 规则，防止重犯" },
       { name: "force", aliases: ["force:"], args: "<tool-name> [prompt]", zh: "强制下一轮使用指定工具" },
       { name: "ratchet", aliases: [], args: "[flow and goal]", zh: "为流程建评测并自动爬坡优化" },
       { name: "advisor", aliases: [], args: "[on|off|status|dump [raw]|configure]", zh: "开关评审官，每轮给出复核意见" },
@@ -128,8 +130,8 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
     commands: [
       { name: "marketplace", aliases: [], args: "<add|remove|update|list|discover|install|uninstall|installed|upgrade|help>", zh: "管理插件市场：添加、安装、升级" },
       { name: "plugins", aliases: ["plugin"], args: "[list|enable|disable]", zh: "查看管理已装插件" },
-      { name: "reload-plugins", aliases: [], args: "", zh: "重载全部插件与技能" },
-      { name: "skills", aliases: [], args: "[search|install|installed|update] ...", zh: "搜索、安装、更新注册表中的技能" },
+      { name: "reload-plugins", aliases: [], args: "", zh: "重载全部插件（技能、命令、钩子、工具、agent、MCP）" },
+      { name: "skills", aliases: [], args: "[search|install|installed|update]", zh: "搜索、安装、更新注册表中的技能" },
       { name: "mcp", aliases: [], args: "<add|list|remove|test|reauth|unauth|enable|disable|smithery-search|smithery-login|smithery-logout|reconnect|reload|resources|prompts|notifications|help>", zh: "管理 MCP 服务：增删、测试、重连" },
       { name: "skillful", aliases: [], args: "[on|off|status]", zh: "开关系统提示中的技能列表" },
       { name: "extensions", aliases: ["status"], args: "", zh: "打开扩展控制中心" },
@@ -140,7 +142,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
     commands: [
       { name: "ssh", aliases: [], args: "<subcommand> (add|list|remove|help)", zh: "管理 SSH 主机增删与列表" },
       { name: "settings", aliases: [], args: "", zh: "打开设置菜单" },
-      { name: "setup", aliases: ["providers"], args: "[providers ...]", zh: "打开服务商配置" },
+      { name: "setup", aliases: ["providers"], args: "[providers ...]", zh: "打开服务商配置（登录与联网搜索）" },
       { name: "login", aliases: [], args: "[provider|redirect URL]", zh: "登录 OAuth 服务商" },
       { name: "logout", aliases: [], args: "[provider]", zh: "登出 OAuth 账号" },
       { name: "browser", aliases: [], args: "[headless|visible]", zh: "切换浏览器 eval 预设的有界面/无界面模式" },
@@ -149,7 +151,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
   {
     group: "诊断与统计",
     commands: [
-      { name: "cleanse", aliases: [], args: "[request] [--all]", zh: "并行检测修复项目诊断问题" },
+      { name: "cleanse", aliases: [], args: "[request] [--all] [--tests] [-n <agents>] [-m <model>]", zh: "并行检测修复项目诊断问题" },
       { name: "debug", aliases: [], args: "", zh: "打开调试工具选择器" },
       { name: "security", aliases: [], args: "<plan|scan|status|cancel|scans|show|import|export|validate|compare|disposition>", zh: "安全扫描：规划、执行、查看、处置" },
       { name: "trace", aliases: [], args: "", zh: "在统计面板打开会话链路" },
@@ -193,4 +195,25 @@ export function filterOmpCommands(
     if (commands.length > 0) out.push({ ...g, commands });
   }
   return out;
+}
+
+/** 命令名或别名查一条命令（用于组合用法引用校验与展示）。 */
+export function findOmpCommand(name: string): OmpCommand | undefined {
+  const n = name.toLowerCase().replace(/^\/+/, "");
+  for (const g of OMP_COMMANDS) {
+    for (const c of g.commands) {
+      if (c.name.toLowerCase() === n) return c;
+      if (c.aliases.some((a) => a.toLowerCase() === n)) return c;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 已安装版本与速查基准版本是否不一致。
+ * 只做相等判断（不做 semver 比较）：已安装版本为空或无法读取时不提示。
+ */
+export function versionMismatch(installed: string | null | undefined): boolean {
+  const v = installed?.trim();
+  return typeof v === "string" && v !== "" && v !== OMP_VERSION;
 }

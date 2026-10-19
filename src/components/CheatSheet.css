@@ -1,0 +1,218 @@
+/* 命令速查对话框：头部版本提示、分段切换、行内一键复制、组合用法卡片。
+ * 只使用 App.css 中的语义变量，浅色/深色主题共用。 */
+
+.cheatsheet-head {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cheatsheet-version-note {
+  margin: 4px 0 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--warn-soft);
+  border-radius: 6px;
+}
+
+.cheatsheet-toolbar {
+  margin: 8px 0 4px;
+}
+
+.cheatsheet-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.cheatsheet-tab {
+  padding: 3px 14px;
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.cheatsheet-tab:hover {
+  background: var(--bg-hover);
+}
+
+.cheatsheet-tab.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cheatsheet-filter {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.cheatsheet-copy-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.cheatsheet-list {
+  margin-top: 8px;
+}
+
+.cheatsheet-group-title {
+  font-size: 13px;
+  margin: 12px 0 4px;
+}
+
+.cheatsheet-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cheatsheet-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cheatsheet-row:last-child {
+  border-bottom: none;
+}
+
+.cheatsheet-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cheatsheet-alias {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-args {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: break-word;
+}
+
+.cheatsheet-zh {
+  flex: none;
+  max-width: 42%;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+/* 行内复制：平时收起，悬停或键盘聚焦到行内时出现。 */
+.cheatsheet-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.cheatsheet-row:hover .cheatsheet-actions,
+.cheatsheet-row:focus-within .cheatsheet-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .cheatsheet-actions {
+    opacity: 1;
+  }
+}
+
+.cheatsheet-copy {
+  min-width: 52px;
+  padding: 3px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.cheatsheet-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---- 组合用法 ---- */
+
+.cheatsheet-combo {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+
+.cheatsheet-combo-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.cheatsheet-combo-title {
+  font-size: 13px;
+  margin: 0;
+}
+
+.cheatsheet-combo-when {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-copy-all {
+  flex: none;
+}
+
+.cheatsheet-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cheatsheet-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.cheatsheet-step-cmd {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cheatsheet-step-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-step .cheatsheet-copy {
+  flex: none;
+  align-self: center;
+}
+
+.cheatsheet-foot {
+  color: var(--text-muted);
+  font-size: 12px;
+}

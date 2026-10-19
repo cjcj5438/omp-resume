@@ -22,7 +22,7 @@ import type {
   SessionSummary,
 } from "./types";
 import { errorText } from "./format";
-import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, retainExisting } from "./listUtils";
+import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, filterSessions, filterSessionsByTags, retainExisting } from "./listUtils";
 import { runContinueFromNode, type ContinueOutcome, type DeleteTarget } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
 import { Sidebar } from "./components/Sidebar";
@@ -162,15 +162,21 @@ function App() {
   // 提示词历史视图：已加载会话 id，用于判断「跳到来源会话」是否可用。
   const loadedSessionIds = useMemo(() => new Set([...byPath.values()].map((s) => s.id)), [byPath]);
 
-  // 先置顶排序再过滤，使过滤结果保持置顶顺序。
-  const orderedGroups = useMemo(
+  // 先拆分置顶（项目上浮、会话聚合）再过滤，使过滤结果保持既有顺序。
+  const pinnedSplit = useMemo(
     () => applyPins(list?.groups ?? [], pins),
     [list, pins],
   );
-  const tagCounts = useMemo(() => collectTagCounts(orderedGroups, meta), [orderedGroups, meta]);
+  const tagCounts = useMemo(() => collectTagCounts(list?.groups ?? [], meta), [list, meta]);
   const groups = useMemo(
-    () => filterGroups(filterByTags(orderedGroups, activeTags, meta), query, meta),
-    [orderedGroups, activeTags, query, meta],
+    () => filterGroups(filterByTags(pinnedSplit.groups, activeTags, meta), query, meta),
+    [pinnedSplit, activeTags, query, meta],
+  );
+  // 置顶区与分组用同一过滤口径；无匹配时整区隐藏（Sidebar 按空数组处理）。
+  const pinnedSessions = useMemo(
+    () =>
+      filterSessions(filterSessionsByTags(pinnedSplit.pinnedSessions, activeTags, meta), query, meta),
+    [pinnedSplit, activeTags, query, meta],
   );
   const totalCount = useMemo(
     () =>
@@ -306,6 +312,7 @@ function App() {
     <div className="app">
       <Sidebar
         groups={groups}
+        pinnedSessions={pinnedSessions}
         totalCount={totalCount}
         hiddenEmpty={list?.hiddenEmpty ?? 0}
         query={query}
@@ -333,6 +340,17 @@ function App() {
             return next;
           })
         }
+        onToggleChecks={(paths, on) =>
+          setChecked((prev) => {
+            const next = new Set(prev);
+            for (const p of paths) {
+              if (on) next.add(p);
+              else next.delete(p);
+            }
+            return next;
+          })
+        }
+        onClearChecks={() => setChecked(new Set())}
         selectedPath={selectedPath}
         onSelect={(path) => {
           setView("sessions");
@@ -410,7 +428,12 @@ function App() {
           onClose={() => setDeleteTargets(null)}
         />
       ) : null}
-      {showCheatSheet ? <CheatSheetDialog onClose={() => setShowCheatSheet(false)} /> : null}
+      {showCheatSheet ? (
+        <CheatSheetDialog
+          installedVersion={ompVersion}
+          onClose={() => setShowCheatSheet(false)}
+        />
+      ) : null}
       {update ? (
         <UpdateDialog
           update={update}
