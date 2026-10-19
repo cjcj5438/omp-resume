@@ -8,7 +8,7 @@
 管理 `omp`（oh-my-pi）的会话、CLI 版本、用户级插件与技能。功能包括：
 会话浏览（按项目分组）、只读会话预览、树视图、iTerm 一键续聊、
 永久删除、从树节点续聊、omp 版本查询与更新、插件/marketplace 管理、技能查询/更新、
-MCP 原生配置管理。无会话重命名、无 fork 建文件、无导出、无统计、无监控、
+MCP 原生配置管理、用量与运行统计、清理。无会话重命名、无 fork 建文件、无导出、
 无全文搜索、无多 profile、无回收站。
 
 ## 0. 一致性规则（给后续 worker）
@@ -40,7 +40,7 @@ MCP 原生配置管理。无会话重命名、无 fork 建文件、无导出、�
 ### 2.1 存放布局
 
 `<sessionsDir>/<编码cwd>/<UTC时间>_<uuid>.jsonl`，例如
-`-my-omp-resume/2026-10-14T02-18-47-387Z_01a13834-80db-70cb-83b5-2f528fc1d96c.jsonl`。
+`-my-omp-resume/2026-10-14T02-18-47-387Z_01a13834-...jsonl`。
 
 - 每个 `.jsonl` 旁有一个**同名去扩展 sibling 目录**（artifacts + 子 agent
   嵌套 `*.jsonl`，扫描时必须忽略，只扫顶层）。
@@ -49,8 +49,8 @@ MCP 原生配置管理。无会话重命名、无 fork 建文件、无导出、�
   删除时清理）。
 - 扫描规则：只取各项目目录**顶层**、非点文件、`*.jsonl`；
   忽略嵌套目录、点文件、`.bak`。
-- 本机实测：11 个项目目录、46 个顶层会话、约 120 MB，最大约 4 MB，
-  header `version` 全为 3。
+- 实测样本：十余个项目目录、数十个顶层会话、总体积约百 MB 量级，单文件最大约 4 MB，
+  header `version` 均为 3。
 
 ### 2.2 行类型
 
@@ -65,7 +65,7 @@ MCP 原生配置管理。无会话重命名、无 fork 建文件、无导出、�
 第二行是 `session` header（`version:3`，`id` 即会话 id，`cwd` 为项目真实路径）：
 
 ```json
-{"type":"session","version":3,"id":"01a13834-...","timestamp":"2026-10-14T02:18:47.387Z","cwd":"/Users/chenjing/my/omp-resume"}
+{"type":"session","version":3,"id":"01a13834-...","timestamp":"2026-10-14T02:18:47.387Z","cwd":"/Users/demo/my/omp-resume"}
 ```
 
 header 还可能带 `parentSession`（fork 血缘，不透明字符串：id 或路径）、
@@ -663,6 +663,69 @@ header `.title`、每个 `title_change` 的 `.title`。
 
 - **置顶**（`src/pins.ts`）：项目（cwd）与会话（id）两级置顶，仅存 WebView
   `localStorage`（键 `omp-resume:pins:v1`），不修改会话文件，不经过后端。
+  项目置顶仍在所属项目组内上浮；会话置顶**跨项目聚合**为列表顶部「置顶」区：
+  可折叠、按 modifiedAt 新→旧、行内显示所属项目名，置顶会话从原项目组移出，
+  全列表只出现一次。存储格式不变（`pins.sessions` 仍是全局会话 id 数组）。
+  `listUtils.applyPins(groups, pins) -> PinnedSplit { pinnedSessions, groups }`
+  （组内被掏空时保留空组壳，由 Sidebar 展示占位）。
+  过滤（文本 + 标签）与置顶区联动：置顶区只显示匹配项，无匹配时整区隐藏。
+  置顶视觉：区头强调色 📌 +「置顶」标签 + 数量徽章；置顶行左侧 3px 强调色竖条 +
+  `accent-soft` 淡底；置顶按钮 `pin-toggle-on` 常亮实心，未置顶仅 hover/focus 显示。
+  详情头按钮同理：已置顶 `btn-accent` +「已置顶」（aria-pressed），未置顶「置顶」。
+- **空项目组占位**：组内会话全被置顶时保留组壳——组头（项目置顶按钮与
+  「在此项目新会话」+）照常渲染，组内一行「该项目的会话均已置顶」；
+  隐藏数量徽章与「目录不存在」徽章，不渲染组头三态复选框。
+- **批量选择**：项目组头三态复选框（`checkState`：none/some/all，aria-label
+  「选择项目 X 的全部会话」）对该组**当前可见**（已过滤、含已折叠）的全部会话
+  批量勾选/取消；置顶区头同构（「选择全部置顶会话」）。有选中项时过滤框下方出现
+  选择条：「已选 N 项」+（未选满时）「全选当前列表」+「清除选择」；全选范围 =
+  置顶区 + 各组当前可见会话（置顶已从原组移出，不重复）。批量删除流程语义不变。
+  `listUtils` 另导出 `checkState` / `filterSessions` / `filterSessionsByTags`；
+  `Sidebar` 新增 props `pinnedSessions` / `onToggleChecks(paths, on)` / `onClearChecks()`。
+- **omp 更新日志**（`src/format.ts`）：常量 `OMP_CHANGELOG_URL` =
+  `https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/CHANGELOG.md`
+  （链到文件顶部，不拼版本锚点）；`openOmpChangelog()` 用系统浏览器打开，
+  失败仅在非 Tauri 环境（浏览器 mock / 测试）回退 `window.open`；打包应用内不回退
+  （`window.open` 可能落到应用内窗口）。入口在侧栏 omp 版本行的「更新日志」小链接与
+  OmpUpdateDialog 的「查看更新日志」；capabilities 无需扩展
+  （`opener:default` 已允许 https）。
+- **命令速查**（`src/ompCommands.ts` / `src/ompCombos.ts` / `CheatSheetDialog.tsx`，
+  纯前端静态数据，无后端命令）：
+  - 基准 `OMP_VERSION = "18.12.2"`，共 **86 条**内置命令（分组 + 英文参数提示 +
+    手写中文一句话说明 + 别名）。相较 18.10.3 新增 `/seance`，无移除；
+    `/cleanse`、`/modelpreset`、`/skills` 的参数提示已更新；部分中文说明修订；
+    别名不变。自定义命令、技能（`/skill:xxx`）与插件命令不收录，实时补全以
+    omp 内输入 `/` 为准。
+  - **复核方法**（表头注释同样记录，改表后需按此抽查）：`omp` 没有
+    `--list-commands`；用 `omp --mode rpc --no-session` 发
+    `get_available_commands` 取机器可读的 `{name, description, input.hint,
+    aliases, subcommands}`（本次 45 条，仅 RPC 可执行子集），再与 TUI 补全列表
+    及逐条按 Tab 后的参数 ghost hint 交叉核对，得到全部内置命令与参数提示。
+  - `filterOmpCommands(groups, query)`：大小写不敏感子串，去掉查询前导 `/`；
+    匹配 name / 别名 / 中文说明，只保留有命中的分组。
+    `findOmpCommand(name)` 按命令名或别名精确查找（含别名，供组合校验）。
+  - **版本提示**：`CheatSheetDialog` 可选 prop `installedVersion`（App 传入
+    `ompVersion`）；纯函数 `versionMismatch(installed)` **只做相等判断**
+    （不做 semver 比较），已安装版本为空/未知时不提示；不一致时显示
+    「你安装的是 X，速查基于 18.12.2，个别命令可能有差异」。
+  - **两个视图**（顶部分段 [全部命令 | 组合用法]，过滤框共用、切换视图保留查询）：
+    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明；头部显示
+      「基于 omp 18.12.2 · 共 86 条内置命令」，过滤中显示「匹配 X / 86 条」。
+      行内一键复制：主按钮复制 `/name`；有参数时另有「参数」按钮复制
+      `/name <args 原样>` 模板（不替换占位符）。复制成功按钮变「已复制 ✓」1.5 秒，
+      失败在弹窗内可见提示「复制失败：剪贴板不可用，请手动选择文本复制」4 秒后消失；
+      复制经 `src/clipboard.ts` 的 `copyText`（返回 boolean，绝不抛异常）。
+      按钮在行 hover 或键盘聚焦时出现，`@media (hover: none)` 触屏常显。
+    - 组合用法：11 张「场景 → 命令序列」卡片（`OMP_COMBOS`），每张含标题、
+      「何时使用」、有序步骤（命令 + 一句话说明）；每步可单独复制，卡片头
+      「复制全部」把各步命令**每步一行换行拼接**。带参数的步骤写成
+      `<占位符>` 模板（说明里注明需替换）。过滤匹配场景标题、何时使用、
+      每步命令与说明。
+  - **组合数据不变量**（`ompCombos.test.ts` 单测锁定）：每个组合 ≥2 步；
+    每步命令必须存在于 `OMP_COMMANDS`（含别名，经 `findUnknownComboStep`
+    校验）；`id` 与标题唯一；组合总数 8–12（当前 11）。
+  - 样式集中在 `src/components/CheatSheet.css`（`.cheatsheet-*`，只用 App.css
+    语义变量，浅色/深色主题共用）。
 - **复制会话 ID**（`src/clipboard.ts`）：详情头 ID 按钮写入剪贴板，纯前端。
 - **全部更新**：前端按序调用 §4.18 → §4.17 → §4.22 → §4.10，首个失败即停；
   有新版 omp 时只打开更新对话框，不自动执行 `omp update`。无独立命令。
@@ -680,8 +743,8 @@ fork 血缘 header（`parentSession` 为 id，`previousSessionFiles` 为路径�
 二者语义不同）：
 
 ```json
-{"type":"session","version":3,"id":"01a134fa-...","timestamp":"...","cwd":"/Users/chenjing/my","title":"🚂 DEMO2: ...","titleSource":"auto","parentSession":"01a134a7-...","providerPromptCacheKey":"01a134a7-..."}
-{"type":"session","version":3,"id":"01a12ecf-...","timestamp":"...","cwd":"/Users/chenjing/my/Obsidian-doc","title":"🦙 DEMO3: ...","titleSource":"auto","previousSessionFiles":["/Users/chenjing/.omp/agent/sessions/-my-tuozu-mcp-project/2026-10-12T06-31-48-446Z_01a12ecf-....jsonl"]}
+{"type":"session","version":3,"id":"01a134fa-...","timestamp":"...","cwd":"/Users/demo/my","title":"🚂 DEMO2: ...","titleSource":"auto","parentSession":"01a134a7-...","providerPromptCacheKey":"01a134a7-..."}
+{"type":"session","version":3,"id":"01a12ecf-...","timestamp":"...","cwd":"/Users/demo/my/notes-app","title":"🦙 DEMO3: ...","titleSource":"auto","previousSessionFiles":["/Users/demo/.omp/agent/sessions/-my-demo-project/2026-10-12T06-31-48-446Z_01a12ecf-....jsonl"]}
 ```
 
 assistant（含 thinking + toolCall 块）与 toolResult 紧邻对：
@@ -694,7 +757,7 @@ assistant（含 thinking + toolCall 块）与 toolResult 紧邻对：
 bashExecution（无 content 数组）与 developer：
 
 ```json
-{"type":"message","id":"205852e4","parentId":"55e13298","timestamp":"...","message":{"role":"bashExecution","command":"cd /Users/chenjing/my/Obsidian-doc","output":"","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1791793713325,"excludeFromContext":false}}
+{"type":"message","id":"205852e4","parentId":"55e13298","timestamp":"...","message":{"role":"bashExecution","command":"cd /Users/demo/my/notes-app","output":"","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1791793713325,"excludeFromContext":false}}
 {"type":"message","id":"b62be44d","parentId":"9ce3ff0f","timestamp":"...","message":{"role":"developer","content":[{"type":"text","text":"<system-reminder>..."}],"attribution":"agent","timestamp":1791789697264}}
 ```
 
@@ -731,16 +794,24 @@ bashExecution（无 content 数组）与 developer：
 
 ## 12. 用量与花费统计（只读，omp 18.11.1）
 
-本节新增统计能力，取代开篇「无统计」的旧范围声明；不改动既有会话浏览、树与写命令语义。
+本节定义用量/花费与运行看板能力；不改动既有会话浏览、树与写命令语义。
 不调用 LLM，不启动 omp，不读取 models.yml / models.json 或其他凭据；绝不写入会话 JSONL。
 
 ### 12.1 命令与类型
 
 - `get_session_usage { path: string } -> SessionUsage`：沿用 §6 顶层路径校验，
   返回此会话归属的全部历史（非 active 路径），包含 sibling 附件目录内递归的子代理 JSONL。
-- `get_usage_stats { sinceDays?: number|null } -> UsageStats`：null / 省略为全部，
-  UI 默认传 30。sinceDays 为非负 u32，按**每条消息/后台调用自身时间**与当前时刻减 N×24 小时比较，
-  不是按文件 mtime；时间缺失条目计入全部，但无法进入限时范围或按天表。
+- `get_usage_stats { range: UsageRange } -> UsageStats`：`UsageRange` =
+  `"today" | "24h" | "7d" | "30d" | "all"`；UI 花费页默认 `30d`。窗口按**本机时区**：
+  `today` 本地当天 0 点至今；`24h` 当前本地整点绝对时间 −23 小时起的 24 个整点桶
+  （含当前小时；起点由请求时刻的绝对时间直接截断整点，不经本地→UTC 反查）；
+  `7d` 今天及前 6 天、`30d` 今天及前 29 天（均自首日 0 点起）；`all` 不限。
+  固定窗口为 **[起点, now] 闭区间**（`now` 为请求时刻，未来时间戳一律排除），
+  按**每条消息/后台调用自身时间**比较，不是按文件 mtime；
+  固定窗口的起点恒为有界绝对时间（仅 `all` 不限）：午夜落在 DST 缺口时取缺口后
+  第一个存在的时刻，重复整点（秋季回拨）按绝对时间取请求时刻所在的一次。
+- `get_usage_health { range } -> UsageHealth`：运行看板（口径见 §12.3），
+  窗口与分桶规则同 `get_usage_stats`；UI 看板默认 `today`。
 - `UsageTokens { input, output, cacheRead, cacheWrite, total }`：非负整数；
   total 优先使用 usage.totalTokens，缺失则四项相加；reasoningTokens 不重复加到输出或总数。
 - `UsageCost { total, main, background, subagent }`：USD 浮点数，
@@ -751,13 +822,22 @@ bashExecution（无 content 数组）与 developer：
 - `UsageModel { provider, model, messages, cost, tokens }`：provider/model 缺失为空字符串；
   messages 为 assistant + model_usage 的调用条数（包括无 usage 的 assistant）。
 - `SessionUsage { messages: UsageMessages, tokens: UsageTokens, cost: UsageCost, models: UsageModel[] }`。
-- `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[], byDay: UsageDay[] }`；
-  `UsageProject { cwd, cost, tokens, sessions }`，sessions 为范围内有归属条目的顶层会话数；
-  `UsageDay { date, cost, tokens }`，date 为**本机时区** YYYY-MM-DD（本节按日标签例外于 §0 的 UTC 时间字符串规则）。
-  cwd 取顶层 owner 的 header.cwd。项目/模型按花费降序（相同时按名称），按天按日期降序。
-  按天表不包含无合法时间的条目，但总计和项目/模型表的全部范围仍保留其花费。
+- `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[],
+  trend: UsageTrend }`；`UsageProject { cwd, cost, tokens, sessions }`，
+  sessions 为范围内有归属条目的顶层会话数。cwd 取顶层 owner 的 header.cwd。
+  项目/模型按花费降序（相同时按名称）。
+- `UsageTrend { unit: "hour"|"day", points: UsageTrendPoint[] }`；
+  `UsageTrendPoint { key, cost, tokens }`：today/24h 为 hour 桶（key 为本地时区
+  `"YYYY-MM-DD HH"`），其余为 day 桶（`"YYYY-MM-DD"`；本节桶 key 例外于 §0 的
+  UTC 时间字符串规则）。升序；固定窗口（today/24h/7d/30d）补零到窗口内每个桶，
+  `all` 只含有数据的日期。不变量：固定窗口下 `sum(points.cost) == total.cost.total`。
+  `model_change` 不进趋势（也不产生花费/消息数）。
+- 无合法时间戳的条目只进 `all` 的总计与项目/模型表；带窗口的范围统计、趋势、
+  时间线与 recent 列表一律不纳入。
 
 ### 12.2 口径与 fork 归属
+
+以下归属与去重口径对 `get_usage_stats` 与 `get_usage_health` 同样适用。
 
 1. 顶层主文件 `message.role=assistant` 的 usage.cost →「主对话」。
 2. **所有 `model_usage`（含嵌套文件里的）→「后台」**。
@@ -776,19 +856,87 @@ bashExecution（无 content 数组）与 developer：
    统计忽略非 v3 顶层会话及其附件。坏 JSON、非 UTF-8 行、形状/字段类型损坏行跳过；
    合法 user/assistant 无 usage 仍计消息数、tokens/cost 为 0。
 
-### 12.3 IO、缓存与错误
+### 12.3 `get_usage_health` 运行看板
+
+窗口、分桶、补零/clamp 与 fork 归属口径同 §12.1/§12.2；请求、错误、兜底、缓存
+统计前均先经 `inherited()`（id + timestamp + parent + 全字段相等才认复制）去重，
+与 stats 复用同一次 scan。
+
+- `requests`：窗口内 assistant 消息（含子代理文件、含 stopReason 为 `error` /
+  `aborted` 的）+ `model_usage` 后台调用条目。
+- `errors`：`total` **只计** assistant 消息 `stopReason == "error"`；`model_usage`
+  的 stopReason/errorMessage 不计错误（只计 requests）。`aborted`（stopReason
+  `"aborted"`，用户中断）单独计，**不含入** `total` / `byKind` / `recent`。
+  `byKind: [{kind, count}]` 按 count 降序（同数按 kind 名升序）；`recent` ≤20 条、
+  新→旧、仅含有效时间戳条目，字段 `time`(epoch ms) / `provider` / `model` / `kind` /
+  `message`（单行、按字符截断 200；Bearer / Authorization 凭证、api_key /
+  apikey / token / secret / password 类键值、sk- / ghp_ / github_pat_ /
+  xox[bpas]- / AKIA / AIza 等密钥前缀、JWT 三段形态、≥32 位无特征长串一律
+  替换为 `[已脱敏]`）。
+- **ErrorKind**（7 值）：`quota | rate_limit | auth | timeout | network | server | other`。
+  分类为启发式：错误原文小写后**先命中先赢**，顺序 quota → rate_limit → timeout →
+  auth → network → server → other：
+  quota = 行首 `402`，或 usage limit / quota / payment / subscription / billing /
+  insufficient / out of credit（403 报文含 payment 同归 quota；「Retry budget」
+  是重试预算耗尽，不归 quota）；rate_limit = 行首 `429` 或 rate limit /
+  too many requests；timeout = timed out / timeout / stalled / deadline exceeded /
+  stream_timeout / etimedout；auth = 行首 `401`/`403` 或 unauthorized /
+  invalid api key / forbidden 等；network = econn* / connection / socket / fetch /
+  tls / certificate / stream was interrupted / closed before /
+  ended before completion 等；server = 行首 5xx 或 server_error / upstream /
+  unavailable / internal error / overloaded / try again later 等；未命中一律 other。
+- `fallbacks`：判定 = `type=="model_change"` 且 `role=="fallback"` 且
+  `resolvedModelIsFallback==true`（role 缺失 / `temporary` / `default` / `subagent:*`
+  或 resolved=false 均不计）。`to` 为该条 `model` 按**首个** `/` 拆出的
+  provider / model；`from` 为同一文件内此前最近一次 model_change（任意 role）或 assistant
+  消息所用模型，二者合并取最近；找不到为 `null`（该预查不过滤窗口、不做去重：
+  它描述切换瞬间此前生效的模型）。`byTarget` 按 count 降序（同数按 provider/model
+  升序）；`recent` ≤20 条、新→旧、仅含有效时间戳条目。
+- `cache`：`hitRate = cacheRead / (input + cacheRead + cacheWrite)`（窗口内
+  assistant + model_usage 的 token 累加）；分母为 0，或 `cacheRead + cacheWrite`
+  全为 0（上游不报缓存）时为 `null`（界面显示「—」而不是 0%）；`read` / `write` /
+  `input` 为累计值；`byModel: [{provider, model, requests, hitRate|null}]` 按
+  requests 降序（同数按 provider/model 升序），口径相同。
+- `timeline: { unit, points: [{ key, requests, errors, fallbacks, cacheRead,
+  promptTokens }] }`：unit / 桶 key / 补零 / 升序 / clamp 同 §12.1 的 trend；
+  `promptTokens = input + cacheRead + cacheWrite`；`errors` 只计 `"error"`
+  （不含 aborted）；界面按 cacheRead/promptTokens 逐桶算命中率，promptTokens=0
+  的桶断线、不画 0。
+  - 已知风险：DST 跳变导致桶 key 落到预设范围外时，由首/末桶 clamp 保住分桶合计
+  等于总计的不变量；固定窗口起点恒有界（缺口前跳、重复取绝对时间），不会因
+  DST 静默变成全量；错误分类是启发式，未见过的新报文落入 other。
+
+### 12.4 前端（统计视图）
+
+侧栏「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
+
+- 「花费」（默认范围 `30d`）：范围分段（今天 / 近 24 小时 / 近 7 天 / 近 30 天 /
+  全部）+ 刷新；总计卡（总额 + 主对话/后台/子代理 + token 明细）；**花费趋势柱状图**
+  （按 `trend.unit` 画 hour/day 桶）；「按项目」「按模型」表（花费、token、会话数 /
+  调用次数，行内占比条）。
+- 「运行看板」（默认范围 `today`；KPI：请求数（含失败与用户中断）、错误数 + 错误率（`errors.total /
+  requests`，另注「另有 N 次用户中断」）、兜底切换次数、缓存命中率（`null` 显示「—」
+  并注明「该上游未返回缓存数据」）；请求趋势（错误/兜底叠加）、缓存命中率趋势、
+  错误类型分布（中文：额度用尽 / 触发限流 / 鉴权失败 / 响应超时 / 网络异常 / 服务端错误 / 其他）、
+  兜底去向（含最近切换）、最近错误、按模型缓存命中。
+- 每个标签页各自记住范围；两个面板数据独立请求（范围/刷新按钮各自一套），
+  迟到响应不覆盖当前结果；已加载过的「范围」再切回时命中缓存不再请求（必须同时
+  复位加载态，否则刷新按钮会永久禁用）；加载 / 空数据 / 错误与重试状态与既有视图同风格。
+
+### 12.5 IO、缓存与错误
 
 逐行复用 buffer，以 serde 最小字段结构解析，content/details 等直接跳过，不构造完整 Value 树。
-两个命令的阻塞扫描均在 spawn_blocking。进程内缓存只保存解析结果与索引，不落盘：
+三个命令的阻塞扫描均在 spawn_blocking；`get_usage_stats` 与 `get_usage_health`
+复用同一次扫描（解析产物同进 UsageCache）。进程内缓存只保存解析结果与索引，不落盘：
 key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + inode。
 每次请求重新枚举全部顶层/嵌套 JSONL 并检查各文件 metadata（比「目录最新 mtime + 文件数」更严格，
 能覆盖旧嵌套文件追加、删除/新建及同尺寸替换），读前/读后 metadata 不一致的解析不入缓存。
 运行中的会话持续追加时下次调用必失效；这是读取过程的快照，不声称跨文件事务一致性。
 目录/文件软链接不跟随；子文件 canonicalize 后必须仍在会话根及其 owner sibling 目录内。
 失效路径 `NOT_FOUND`、顶层路径不合法/逃逸 `OUTSIDE_ROOT`、其他 IO 失败 `IO`；
-详情所有失败静默隐藏，统计有加载/空数据/错误与重试状态。
+详情所有失败静默隐藏，统计与运行看板均有加载/空数据/错误与重试状态。
 
-### 12.4 真实数据只读调查（2026-10-16）
+### 12.6 真实数据只读调查（2026-10-16）
 
 方法：只遍历 ~/.omp/agent/sessions 的顶层与 sibling 目录 JSONL，逐行解析，
 按 entry id 收集「文件、行号、type、原文规范化内容」；分别比较同文件重复、跨文件完全复制、
@@ -1162,7 +1310,16 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   §16.8 的角色回退链（advisor→slow、memory→tiny→smol→default），
   解析不到显示「omp 内置默认」。能力类角色（image/web/speech/dictation/
   vision/judge）默认折叠在「更多角色」里（已配置的成卡、未配置的紧凑行）。
-- **Agent 编排流程图**（只读，纯前端；不写配置、不加后端命令）：Agent 区顶部
+- **Vibe 工作会话卡**（Agent 区块顶部，`VibeCard`）：omp 的 `/vibe` 模式中档位
+  `fast` → 内置 agent `sonic`，`good` → `task`；两行各自可改模型（ModelPicker，
+  含「不改用」）与 thinking 分段，写入的仍是既有键
+  `task.agentModelOverrides.sonic` / `.task`，**不新增任何配置键**；与同名 Agent 行
+  **共享同一份草稿与吸底保存条**，天然同步。`@角色` 别名解析到底层模型后展示
+  （保存时不被展开改写）；未知值原样保留。卡片另只读展示指挥者模型
+  （「主对话」角色 `default`，与角色卡草稿同步），并注明这两档与
+  「机械处理（sonic）」「通用执行（task）」普通子代理**共用模型**，修改会同时
+  影响普通子代理；指挥者不属于 worker。
+- **Agent 编排流程图**（只读，纯前端；不写配置、不加后端命令）：Vibe 卡下方
   一张手绘 SVG 流程图（`AgentFlow.tsx`，不引图表库，viewBox 宽度固定、高度随
   agent 数；配色走主题变量）——左「主代理（编排器）」显示 default 角色的当前
   模型（未配置显示「omp 内置默认」），派发总线指向右侧每个 agent 节点；节点 =
