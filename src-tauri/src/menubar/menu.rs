@@ -76,6 +76,8 @@ pub struct MenuModel {
     pub tooltip: String,
     pub notify_on: bool,
     pub dock_on: bool,
+    /// 需要用户处理的会话数（等待输入 + 疑似卡住），Dock 角标用；0 = 无角标。
+    pub badge_count: usize,
 }
 
 impl MenuModel {
@@ -88,6 +90,7 @@ impl MenuModel {
             && self.tooltip == other.tooltip
             && self.notify_on == other.notify_on
             && self.dock_on == other.dock_on
+            && self.badge_count == other.badge_count
             && self.rows.len() == other.rows.len()
             && self.overflow.len() == other.overflow.len()
             && self
@@ -209,6 +212,7 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         tray_title,
         notify_on,
         dock_on,
+        badge_count: waiting + stuck,
     }
 }
 
@@ -504,5 +508,39 @@ mod tests {
         let m = build_model(vec![row("a", SessionStatus::Working)], true, false);
         assert_eq!(refresh_decision(Some(&m), &m.clone()), Refresh::None);
         assert_eq!(refresh_decision(None, &m), Refresh::Rebuild);
+    }
+
+    #[test]
+    fn badge_count_is_waiting_plus_stuck() {
+        // 空模型 = 0（无角标）。
+        let m = build_model(vec![], true, false);
+        assert_eq!(m.badge_count, 0);
+        // 工作中/空闲不计入。
+        let m = build_model(
+            vec![
+                row("w", SessionStatus::Working),
+                row("i", SessionStatus::Idle),
+            ],
+            true,
+            false,
+        );
+        assert_eq!(m.badge_count, 0);
+        // 等待输入 + 疑似卡住求和。
+        let m = build_model(
+            vec![
+                row("w", SessionStatus::Working),
+                row("a", SessionStatus::WaitingInput),
+                row("b", SessionStatus::WaitingInput),
+                row("c", SessionStatus::Stuck),
+                row("i", SessionStatus::Idle),
+            ],
+            true,
+            false,
+        );
+        assert_eq!(m.badge_count, 3);
+        // badge_count 参与 same_structure（仅它不同也算结构变化）。
+        let mut other = m.clone();
+        other.badge_count += 1;
+        assert!(!m.same_structure(&other));
     }
 }

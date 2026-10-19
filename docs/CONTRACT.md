@@ -1455,7 +1455,8 @@ classify:
 - 关闭主窗口 = 拦截 `CloseRequested` → `hide()`，应用继续驻留菜单栏；
   红钮与 ⌘W 等效（macOS 默认应用菜单自带 `Close Window` ⌘W，走同一拦截）；
   隐藏时若「在 Dock 显示图标」为关 → `ActivationPolicy::Accessory`（Dock 图标隐藏）；
-  「打开主窗口」→ 切回 `Regular` + `show` + `set_focus`。
+  「打开主窗口」/ 点 Dock 图标 → 切回 `Regular` + `unminimize` + `show` + `set_focus`
+  （Dock 点击经 `RunEvent::Reopen`，入口为 `Builder::build(..).run(..)`，见 §17.9）。
 - 真退出路径不拦截：菜单「退出」先置 quitting 标志再 `app.exit(0)`；
   ⌘Q（默认应用菜单 `Quit omp-resume`）/ Dock 退出 / 系统关机走的
   `RunEvent::ExitRequested` / 进程终止**不经** CloseRequested 拦截，正常退出（详见 README 已知限制）。
@@ -1464,9 +1465,10 @@ classify:
 
 后端 `src-tauri/src/menubar/`：`classify`（状态判定）、`tail`（jsonl 增量读取）、
 `iterm`（标题批量查询/解析/聚焦、`Runner` 可注入）、`detect`（T0 + 索引）、
-`poller`（T0–T3 组装，`OccupantSource` 可注入）、`menu`（菜单模型）、
+`poller`（T0–T3 组装，`OccupantSource` 可注入）、`menu`（菜单模型，含 Dock 角标计数）、
 `settings`（settings.json）、`notify`（通知判定 + osascript 回退）、
-`tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程）。无新增前端命令；
+`tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程，含角标应用与 Dock 跳动）、
+`dock`（仅 macOS：Dock 右键菜单，运行时注入 `applicationDockMenu:`）。无新增前端命令；
 探针 `cargo test --test menubar_probe -- --ignored --nocapture`（只读）。
 
 ### 17.8 实测记录（2026-10-16，macOS arm64）
@@ -1477,11 +1479,45 @@ classify:
   T3 osascript 批量取标题约 10–30ms（单次实测 0.17s 冷启，热轮更低）。
 - 真实环境判定（详见报告）：11 把被持有锁 → 4 个顶层会话（其余为子代理锁，
   计入未归属）；3 个「空闲」（iTerm 标题 `>`、数小时无有意义记录），
-  1 个「工作中」（iTerm 旋转符、1 个子代理运行中——即本 worker），
-  与 iTerm 实际标题逐一对齐。
 - 图标点击（2026-10-16 复测）：**左键与右键都能弹出下拉菜单**
   （`show_menu_on_left_click(true)` 生效）。此前「左键不弹」的结论是
   合成点击（CGEventPost 之外的注入路径）打不到 `TaoTrayTarget` 覆盖层的
   测试假象；硬件级事件（`CGEventCreateMouseEvent` + `CGEventPost(kCGHIDEventTap)`，
   先 mouseMoved 再 Down/Up）实测左键正常弹出，对照组（系统菜单栏 Apple 菜单）
   同一手段可弹。
+
+### 17.9 Dock 图标（点击 / 角标 / 跳动 / 右键菜单）
+
+- 点 Dock 图标 = 回到主窗口：入口为 `Builder::build(..).run(..)`，
+  `RunEvent::Reopen { .. }` → `tray::show_main`（与「打开主窗口」同路径：
+  `Regular` + `unminimize` + `show` + `set_focus`）。此前 `Builder::run` 丢弃
+  run 事件，点击 Dock 图标无反应。
+- 角标 = 需要用户处理的会话数（等待输入 + 疑似卡住），0 时清除。
+  计数由纯 `menu::build_model` 算出（`MenuModel.badge_count`，参与
+  `same_structure`，单测锁定：0 → 无、等待+卡住求和、工作/空闲不计），
+  经主窗口 `set_badge_count` 应用（macOS → 应用级 NSDockTile badge）。
+  应用点：初始模型 + 每次结构性重建（`refresh_tray`）；仅时长文字变化时
+  计数不变，不重设。由于本机通知横幅常被静默丢弃（见 §17.5），Dock 角标是
+  可见的主信号。
+- 跳动：轮询一轮产出任一通知动作即 `request_user_attention(Informational)`
+  一次（每轮至多一次，不按动作数重复）。判定沿用通知的开关/30 秒门槛/防抖，
+  macOS 在应用已激活时忽略跳动（系统行为）。
+- 右键菜单：Dock 右键弹出与托盘同内容的精简菜单——禁用头行、会话行
+  （同文案/同 enabled/同 id `session:<id>`，超 8 行进「更多…」子菜单）、
+  分隔线、「打开主窗口」（`open-window`）；无 toggles/quit（Dock 自带
+  选项/退出）。点击走既有 `handle_menu_event`（聚焦 iTerm 标签 / 显示主窗口）。
+- 实现（`menubar::dock`，仅 macOS，直连 `muda 0.20` / `objc2 0.6` /
+  `objc2-app-kit 0.3`，版本与 Cargo.lock 一致）：tauri/tao 无 Dock 菜单 API，
+  且 tao 的 delegate 类未定义 `applicationDockMenu:`，故在 setup（主线程）对
+  当前 `NSApp.delegate` 的动态类（`object_getClass`，不硬编码类名）用
+  `class_addMethod`（编码 `@@:@`）运行时注入；IMP 每次按缓存 `last_menu`
+  现场新建 `muda::Menu` 并经 `ns_menu()` 返回指针，上一个菜单保存在主线程
+  `thread_local` 直到下一次调用，AppHandle 经 `OnceLock` 获取。
+  风险：若未来 tao 自己定义了该方法（`class_addMethod` 返回 false）或替换了
+  delegate 类，Dock 菜单会静默消失（仅 stderr 一行日志），应用其余行为不变；
+  注入失败同样只打日志跳过。
+- 应用图标 = 紫→靛渐变圆角瓦片 + 白色 π（与托盘字形同比例）；母版
+  `src-tauri/icons/app-icon.png` 由 `swift scripts/gen-app-icon.swift` 生成，
+  再 `npx tauri icon src-tauri/icons/app-icon.png` 产出各尺寸（随后删掉 CLI
+  额外生成的 `android/`、`ios/`、`64x64.png`）；macOS 可能缓存旧图标，
+  必要时 `killall Dock`。

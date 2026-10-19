@@ -291,6 +291,9 @@ pub fn run() {
             );
             let _tray = menubar::tray::create_tray(app, &initial)?;
             menubar::tray::register_click_handler(app.handle())?;
+            menubar::tray::apply_badge(app.handle(), &initial);
+            #[cfg(target_os = "macos")]
+            menubar::dock::install(app.handle());
             if let Some(shared) = app.try_state::<menubar::tray::Shared>() {
                 if let Ok(mut guard) = shared.last_menu.lock() {
                     *guard = Some(initial);
@@ -359,6 +362,15 @@ pub fn run() {
             omp_models::get_model_config,
             omp_models::update_model_config
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // 点 Dock 图标 = 回到主窗口（与「打开主窗口」同路径）。
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                menubar::tray::show_main(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }

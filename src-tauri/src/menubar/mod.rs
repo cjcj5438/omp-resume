@@ -9,9 +9,12 @@
 //! - `settings`：`settings.json` 读写；
 //! - `notify`：通知转换判定 + osascript 回退发送；
 //! - `tray`：托盘图标/菜单装配与事件路由（需 `tray-icon` 特性）。
+//! - `dock`（仅 macOS）：Dock 右键菜单（运行时注入 `applicationDockMenu:`）。
 
 pub mod classify;
 pub mod detect;
+#[cfg(target_os = "macos")]
+pub mod dock;
 pub mod iterm;
 pub mod menu;
 pub mod notify;

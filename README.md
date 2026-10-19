@@ -70,7 +70,9 @@ UI 文案为中文。
   点图标（左键或右键）展开下拉，列出当前占用中的 omp 会话（状态、标题、归属应用、持续时长、子代理数），
   一行点击即可聚焦到对应 iTerm 标签；状态判定（工作中 / 等待输入 / 空闲 / 疑似卡住）
   基于 flock 占用 + 会话记录尾部 + iTerm 标题状态符；会话进入等待输入或疑似卡住时
-  发系统通知（可关）；关闭窗口后驻留菜单栏（Dock 图标可隐藏）。
+  发系统通知（可关）并 Dock 跳一次；关闭窗口后驻留菜单栏（Dock 图标可隐藏，
+  点 Dock 图标回到主窗口）；Dock 角标 = 等待输入 + 疑似卡住数，右键 Dock 图标
+  可直接聚焦会话或打开主窗口。
 - **全部更新**：按 marketplace 目录 → 插件 → registry skills → 检查 omp
   的顺序执行，首个失败即停并点名；有新版 omp 时只打开更新对话框，
   不自动执行 `omp update`。
@@ -315,5 +317,5 @@ kill %1
   `tauri-plugin-notification`（legacy NSUserNotification）与 osascript 回退
   （`display notification`，归属「脚本编辑器」）都被静默丢弃；需在
   「系统设置 → 通知」允许对应应用、且勿扰关闭后才可见。转换检测与发送链路本身有单测覆盖。
-- 关闭主窗口（红钮或 ⌘W「Close Window」）= 隐藏并驻留菜单栏（Dock 图标按设置隐藏，`ActivationPolicy::Accessory`）；
-  「退出 omp-resume」/ ⌘Q / Dock 退出 / 系统关机才真正退出（不拦截）。
+- 关闭主窗口（红钮或 ⌘W「Close Window」）= 隐藏并驻留菜单栏（Dock 图标按设置隐藏，`ActivationPolicy::Accessory`，点 Dock 图标回到主窗口）；
+  「退出 omp-resume」/ ⌘Q / Dock 退出 / 系统关机才真正退出（不拦截）。Dock 右键菜单经运行时注入实现，若未来 tao 自带该方法会静默消失（仅日志），不影响其他功能。

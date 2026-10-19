@@ -278,7 +278,20 @@ fn focus_session<R: Runtime>(app: &AppHandle<R>, session_id: String) {
     });
 }
 
-/// 用模型整体重建托盘（菜单 + 标题 + tooltip），更新缓存与行文本更新器。
+/// Dock 角标 = 需要用户处理的会话数（等待输入 + 疑似卡住）；0 清除。
+/// macOS 上经主窗口 `set_badge_count` 应用（应用级 NSDockTile badge）。
+pub fn apply_badge<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) {
+    if let Some(window) = app.get_webview_window("main") {
+        let count = if model.badge_count == 0 {
+            None
+        } else {
+            Some(model.badge_count as i64)
+        };
+        let _ = window.set_badge_count(count);
+    }
+}
+
+/// 用模型整体重建托盘（菜单 + 标题 + tooltip + Dock 角标），更新缓存与行文本更新器。
 fn refresh_tray<R: Runtime>(app: &AppHandle<R>, shared: &Shared, model: &MenuModel) {
     if let Ok(mut guard) = shared.last_menu.lock() {
         *guard = Some(model.clone());
@@ -301,6 +314,7 @@ fn refresh_tray<R: Runtime>(app: &AppHandle<R>, shared: &Shared, model: &MenuMod
         let _ = tray.set_title(model.tray_title.as_deref());
         let _ = tray.set_tooltip(Some(&model.tooltip));
     }
+    apply_badge(app, model);
 }
 
 /// 发送判定产出的通知：插件优先，失败退回 osascript。
@@ -477,6 +491,15 @@ pub fn spawn_poller<R: Runtime + 'static>(
                         }
                         for action in &outcome.actions {
                             send_action(&app, &shared, action);
+                        }
+                        // 有通知动作即 Dock 跳一次（每轮至多一次；开关/门槛/防抖由判定继承）。
+                        // macOS 在应用已激活时忽略，属系统行为。
+                        if !outcome.actions.is_empty() {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.request_user_attention(Some(
+                                    tauri::UserAttentionType::Informational,
+                                ));
+                            }
                         }
                     }
                 }
