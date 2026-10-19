@@ -412,7 +412,10 @@ function ChainChip(props: {
   const { entry, index, last, models, disabled, onMove, onDelete } = props;
   const text = typeof entry === "string" ? entry : null;
   const parsed = text !== null ? { base: selectorBase(text), thinking: selectorThinking(text) } : null;
-  const name = parsed !== null ? friendlyModelName(parsed.base, models) : null;
+  // omp 的 name 只在部分 provider 上带「(账号)」后缀，单看名字判断不了供应商，
+  // 因此这里补 provider 徽章；档位统一显示，裸条目按 §16.8 显示「继承」。
+  const matched = parsed !== null ? models.find((m) => m.selector === parsed.base) ?? null : null;
+  const name = matched?.name ?? null;
   const label = text ?? (typeof entry === "number" ? String(entry) : JSON.stringify(entry) ?? "?");
   return (
     <li className="chain-chip">
@@ -422,8 +425,21 @@ function ChainChip(props: {
       <span className={name !== null ? undefined : "mono"}>
         {name ?? (parsed !== null ? parsed.base : label)}
       </span>
-      {parsed !== null && parsed.thinking !== "" ? (
-        <span className="badge badge-grey">{parsed.thinking}</span>
+      {matched !== null && matched.provider !== "" ? (
+        <span className="badge badge-grey" title="供应商">
+          {matched.provider}
+        </span>
+      ) : null}
+      {parsed !== null ? (
+        parsed.thinking !== "" ? (
+          <span className="badge badge-grey" title="思考强度">
+            {parsed.thinking}
+          </span>
+        ) : (
+          <span className="badge badge-grey" title="未指定档位：继承出错回合的思考强度">
+            继承
+          </span>
+        )
       ) : null}
       {text !== null && name === null ? (
         <span className="badge badge-grey">未知值 · 保留</span>

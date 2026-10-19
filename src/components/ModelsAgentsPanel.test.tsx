@@ -83,7 +83,7 @@ const BASE_CONFIG: ModelConfig = {
     default: ["5438/mimo-v2.6-pro", "factory-droid/gpt-6.1-sol"],
     task: ["5438/deepseek-v4.1-flash"],
     "5438/mimo-v2.6-pro": ["factory-droid/gpt-6.1-sol"],
-    "retired/old": ["5438/deepseek-v4.1-flash"],
+    "retired/old": ["5438/deepseek-v4.1-flash:max", "retired/older"],
     sonic: ["5438/deepseek-v4.1-flash"],
   },
   agents: AGENTS,
@@ -334,6 +334,38 @@ describe("Agent", () => {
     expect(saves.map((s) => s.key)).toEqual(["task.disabledAgents", "task.agentAdvisor"]);
     expect(saves[0].value).toEqual(["deployer"]);
     expect(saves[1].value).toEqual({ task: "off" });
+  });
+});
+
+describe("兜底 chip 的信息展示", () => {
+  it("条目显示 provider 徽章；裸条目显示「继承」档位徽章", async () => {
+    stubConfig([]);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "主要模型" });
+
+    const chips = within(within(roleCard("default")).getByTestId("chain-default")).getAllByRole(
+      "listitem",
+    );
+    expect(chips).toHaveLength(2);
+    expect(within(chips[0]).getByTitle("供应商")).toHaveTextContent("5438");
+    expect(within(chips[0]).getByTitle(/继承/)).toHaveTextContent("继承");
+    expect(within(chips[0]).queryByTitle("思考强度")).not.toBeInTheDocument();
+    expect(within(chips[1]).getByTitle("供应商")).toHaveTextContent("factory-droid");
+    expect(within(chips[1]).getByTitle(/继承/)).toHaveTextContent("继承");
+  });
+
+  it("带后缀条目显示档位徽章；未知 selector 无 provider 徽章", async () => {
+    stubConfig([]);
+    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    await screen.findByRole("region", { name: "其他模型的兜底" });
+    fireEvent.click(screen.getByText(/共 2 条/));
+
+    const chips = within(screen.getByTestId("chain-retired/old")).getAllByRole("listitem");
+    expect(within(chips[0]).getByTitle("供应商")).toHaveTextContent("5438");
+    expect(within(chips[0]).getByTitle("思考强度")).toHaveTextContent("max");
+    expect(within(chips[1]).queryByTitle("供应商")).not.toBeInTheDocument();
+    expect(within(chips[1]).getByTitle(/继承/)).toHaveTextContent("继承");
+    expect(within(chips[1]).getByText("未知值 · 保留")).toBeInTheDocument();
   });
 });
 
