@@ -13,7 +13,7 @@ import type {
 
 export const FIXTURE_MARKER = "__OMP_RESUME_FIXTURE_ONLY__";
 
-const SESSIONS_DIR = "/Users/chenjing/.omp/agent/sessions";
+const SESSIONS_DIR = "/Users/demo/.omp/agent/sessions";
 const NOW = Date.now();
 const MIN = 60000;
 
@@ -175,7 +175,7 @@ const s1: FixtureSession = withPath(
     summary: baseSummary({
       id: s1id,
       path: s1path,
-      cwd: "/Users/chenjing/my/omp-resume",
+      cwd: "/Users/demo/my/omp-resume",
       title: "🎛️ DEMO: 构建可视化配置桌面应用",
       messageCount: 24,
       sizeBytes: 1218560,
@@ -199,7 +199,7 @@ const s2: FixtureSession = withPath(
     summary: baseSummary({
       id: s2id,
       path: s2path,
-      cwd: "/Users/chenjing/my/omp-resume",
+      cwd: "/Users/demo/my/omp-resume",
       title: "🏠 DEMO4: 修复示例代理连接失败",
       inUse: true,
       occupant: { pid: 3074, app: "VS Code", appVersion: "1.138.0" },
@@ -236,7 +236,7 @@ const s3: FixtureSession = withPath(
     summary: baseSummary({
       id: s3id,
       path: s3path,
-      cwd: "/Users/chenjing/my/omp-resume",
+      cwd: "/Users/demo/my/omp-resume",
       title: "🔀 fork：鉴权中间件重构",
       fork: { parentRaw: s1id, parentTitle: s1.summary.title, parentPath: s1path },
       messageCount: 6,
@@ -260,7 +260,7 @@ const s4: FixtureSession = withPath(
     summary: baseSummary({
       id: s4id,
       path: s4path,
-      cwd: "/Users/chenjing/my/notes-app",
+      cwd: "/Users/demo/my/notes-app",
       title: "🦙 DEMO3: 本地模型总结笔记",
       fork: { parentRaw: "01a00000-dead-beef-0000-000000000000", parentTitle: null, parentPath: null },
       messageCount: 12,
@@ -357,7 +357,7 @@ const s5: FixtureSession = {
   summary: baseSummary({
     id: s5id,
     path: s5path,
-    cwd: "/Users/chenjing/my/notes-app",
+    cwd: "/Users/demo/my/notes-app",
     title: "🔀 分支很多的会话：鉴权方案 A/B 对比",
     messageCount: 9,
     branchCount: 3,
@@ -382,7 +382,7 @@ const s6: FixtureSession = {
   summary: baseSummary({
     id: s6id,
     path: s6path,
-    cwd: "/Users/chenjing/my/notes-app",
+    cwd: "/Users/demo/my/notes-app",
     title: "很老的会话（格式 v2）",
     formatSupported: false,
     version: 2,
@@ -409,7 +409,7 @@ const s7: FixtureSession = withPath(
     summary: baseSummary({
       id: s7id,
       path: s7path,
-      cwd: "/Users/chenjing/work/secret-project",
+      cwd: "/Users/demo/work/secret-project",
       cwdExists: false,
       title: "🗑️ 旧项目：删库迁移记录",
       messageCount: 4,
@@ -446,7 +446,7 @@ const s8: FixtureSession = withPath(
     summary: baseSummary({
       id: s8id,
       path: s8path,
-      cwd: "/Users/chenjing/work/secret-project",
+      cwd: "/Users/demo/work/secret-project",
       title: LONG_TITLE,
       messageCount: 5,
       sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
@@ -483,7 +483,7 @@ const s9: FixtureSession = withPath(
     summary: baseSummary({
       id: s9id,
       path: s9path,
-      cwd: "/Users/chenjing/work/secret-project",
+      cwd: "/Users/demo/work/secret-project",
       title: "🔒 权限问题排查",
       probeOk: false,
       sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
@@ -508,7 +508,7 @@ const s10: FixtureSession = withPath(
     summary: baseSummary({
       id: s10id,
       path: s10path,
-      cwd: "/Users/chenjing/work/secret-project",
+      cwd: "/Users/demo/work/secret-project",
       title: "(无标题)",
       messageCount: 2,
       sizeBytes: 2048,
@@ -529,7 +529,7 @@ const s11: FixtureSession = withPath(
     summary: baseSummary({
       id: s11id,
       path: s11path,
-      cwd: "/Users/chenjing/work/secret-project",
+      cwd: "/Users/demo/work/secret-project",
       title: "🧹 空会话：只有系统提示，没有用户消息",
       messageCount: 0,
       branchCount: 0,

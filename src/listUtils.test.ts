@@ -39,31 +39,31 @@ function s(over: Partial<SessionSummary> & { path: string }): SessionSummary {
 
 const groups: ProjectGroup[] = [
   {
-    cwd: "/Users/chenjing/my/omp-resume",
+    cwd: "/Users/demo/my/omp-resume",
     dirName: "-my-omp-resume",
     sessions: [
-      s({ path: "/p/a.jsonl", cwd: "/Users/chenjing/my/omp-resume", title: "🎛️ DEMO: 构建桌面应用" }),
+      s({ path: "/p/a.jsonl", cwd: "/Users/demo/my/omp-resume", title: "🎛️ DEMO: 构建桌面应用" }),
       s({
         path: "/p/b.jsonl",
-        cwd: "/Users/chenjing/my/omp-resume",
+        cwd: "/Users/demo/my/omp-resume",
         title: "修复代理",
         firstUserMessage: "示例代理 407",
       }),
     ],
   },
   {
-    cwd: "/Users/chenjing/my/notes-app",
+    cwd: "/Users/demo/my/notes-app",
     dirName: "-my-notes-app",
     sessions: [
-      s({ path: "/p/c.jsonl", cwd: "/Users/chenjing/my/notes-app", title: "笔记总结" }),
+      s({ path: "/p/c.jsonl", cwd: "/Users/demo/my/notes-app", title: "笔记总结" }),
     ],
   },
 ];
 
 describe("filterGroups", () => {
   it("按标题、cwd、首条用户消息做大小写不敏感子串匹配", () => {
-    expect(filterGroups(groups, "demo").map((g) => g.cwd)).toEqual([
-      "/Users/chenjing/my/omp-resume",
+    expect(filterGroups(groups, "demo:").map((g) => g.cwd)).toEqual([
+      "/Users/demo/my/omp-resume",
     ]);
     expect(filterGroups(groups, "示例")[0].sessions.map((x) => x.path)).toEqual([
       "/p/b.jsonl",
@@ -100,8 +100,8 @@ describe("filterGroups", () => {
       "/p/c.jsonl",
     ]);
     // meta 缺失时原有匹配不变。
-    expect(filterGroups(groups, "demo", null)[0].sessions).toHaveLength(1);
-    expect(filterGroups(groups, "demo")[0].sessions).toHaveLength(1);
+    expect(filterGroups(groups, "demo:", null)[0].sessions).toHaveLength(1);
+    expect(filterGroups(groups, "demo:")[0].sessions).toHaveLength(1);
   });
 });
 

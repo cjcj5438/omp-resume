@@ -106,7 +106,7 @@ function mcpConfig(config: unknown): asserts config is McpObject {
 }
 
 function createMcpMock() {
-  const home = "/Users/chenjing";
+  const home = "/Users/demo";
   const schema = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
   const userDocument: McpObject = {
     $schema: schema,
@@ -157,7 +157,7 @@ function createMcpMock() {
   function projectFile(project: string): Promise<McpMockFile> {
     let file = projects.get(project);
     if (!file) {
-      const document = project === "/Users/chenjing/my/omp-resume"
+      const document = project === "/Users/demo/my/omp-resume"
         ? { $schema: schema, mcpServers: { shared: { type: "http", url: "https://example.test/project-mcp" } } }
         : null;
       file = hash(document).then((revision) => ({ scope: "project", path: `${project}/.omp/mcp.json`, document, revision }));
@@ -436,8 +436,8 @@ export async function installMockBackend(): Promise<MockHandle> {
         return mcp(cmd, args);
       case "get_config":
         return {
-          sessionsDir: "/Users/chenjing/.omp/agent/sessions",
-          ownersDir: "/Users/chenjing/.omp/run/session-owners",
+          sessionsDir: "/Users/demo/.omp/agent/sessions",
+          ownersDir: "/Users/demo/.omp/run/session-owners",
         };
       case "list_cleanup_candidates": {
         const olderThanDays = Number(args["olderThanDays"]);
@@ -604,7 +604,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         return null;
       }
       case "choose_directory":
-        return params.get("pick") === "cancel" ? null : "/Users/chenjing/my/omp-resume";
+        return params.get("pick") === "cancel" ? null : "/Users/demo/my/omp-resume";
       case "get_session_recap": {
         // 仅第一个夹具会话有 recap，便于同时看到「有」与「无」两种详情。
         const sid = args["sessionId"];
@@ -616,12 +616,12 @@ export async function installMockBackend(): Promise<MockHandle> {
         const entries: PromptHistoryEntry[] = [
           { id: 3, prompt: "给 Sidebar 加一个新会话按钮，点击后先选目录", cwd: first?.cwd ?? null, sessionId: first?.id ?? null, createdAt: "2026-10-16T01:00:00.000Z", useCount: 3 },
           { id: 2, prompt: "帮我看看 100% 的 CPU 占用", cwd: null, sessionId: "gone-session-id", createdAt: "2026-10-15T08:00:00.000Z", useCount: 1 },
-          { id: 1, prompt: "fix README.md typo", cwd: "/Users/chenjing/my/other", sessionId: null, createdAt: "2026-10-14T03:00:00.000Z", useCount: 2 },
+          { id: 1, prompt: "fix README.md typo", cwd: "/Users/demo/my/other", sessionId: null, createdAt: "2026-10-14T03:00:00.000Z", useCount: 2 },
         ];
         return entries.filter((e) => q === "" || e.prompt.toLowerCase().includes(q));
       }
       case "omp_version":
-        return { version: "18.11.1", path: "/Users/chenjing/.local/bin/omp" };
+        return { version: "18.11.1", path: "/Users/demo/.local/bin/omp" };
       case "omp_update_check": {
         const mode = params.get("omp");
         const current = "18.11.1";

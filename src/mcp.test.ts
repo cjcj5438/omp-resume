@@ -59,7 +59,7 @@ describe("MCP 命令封装", () => {
 });
 
 describe("MCP 有状态 mock", () => {
-  const project = "/Users/chenjing/my/omp-resume";
+  const project = "/Users/demo/my/omp-resume";
 
   it("覆盖 project 同名、disabledServers 与强制启用，列表不泄露 secret 值", async () => {
     await installMockBackend();
@@ -145,7 +145,7 @@ describe("MCP 有状态 mock", () => {
   it("项目路径校验与 ?fail=<cmd>", async () => {
     await installMockBackend();
     await expect(listMcp({ project: "relative" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    await expect(listMcp({ project: "/Users/chenjing" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(listMcp({ project: "/Users/demo" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(getMcpServer({ scope: "project", name: "x" })).rejects.toMatchObject({ code: "INVALID_INPUT" });
 
     clearMocks();

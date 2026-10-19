@@ -9,7 +9,7 @@ import { getMcpServer, listMcp, saveMcpServer } from "../api";
 import { installMockBackend } from "../dev/mockBackend";
 import { McpPanel } from "./McpPanel";
 
-const PROJECTS = [{ cwd: "/Users/chenjing/my/omp-resume", name: "omp-resume" }];
+const PROJECTS = [{ cwd: "/Users/demo/my/omp-resume", name: "omp-resume" }];
 
 function renderPanel(onToast = vi.fn()) {
   render(<McpPanel projects={PROJECTS} onToast={onToast} />);
@@ -224,7 +224,7 @@ describe("编辑与保存", () => {
           files: [
             {
               scope: "user",
-              path: "/Users/chenjing/.omp/agent/mcp.json",
+              path: "/Users/demo/.omp/agent/mcp.json",
               exists: true,
               readError: null,
               revision: "r1",
@@ -312,7 +312,7 @@ describe("只读与失败", () => {
           files: [
             {
               scope: "user",
-              path: "/Users/chenjing/.omp/agent/mcp.json",
+              path: "/Users/demo/.omp/agent/mcp.json",
               exists: true,
               readError: "配置文件不是合法 JSON，请先手动修复",
               revision: "deadbeef",
@@ -341,7 +341,7 @@ describe("只读与失败", () => {
         files: [
           {
             scope: "user",
-            path: "/Users/chenjing/.omp/agent/mcp.json",
+            path: "/Users/demo/.omp/agent/mcp.json",
             exists: false,
             readError: null,
             revision: "absent",
@@ -419,7 +419,7 @@ describe("冲突后重载失败", () => {
           files: [
             {
               scope: "user",
-              path: "/Users/chenjing/.omp/agent/mcp.json",
+              path: "/Users/demo/.omp/agent/mcp.json",
               exists: true,
               readError: null,
               revision: "r1",
@@ -466,7 +466,7 @@ describe("双击竞态", () => {
       files: [
         {
           scope: "user",
-          path: "/Users/chenjing/.omp/agent/mcp.json",
+          path: "/Users/demo/.omp/agent/mcp.json",
           exists: true,
           readError: null,
           revision,
