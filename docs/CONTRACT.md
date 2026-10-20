@@ -669,17 +669,26 @@ header `.title`、每个 `title_change` 的 `.title`。
   `listUtils.applyPins(groups, pins) -> PinnedSplit { pinnedSessions, groups }`
   （组内被掏空时保留空组壳，由 Sidebar 展示占位）。
   过滤（文本 + 标签）与置顶区联动：置顶区只显示匹配项，无匹配时整区隐藏。
-  置顶视觉：区头强调色 📌 +「置顶」标签 + 数量徽章；置顶行左侧 3px 强调色竖条 +
-  `accent-soft` 淡底；置顶按钮 `pin-toggle-on` 常亮实心，未置顶仅 hover/focus 显示。
+  置顶视觉：区头强调色 📌 +「置顶」标签 + 数量徽章；置顶行仅左侧 3px 强调色竖条
+  （不再染 `accent-soft` 底色，与普通行同一底色）；置顶按钮 `pin-toggle-on` 常亮实心，
+  未置顶仅 hover/focus 显示。
   详情头按钮同理：已置顶 `btn-accent` +「已置顶」（aria-pressed），未置顶「置顶」。
 - **空项目组占位**：组内会话全被置顶时保留组壳——组头（项目置顶按钮与
   「在此项目新会话」+）照常渲染，组内一行「该项目的会话均已置顶」；
   隐藏数量徽章与「目录不存在」徽章，不渲染组头三态复选框。
-- **批量选择**：项目组头三态复选框（`checkState`：none/some/all，aria-label
+- **批量选择**：搜索行右侧「多选」图标按钮（aria-label/title「多选」，`aria-pressed`，
+  开启态 `accent-soft` + 强调色描边）是批量入口，状态为 Sidebar 本地 UI 状态：
+  开启后侧栏加 `is-selecting`（全部行/组头勾选框常显），选择条常驻（0 选中也显示
+  「已选 0 项」+「全选当前列表」）；关闭即 `onClearChecks()` 清空并退出。
+  有任何勾选时开关自动呈按下态（`selecting = multiMode || checked.size > 0`）。
+  项目组头三态复选框（`checkState`：none/some/all，aria-label
   「选择项目 X 的全部会话」）对该组**当前可见**（已过滤、含已折叠）的全部会话
-  批量勾选/取消；置顶区头同构（「选择全部置顶会话」）。有选中项时过滤框下方出现
-  选择条：「已选 N 项」+（未选满时）「全选当前列表」+「清除选择」；全选范围 =
-  置顶区 + 各组当前可见会话（置顶已从原组移出，不重复）。批量删除流程语义不变。
+  批量勾选/取消；置顶区头同构（「选择全部置顶会话」）。行内与组头勾选框平时
+  `opacity: 0` 占位隐藏（DOM 保留、可聚焦，hover 行/组头、键盘聚焦、已勾选或
+  `is-selecting` 时显示），因此列表扫读时左缘没有成排勾选框。选择条：
+  「已选 N 项」+（未选满时）「全选当前列表」+（N>0 时）「清除选择」；
+  全选范围 = 置顶区 + 各组当前可见会话（置顶已从原组移出，不重复）。
+  批量删除流程语义不变。
   `listUtils` 另导出 `checkState` / `filterSessions` / `filterSessionsByTags`；
   `Sidebar` 新增 props `pinnedSessions` / `onToggleChecks(paths, on)` / `onClearChecks()`。
 - **omp 更新日志**（`src/format.ts`）：常量 `OMP_CHANGELOG_URL` =
@@ -691,39 +700,49 @@ header `.title`、每个 `title_change` 的 `.title`。
   （`opener:default` 已允许 https）。
 - **命令速查**（`src/ompCommands.ts` / `src/ompCombos.ts` / `CheatSheetDialog.tsx`，
   纯前端静态数据，无后端命令）：
-  - 基准 `OMP_VERSION = "18.12.2"`，共 **86 条**内置命令（分组 + 英文参数提示 +
-    手写中文一句话说明 + 别名）。相较 18.10.3 新增 `/seance`，无移除；
-    `/cleanse`、`/modelpreset`、`/skills` 的参数提示已更新；部分中文说明修订；
-    别名不变。自定义命令、技能（`/skill:xxx`）与插件命令不收录，实时补全以
-    omp 内输入 `/` 为准。
+  - 基准 `OMP_VERSION = "18.12.3"`，共 **87 条**内置命令（分组 + 英文参数提示 +
+    手写中文一句话说明 + 别名）。相较 18.12.2 新增 `/forget-approvals`，无移除、
+    无更名（与上游 CHANGELOG [18.12.3] Added 一致）；`/setup` 参数提示修正为
+    `[providers]`（其它参数会被 handler 拒绝），`/ssh` 改为与 `/mcp` 等一致的
+    子命令枚举式 `<add|list|remove|help>`；别名不变。自定义命令、技能（`/skill:xxx`）
+    与插件命令不收录（/autoresearch、/init、/annotate、/green、/review 不在统一
+    内置注册表内，随扩展机制提供），实时补全以 omp 内输入 `/` 为准。
   - **复核方法**（表头注释同样记录，改表后需按此抽查）：`omp` 没有
-    `--list-commands`；用 `omp --mode rpc --no-session` 发
-    `get_available_commands` 取机器可读的 `{name, description, input.hint,
-    aliases, subcommands}`（本次 45 条，仅 RPC 可执行子集），再与 TUI 补全列表
-    及逐条按 Tab 后的参数 ghost hint 交叉核对，得到全部内置命令与参数提示。
+    `--list-commands`；用 `omp --mode rpc` 发 `get_available_commands` 取机器可读的
+    `{name, description, input.hint, aliases, subcommands}`（18.12.3 下 46 条核心
+    内置，仅 RPC 可执行子集；`--no-extensions`/`--no-skills` 可剥离扩展与技能命令），
+    再与 TUI 补全列表及逐条按 Tab 后的参数 ghost hint、上游 tag 源码
+    `packages/coding-agent/src/slash-commands/builtin-*.ts`（统一内置注册表本身）
+    三方交叉核对，得到全部内置命令与参数提示。
   - `filterOmpCommands(groups, query)`：大小写不敏感子串，去掉查询前导 `/`；
-    匹配 name / 别名 / 中文说明，只保留有命中的分组。
+    匹配 name / 别名 / 参数提示 / 中文说明 / 意图关键词（`OMP_INTENT_KEYWORDS`，
+    如 排队→`/queue`、协作→`/collab`、预算→`/goal`），只保留有命中的分组。
     `findOmpCommand(name)` 按命令名或别名精确查找（含别名，供组合校验）。
   - **版本提示**：`CheatSheetDialog` 可选 prop `installedVersion`（App 传入
     `ompVersion`）；纯函数 `versionMismatch(installed)` **只做相等判断**
     （不做 semver 比较），已安装版本为空/未知时不提示；不一致时显示
-    「你安装的是 X，速查基于 18.12.2，个别命令可能有差异」。
+    「你安装的是 X，速查基于 18.12.3，个别命令可能有差异」。
   - **两个视图**（顶部分段 [全部命令 | 组合用法]，过滤框共用、切换视图保留查询）：
-    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明；头部显示
-      「基于 omp 18.12.2 · 共 86 条内置命令」，过滤中显示「匹配 X / 86 条」。
+    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明；空查询时顶部额外显示
+      「常用」分组（`OMP_PINNED_COMMANDS` 引用的命令，不计入总数；复制按钮 key 带分组名前缀，
+      与原分组行互不干扰），过滤时隐藏。头部显示
+      「基于 omp 18.12.3 · 共 87 条内置命令」，过滤中显示「匹配 X / 87 条」。
       行内一键复制：主按钮复制 `/name`；有参数时另有「参数」按钮复制
       `/name <args 原样>` 模板（不替换占位符）。复制成功按钮变「已复制 ✓」1.5 秒，
       失败在弹窗内可见提示「复制失败：剪贴板不可用，请手动选择文本复制」4 秒后消失；
       复制经 `src/clipboard.ts` 的 `copyText`（返回 boolean，绝不抛异常）。
       按钮在行 hover 或键盘聚焦时出现，`@media (hover: none)` 触屏常显。
-    - 组合用法：11 张「场景 → 命令序列」卡片（`OMP_COMBOS`），每张含标题、
+    - 组合用法：12 张「场景 → 命令序列」卡片（`OMP_COMBOS`），每张含标题、
       「何时使用」、有序步骤（命令 + 一句话说明）；每步可单独复制，卡片头
       「复制全部」把各步命令**每步一行换行拼接**。带参数的步骤写成
       `<占位符>` 模板（说明里注明需替换）。过滤匹配场景标题、何时使用、
       每步命令与说明。
   - **组合数据不变量**（`ompCombos.test.ts` 单测锁定）：每个组合 ≥2 步；
     每步命令必须存在于 `OMP_COMMANDS`（含别名，经 `findUnknownComboStep`
-    校验）；`id` 与标题唯一；组合总数 8–12（当前 11）。
+    校验）；`id` 与标题唯一；组合总数 8–12（当前 12）。其中 `memory` 组合按
+    mnemopi 后端编写（view → stats → diagnose → enqueue）：`queue` 仅 sharpshooter
+    后端实现（其余后端报 not available），`mm …` 仅 hindsight 后端可用，
+    mnemopi 下 `clear` 会删除整个作用域的记忆库 DB 文件（故组合内不收录 `clear`）。
   - 样式集中在 `src/components/CheatSheet.css`（`.cheatsheet-*`，只用 App.css
     语义变量，浅色/深色主题共用）。
 - **复制会话 ID**（`src/clipboard.ts`）：详情头 ID 按钮写入剪贴板，纯前端。
@@ -908,7 +927,7 @@ bashExecution（无 content 数组）与 developer：
 
 ### 12.4 前端（统计视图）
 
-侧栏「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
+侧栏视图切换条「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
 
 - 「花费」（默认范围 `30d`）：范围分段（今天 / 近 24 小时 / 近 7 天 / 近 30 天 /
   全部）+ 刷新；总计卡（总额 + 主对话/后台/子代理 + token 明细）；**花费趋势柱状图**
@@ -991,7 +1010,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
     其他 osascript 失败 → `IO`。
   - 返回值去掉尾部换行与末尾斜杠；根目录保留 `/`。
   - 纯函数 `ops::picker::parse_choose_output` 负责解释结果。
-- 前端：「新会话…」按钮（侧栏顶部）→ `choose_directory` → 有结果则
+- 前端：侧栏顶部强调色「新会话…」按钮 → `choose_directory` → 有结果则
   `new_session_in_iterm`；项目分组头「+」按钮（hover/focus 显示，
   与置顶按钮并排，tooltip「在此项目新会话」）直接用该组 `cwd`。目录不存在时禁用。
   成功 / 失败提示沿用「在 iTerm 继续」的 toast 处理。
@@ -1024,7 +1043,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 实测（omp 18.11.1，2026-10-16）：`history` 429 行、`session_recaps` 110 行
   覆盖 39 个会话；库为 WAL 模式。只读查询前后 `history.db` 主文件
   大小与 mtime 不变，`-wal` / `-shm` 亦无变化。
-- 前端：侧栏「提示词历史」按钮 → `PromptHistoryView.tsx`：搜索框（200ms 防抖）
+- 前端：侧栏视图切换条「提示词历史」→ `PromptHistoryView.tsx`：搜索框（200ms 防抖）
   + 列表（prompt 截断 2 行、cwd 末段、相对时间、使用次数），每条三个动作：
   「复制」（`clipboard.ts`）、「跳到来源会话」（**仅当 sessionId 命中当前已加载
   会话列表时可用**，否则禁用，选中该会话）、「在该目录新会话」
@@ -1077,7 +1096,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 14.4 前端
 
-- 侧栏「清理」按钮（与「管理」「统计」同风格）→ 主区域 `CleanupView`：
+- 侧栏视图切换条「清理」（与「管理」「统计」同条）→ 主区域 `CleanupView`：
   「超过 N 天 / 体积前 N 名」两个数字输入、候选表格（标题、cwd 末段、原因标签、
   体积、修改时间、复选框、「查看」）、顶部「已选 X 个，可释放 Y」、
   「全选可勾选项」与「删除所选…」。

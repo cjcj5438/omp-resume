@@ -1,18 +1,23 @@
 /**
  * omp 内置斜杠命令速查数据（手写静态表）。
  *
- * 基准：omp 18.12.2 编译产物内嵌的统一内置注册表（86 条内置命令）。
+ * 基准：omp 18.12.3 编译产物内嵌的统一内置注册表（87 条内置命令）。
  * 复核方法：
  * 1. `echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
  *    返回启动帧 `available_commands_update` 与命令回包中机器可读的
  *    [{name, description, input.hint, aliases, subcommands}]，但只覆盖可在
- *    RPC 下执行的子集（本次 45 条）。
+ *    RPC 下执行的子集（18.12.3 下 46 条核心内置；/autoresearch、/init、/annotate、
+ *    /green、/review 不在统一内置注册表内，随扩展机制提供，/skill:* 与自定义命令
+ *    也不在此列——与本表「插件命令不收录」口径一致）。
  * 2. TUI 补全列表覆盖全部内置命令：输入 `/` 后按前缀滚动，可从每行的名称、
  *    图标与英文说明核对；再对每条命令按 Tab，用输入行的参数提示（ghost hint）
  *    校对 args。
- * 改动本表后请用这两种方式抽查名称拼写、参数提示与别名。
+ * 3. 上游源码 tag v18.12.3 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
+ *    即统一内置注册表本身：v18.12.2 → v18.12.3 仅新增 `/forget-approvals`，
+ *    无更名、无移除（与 CHANGELOG [18.12.3] Added 一致）。
+ * 改动本表后请用这几种方式抽查名称拼写、参数提示与别名。
  */
-export const OMP_VERSION = "18.12.2";
+export const OMP_VERSION = "18.12.3";
 
 export interface OmpCommand {
   /** 不带前导 `/` 的命令名，如 "compact"。 */
@@ -47,7 +52,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "queue", aliases: [], args: "<message>", zh: "把消息排到 agent 本轮结束后发送" },
       { name: "btw", aliases: [], args: "[question]", zh: "提一个旁支问题，或浏览本会话的旁问历史" },
       { name: "copy", aliases: [], args: "", zh: "从对话中挑选文本或代码复制" },
-      { name: "open", aliases: [], args: "", zh: "在浏览器打开对话中的链接" },
+      { name: "open", aliases: [], args: "", zh: "在浏览器打开对话中最近的链接（多条时先用 /copy 挑选）" },
       { name: "export", aliases: [], args: "[--themes] [path]", zh: "导出会话为 HTML 文件" },
       { name: "dump", aliases: [], args: "[all|anon]", zh: "复制会话记录到剪贴板，并写出 LLM 请求 JSON（all/anon 打包含子 agent 的 zip）" },
       { name: "seance", aliases: [], args: "[session id|path] [--model selector]", zh: "只读咨询另一个已保存的会话，不恢复它" },
@@ -84,7 +89,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "fast", aliases: [], args: "[on|ultra|off|status]", zh: "切换极速服务档（OpenAI priority/ultrafast、Anthropic fast、Google priority）" },
       { name: "slow", aliases: [], args: "[on|off|status]", zh: "切换慢速档：OpenAI/Google 走 flex 档，Anthropic 限额后低优先级续跑" },
       { name: "effort", aliases: [], args: "[level]", zh: "设置推理强度档位" },
-      { name: "modelpreset", aliases: [], args: "[list|save|switch|delete] [name]", zh: "保存与切换模型预设（角色模型 + 推理强度）" },
+      { name: "modelpreset", aliases: [], args: "[save|switch|delete|list] [name]", zh: "保存与切换模型预设（角色模型 + 推理强度）" },
       { name: "prewalk", aliases: [], args: "[restart|off]", zh: "预约、重启或取消一次性的模型交接" },
       { name: "extended-context", aliases: [], args: "[on|off|status]", zh: "开关扩展上下文窗口" },
     ],
@@ -103,6 +108,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "hub", aliases: [], args: "", zh: "打开实时 agent 总览" },
       { name: "computer", aliases: [], args: "[on|off|status]", zh: "开关桌面操控执行环境" },
       { name: "pause", aliases: [], args: "", zh: "冻结全部 agent 直到恢复" },
+      { name: "forget-approvals", aliases: [], args: "", zh: "清除 Ask and remember 记住的文件/目录审批，下次读写重新询问" },
       { name: "retry", aliases: [], args: "", zh: "重试上一次失败的回合" },
     ],
   },
@@ -140,9 +146,9 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
   {
     group: "配置与登录",
     commands: [
-      { name: "ssh", aliases: [], args: "<subcommand> (add|list|remove|help)", zh: "管理 SSH 主机增删与列表" },
+      { name: "ssh", aliases: [], args: "<add|list|remove|help>", zh: "管理 SSH 主机增删与列表" },
       { name: "settings", aliases: [], args: "", zh: "打开设置菜单" },
-      { name: "setup", aliases: ["providers"], args: "[providers ...]", zh: "打开服务商配置（登录与联网搜索）" },
+      { name: "setup", aliases: ["providers"], args: "[providers]", zh: "打开服务商配置（登录与联网搜索）" },
       { name: "login", aliases: [], args: "[provider|redirect URL]", zh: "登录 OAuth 服务商" },
       { name: "logout", aliases: [], args: "[provider]", zh: "登出 OAuth 账号" },
       { name: "browser", aliases: [], args: "[headless|visible]", zh: "切换浏览器 eval 预设的有界面/无界面模式" },
@@ -158,7 +164,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "stats", aliases: [], args: "[--port <port>] [--host <host>]", zh: "启动本地统计面板" },
       { name: "usage", aliases: [], args: "[show|reset [provider/credential-id|provider/active]]", zh: "查看服务商用量与限额" },
       { name: "changelog", aliases: [], args: "[full|last [N]]", zh: "查看更新日志" },
-      { name: "memory", aliases: [], args: "<view|stats|diagnose|queue|sync|clear|reset|enqueue|rebuild|mm list|mm show|mm refresh|mm history|mm seed|mm delete|mm reload>", zh: "记忆库维护：查看、同步、清理" },
+      { name: "memory", aliases: [], args: "<view|stats|diagnose|queue|sync|clear|reset|enqueue|rebuild|mm list|mm show|mm refresh|mm history|mm seed|mm delete|mm reload>", zh: "记忆库维护（子命令是否可用取决于 memory.backend；mnemopi 下 clear 会删除整个记忆库）" },
     ],
   },
   {
@@ -175,7 +181,55 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
 ];
 
 /**
- * 速查过滤：命令名（带或不带前导 `/`）、别名、中文说明，
+ * 意图关键词：命令名/别名/参数提示/中文说明覆盖不到的常用说法。
+ * 只收录指向明确的词（过滤时与其它字段一样做大小写不敏感子串匹配）。
+ */
+const OMP_INTENT_KEYWORDS: Readonly<Record<string, string[]>> = {
+  branch: ["后悔", "回滚"],
+  vibe: ["并行"],
+  tan: ["支线"],
+  collab: ["分享", "协作"],
+  join: ["协作", "链接"],
+  leave: ["协作"],
+  effort: ["思考", "thinking"],
+  rename: ["改名"],
+  resume: ["继续"],
+  queue: ["排队"],
+  login: ["账号"],
+  logout: ["退出登录"],
+  setup: ["设置"],
+  settings: ["配置"],
+  extensions: ["插件"],
+  ratchet: ["评估"],
+  handoff: ["总结"],
+  goal: ["预算"],
+  usage: ["额度"],
+  slow: ["省钱"],
+  fast: ["加速"],
+  pause: ["暂停"],
+  loop: ["重复"],
+  hotkeys: ["键盘"],
+  changelog: ["版本"],
+  "forget-approvals": ["批准"],
+};
+
+/**
+ * 空查询时置顶在「常用」分组的命令（按常用程度排序）。
+ * 每个名字都必须存在于 OMP_COMMANDS（单测校验）；只影响展示顺序，不计入总数。
+ */
+export const OMP_PINNED_COMMANDS: string[] = [
+  "compact",
+  "plan",
+  "model",
+  "context",
+  "effort",
+  "resume",
+  "new",
+  "todo",
+];
+
+/**
+ * 速查过滤：命令名（带或不带前导 `/`）、别名、参数提示、中文说明、意图关键词，
  * 大小写不敏感子串匹配；空查询返回原分组；空组隐藏。
  */
 export function filterOmpCommands(
@@ -189,7 +243,9 @@ export function filterOmpCommands(
     const commands = g.commands.filter((c) => {
       if (c.name.toLowerCase().includes(q)) return true;
       if (c.aliases.some((a) => a.toLowerCase().includes(q))) return true;
+      if (c.args.toLowerCase().includes(q)) return true;
       if (c.zh.toLowerCase().includes(q)) return true;
+      if ((OMP_INTENT_KEYWORDS[c.name] ?? []).some((k) => k.toLowerCase().includes(q))) return true;
       return false;
     });
     if (commands.length > 0) out.push({ ...g, commands });

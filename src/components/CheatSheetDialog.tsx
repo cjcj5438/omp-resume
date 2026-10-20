@@ -3,7 +3,7 @@
  * 版本提示：传入本机已安装版本，与速查基准版本不一致时在头部提示一行。
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { OMP_COMMANDS, OMP_VERSION, filterOmpCommands, versionMismatch } from "../ompCommands";
+import { OMP_COMMANDS, OMP_PINNED_COMMANDS, OMP_VERSION, filterOmpCommands, findOmpCommand, versionMismatch } from "../ompCommands";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
 import { Modal } from "./ui";
@@ -51,6 +51,15 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
   const combos = useMemo(() => filterOmpCombos(OMP_COMBOS, query), [query]);
   const total = OMP_COMMANDS.reduce((n, g) => n + g.commands.length, 0);
   const shown = groups.reduce((n, g) => n + g.commands.length, 0);
+  // 空查询时在顶部加一个「常用」分组（引用同一批命令对象，不计入总数）；过滤时隐藏，避免重复行。
+  const pinnedGroup = useMemo(
+    () => ({
+      group: "常用",
+      commands: OMP_PINNED_COMMANDS.map((n) => findOmpCommand(n)).filter((c) => c !== undefined),
+    }),
+    [],
+  );
+  const displayGroups = query.trim() === "" ? [pinnedGroup, ...groups] : groups;
 
   return (
     <Modal
@@ -98,7 +107,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
         <input
           type="search"
           className="filter-input cheatsheet-filter"
-          placeholder={tab === "commands" ? "按命令名或中文说明过滤" : "按场景、命令或说明过滤"}
+          placeholder={tab === "commands" ? "按命令名、参数或中文说明过滤" : "按场景、命令或说明过滤"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="过滤命令"
@@ -114,7 +123,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
         {tab === "commands" ? (
           <>
             {shown === 0 ? <div className="pane-note">没有匹配的命令</div> : null}
-            {groups.map((g) => (
+            {displayGroups.map((g) => (
               <section className="cheatsheet-group" key={g.group}>
                 <h3 className="cheatsheet-group-title">
                   {g.group}（{g.commands.length}）
@@ -151,9 +160,9 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                           className="cheatsheet-copy"
                           aria-label={`复制 /${c.name}`}
                           title={`复制 /${c.name}`}
-                          onClick={() => void copy(`cmd:${c.name}`, `/${c.name}`)}
+                          onClick={() => void copy(`cmd:${g.group}:${c.name}`, `/${c.name}`)}
                         >
-                          {copied === `cmd:${c.name}` ? "已复制 ✓" : "复制"}
+                          {copied === `cmd:${g.group}:${c.name}` ? "已复制 ✓" : "复制"}
                         </button>
                         {c.args ? (
                           <button
@@ -161,9 +170,9 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                             className="cheatsheet-copy"
                             aria-label={`复制 /${c.name} 的含参数模板`}
                             title={`复制 /${c.name} ${c.args}`}
-                            onClick={() => void copy(`tpl:${c.name}`, `/${c.name} ${c.args}`)}
+                            onClick={() => void copy(`tpl:${g.group}:${c.name}`, `/${c.name} ${c.args}`)}
                           >
-                            {copied === `tpl:${c.name}` ? "已复制 ✓" : "参数"}
+                            {copied === `tpl:${g.group}:${c.name}` ? "已复制 ✓" : "参数"}
                           </button>
                         ) : null}
                       </span>

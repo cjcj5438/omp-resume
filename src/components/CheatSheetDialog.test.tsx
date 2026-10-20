@@ -88,6 +88,21 @@ describe("复制", () => {
   });
 });
 
+describe("常用分组", () => {
+  it("空查询时顶部显示常用分组，过滤时隐藏且不重复行", () => {
+    renderDialog();
+    const titles = [...document.querySelectorAll(".cheatsheet-group-title")].map((el) => el.textContent ?? "");
+    expect(titles.length).toBeGreaterThan(1);
+    expect(titles[0]).toMatch(/^常用/);
+    // 置顶行与原分组行重复出现
+    expect(screen.getAllByRole("button", { name: "复制 /compact" })).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "compact" } });
+    expect(screen.queryByText(/^常用/, { selector: ".cheatsheet-group-title" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "复制 /compact" })).toHaveLength(1);
+  });
+});
+
 describe("组合用法", () => {
   it("切换视图后按场景展示，复制全部按换行拼接各步", async () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);

@@ -24,6 +24,7 @@ function renderSidebar(over: {
   onClearChecks?: () => void;
   onTogglePin?: (kind: string, key: string) => void;
   ompVersion?: string | null;
+  statsActive?: boolean;
 }) {
   const onToggleChecks = over.onToggleChecks ?? vi.fn();
   const onClearChecks = over.onClearChecks ?? vi.fn();
@@ -42,7 +43,7 @@ function renderSidebar(over: {
       onOpenCheatSheet={noop}
       manageActive={false}
       onToggleManage={noop}
-      statsActive={false}
+      statsActive={over.statsActive ?? false}
       onToggleStats={noop}
       cleanupActive={false}
       onToggleCleanup={noop}
@@ -212,5 +213,93 @@ describe("Sidebar omp 更新日志", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "更新日志" }));
     expect(mocked).toHaveBeenCalledExactlyOnceWith(OMP_CHANGELOG_URL);
+  });
+});
+
+describe("Sidebar 顶部", () => {
+  it("视图切换条同组：统计/清理/提示词历史/管理为 aria-pressed 开关，速查为普通动作", () => {
+    renderSidebar({ statsActive: true });
+    const nav = screen.getByRole("group", { name: "视图切换" });
+
+    expect(Array.from(nav.querySelectorAll("button"), (b) => b.textContent)).toEqual([
+      "统计",
+      "清理",
+      "提示词历史",
+      "管理",
+      "速查",
+    ]);
+    expect(within(nav).getByRole("button", { name: "统计" })).toHaveAttribute("aria-pressed", "true");
+    for (const name of ["清理", "提示词历史", "管理"]) {
+      expect(within(nav).getByRole("button", { name })).toHaveAttribute("aria-pressed", "false");
+    }
+    // 速查是打开对话框的动作，不是视图开关。
+    expect(within(nav).getByRole("button", { name: "速查" })).not.toHaveAttribute("aria-pressed");
+  });
+
+  it("图标化控件仍可被屏幕阅读器识别（刷新 / 外观）", () => {
+    renderSidebar({ ompVersion: "18.11.1" });
+    expect(screen.getByRole("button", { name: "刷新" })).toHaveAttribute("title", "刷新");
+    expect(screen.getByRole("button", { name: "外观" })).toHaveAttribute("title", "切换主题与强调色");
+  });
+});
+
+describe("Sidebar 多选开关", () => {
+  function multiToggle(): HTMLElement {
+    const btn = screen.getByRole("button", { name: "多选" });
+    expect(btn).toHaveAttribute("title", "多选");
+    return btn;
+  }
+
+  it("默认关闭：无选择条、侧栏不在选择态", () => {
+    renderSidebar({});
+    expect(multiToggle()).toHaveAttribute("aria-pressed", "false");
+    expect(document.querySelector(".sidebar")).not.toHaveClass("is-selecting");
+    expect(document.querySelector(".select-bar")).toBeNull();
+  });
+
+  it("打开后进入选择态：0 选中也显示选择条，可一键全选当前列表", () => {
+    const { onToggleChecks } = renderSidebar({});
+    fireEvent.click(multiToggle());
+
+    expect(multiToggle()).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector(".sidebar")).toHaveClass("is-selecting");
+    expect(screen.getByText("已选 0 项")).toBeInTheDocument();
+    // 0 选中时不提供无意义的「清除选择」。
+    expect(screen.queryByRole("button", { name: "清除选择" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "全选当前列表" }));
+    expect(onToggleChecks).toHaveBeenCalledWith(
+      list.groups.flatMap((g) => g.sessions.map((s) => s.path)),
+      true,
+    );
+  });
+
+  it("有勾选时开关自动保持开启；关闭开关则清空全部勾选", () => {
+    const { onClearChecks } = renderSidebar({ checked: new Set([s1.path]) });
+    // 未点开关：已有勾选即视为选择态。
+    expect(multiToggle()).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector(".sidebar")).toHaveClass("is-selecting");
+
+    fireEvent.click(multiToggle());
+    expect(onClearChecks).toHaveBeenCalledTimes(1);
+  });
+
+  it("空列表下不渲染空选择条", () => {
+    renderSidebar({ groups: [], pinnedSessions: [] });
+    fireEvent.click(multiToggle());
+    expect(document.querySelector(".select-bar")).toBeNull();
+  });
+
+  it("勾选项被过滤掉时选择条仍在，可清除选择", () => {
+    const { onClearChecks } = renderSidebar({
+      groups: [],
+      pinnedSessions: [],
+      checked: new Set([s1.path]),
+    });
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+    // 没有可见会话，不提供无从执行的全选。
+    expect(screen.queryByRole("button", { name: "全选当前列表" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
+    expect(onClearChecks).toHaveBeenCalledTimes(1);
   });
 });

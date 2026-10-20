@@ -1,8 +1,122 @@
-/* 侧栏：置顶区、批量选择条、项目组三态勾选、更新日志入口。
+/* 侧栏：顶部搜索/主操作/视图切换、置顶区、批量选择条、组头三态勾选、底部状态条。
  * 只使用 App.css 已有的语义变量，浅深色主题通用。 */
 
-/* ---- 置顶区：强调色小标签 + 填充图钉，与普通项目组明显区分 ---- */
+/* ---- 顶部：搜索行（过滤框 + 刷新图标按钮） ---- */
+.search-row {
+  display: flex;
+  gap: 6px;
+}
 
+.search-row .filter-input {
+  flex: 1;
+}
+
+/* ---- 顶部：唯一主操作，全宽强调按钮 ---- */
+.btn.new-session-btn {
+  justify-content: center;
+  width: 100%;
+  font-weight: 600;
+}
+
+.new-session-plus {
+  margin-right: 4px;
+  font-weight: 700;
+}
+
+/* ---- 顶部：视图切换分段条（统计/清理/提示词历史/管理/速查共用一行） ---- */
+.view-nav {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.view-nav-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.view-nav-btn:hover {
+  background: var(--bg-hover);
+}
+
+.view-nav-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---- 图标按钮：刷新（描边）/ 底部检查更新与外观（幽灵） ---- */
+.btn.icon-btn {
+  flex: none;
+  justify-content: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.btn.icon-btn-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn.icon-btn-quiet:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---- 多选开关：开启态强调色淡底 + 描边，与视图切换激活态同语言 ---- */
+.btn.icon-btn-multi[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- 勾选框平时隐藏：hover / 聚焦 / 已选 / 批量选择中才显示 ----
+ * 仅降透明度（仍占位、可聚焦），批量三态逻辑与可访问名称不变。
+ * 作用域限侧栏，避免将来的其他表格误用同名类被隐藏。 */
+.sidebar .row-check,
+.sidebar .group-check {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.sidebar .row:hover .row-check,
+.sidebar .row:focus-within .row-check,
+.sidebar .row-check:checked,
+.sidebar .row-check:focus-visible,
+.sidebar .group-header-row:hover .group-check,
+.sidebar .group-header-row:focus-within .group-check,
+.sidebar .group-check:checked,
+.sidebar .group-check:indeterminate,
+.sidebar .group-check:focus-visible,
+.sidebar.is-selecting .row-check,
+.sidebar.is-selecting .group-check {
+  opacity: 1;
+}
+
+/* ---- 项目组：组间留白，配合吸顶组头更易扫读 ---- */
+.group {
+  padding-bottom: 4px;
+}
+
+/* ---- 展开箭头：单个 ▸ 旋转 90° 表示展开 ---- */
+.group-arrow-open {
+  transform: rotate(90deg);
+}
+
+/* ---- 置顶区：强调色小标签 + 填充图钉，与普通项目组明显区分 ---- */
 .pinned-group {
   padding-bottom: 6px;
   margin-bottom: 4px;
@@ -30,7 +144,7 @@
 .pinned-count {
   flex: none;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 10px;
@@ -38,18 +152,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 置顶行：左侧强调色竖条 + 淡底；选中态优先于置顶底色。 */
+/* 置顶行：仅保留左侧强调色竖条；选中态不变。 */
 .row.row-pinned {
-  background: var(--accent-soft);
   border-left-color: var(--accent);
-}
-
-.row.row-pinned:hover {
-  background: var(--accent-soft);
-}
-
-.row.row-pinned.row-selected {
-  background: var(--bg-selected);
 }
 
 /* 脱离项目上下文的置顶行：小号等宽项目名。 */
@@ -62,8 +167,7 @@
   color: var(--text-muted);
 }
 
-/* ---- 批量选择条 ---- */
-
+/* ---- 批量选择条：强调色淡底，明确处于选择模式 ---- */
 .select-bar {
   display: flex;
   align-items: center;
@@ -73,7 +177,7 @@
   font-size: 11px;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
+  background: var(--accent-soft);
 }
 
 .select-link {
@@ -94,17 +198,74 @@
   border-radius: 3px;
 }
 
-/* ---- 组头三态勾选 ---- */
-
+/* ---- 组头三态勾选：与行内勾选框同列（组头行已有 9px 左内边距）。 ---- */
 .group-check {
   flex: none;
-  /* 与行内勾选框同列（行：22px 内边距 + 3px 竖条 + 4px 勾选框偏移）。 */
-  margin: 0 0 0 29px;
+  margin: 0;
 }
 
 /* 项目会话全部置顶后的占位说明：与行标题同列，克制一行。 */
 .group-empty-note {
-  padding: 4px 10px 8px 53px;
+  padding: 4px 10px 8px 28px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* ---- 底部状态条：计数…外观 / omp 版本…更新日志，两行收紧 ---- */
+.footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-row + .footer-row {
+  margin-top: 4px;
+}
+
+.footer-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* 外观齿轮比小号按钮字号略大，避免图标显得过小。 */
+.footer-row .appearance-wrap .btn {
+  font-size: 13px;
+}
+
+.footer-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.footer-row .changelog-link {
+  margin-left: 0;
+}
+
+/* 外观按钮在行尾：弹窗向左展开，避免溢出侧栏。 */
+.footer-row .appearance-pop {
+  left: auto;
+  right: 0;
+}
+
+/* ---- 键盘焦点：新增/重排的控件一律强调色描边 ---- */
+.view-nav-btn:focus-visible,
+.btn.icon-btn:focus-visible,
+.btn.new-session-btn:focus-visible,
+.group-header:focus-visible,
+.row-check:focus-visible,
+.group-check:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }

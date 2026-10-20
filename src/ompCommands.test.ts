@@ -5,8 +5,10 @@
 import { describe, expect, it } from "vitest";
 import {
   OMP_COMMANDS,
+  OMP_PINNED_COMMANDS,
   OMP_VERSION,
   filterOmpCommands,
+  findOmpCommand,
   versionMismatch,
 } from "./ompCommands";
 
@@ -45,6 +47,28 @@ describe("filterOmpCommands", () => {
     expect(rows.map((c) => c.name)).toContain("export");
   });
 
+  it("参数提示命中", () => {
+    const headless = filterOmpCommands(OMP_COMMANDS, "headless").flatMap((g) => g.commands);
+    expect(headless.map((c) => c.name)).toContain("browser");
+    const pane = filterOmpCommands(OMP_COMMANDS, "pane").flatMap((g) => g.commands);
+    expect(pane.map((c) => c.name)).toContain("fork");
+  });
+
+  it("意图关键词命中", () => {
+    const names = (q: string) =>
+      filterOmpCommands(OMP_COMMANDS, q).flatMap((g) => g.commands.map((c) => c.name));
+    expect(names("压缩")).toContain("compact");
+    expect(names("模型")).toContain("model");
+    expect(names("分叉")).toContain("fork");
+    expect(names("排队")).toContain("queue");
+    expect(names("思考")).toContain("effort");
+    expect(names("批准")).toContain("forget-approvals");
+    expect(names("预算")).toContain("goal");
+    expect(names("额度")).toContain("usage");
+    expect(names("协作")).toEqual(expect.arrayContaining(["collab", "join", "leave"]));
+    expect(names("插件")).toEqual(expect.arrayContaining(["plugins", "extensions"]));
+  });
+
   it("无命中返回空数组", () => {
     expect(filterOmpCommands(OMP_COMMANDS, "不存在的命令xyz")).toEqual([]);
   });
@@ -71,10 +95,18 @@ describe("版本提示", () => {
 
   it("版本不同即提示，不做 semver 比较", () => {
     expect(versionMismatch("18.10.3")).toBe(true);
-    expect(versionMismatch("18.12.2-beta.1")).toBe(true);
+    expect(versionMismatch("18.12.3-beta.1")).toBe(true);
   });
 
   it("OMP_VERSION 固定为速查基准版本", () => {
-    expect(OMP_VERSION).toBe("18.12.2");
+    expect(OMP_VERSION).toBe("18.12.3");
+  });
+});
+
+describe("OMP_PINNED_COMMANDS", () => {
+  it("每个置顶名字都存在于 OMP_COMMANDS 且不重复", () => {
+    expect(OMP_PINNED_COMMANDS.length).toBeGreaterThan(0);
+    for (const n of OMP_PINNED_COMMANDS) expect(findOmpCommand(n)?.name).toBe(n);
+    expect(new Set(OMP_PINNED_COMMANDS).size).toBe(OMP_PINNED_COMMANDS.length);
   });
 });

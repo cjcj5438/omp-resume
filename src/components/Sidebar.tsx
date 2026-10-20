@@ -103,41 +103,77 @@ export function Sidebar({
     .map((s) => s.path)
     .concat(groups.flatMap((g) => g.sessions.map((s) => s.path)));
   const hasUncheckedVisible = visiblePaths.some((p) => !checked.has(p));
+  // 多选模式（本地 UI 状态）：打开后全部勾选框常显、选择条常驻（即使 0 选中，
+  // 以便一键「全选当前列表」）；有任何勾选时自动视为进入选择态。
+  const [multiMode, setMultiMode] = useState(false);
+  const selecting = multiMode || checked.size > 0;
+  const toggleMulti = () => {
+    if (selecting) {
+      setMultiMode(false);
+      onClearChecks();
+    } else {
+      setMultiMode(true);
+    }
+  };
   return (
-    <aside className="sidebar">
+    <aside className={selecting ? "sidebar is-selecting" : "sidebar"}>
       <div className="sidebar-top">
-        <input
-          type="search"
-          className="filter-input"
-          placeholder="按标题或项目目录过滤"
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          aria-label="过滤会话"
-        />
-        <button type="button" className="btn" onClick={onNewSession}>
-          新会话…
+        <div className="search-row">
+          <input
+            type="search"
+            className="filter-input"
+            placeholder="按标题或项目目录过滤"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            aria-label="过滤会话"
+          />
+          <button
+            type="button"
+            className="btn icon-btn"
+            aria-label="刷新"
+            title="刷新"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            {loading ? (
+              <span className="spinner" aria-hidden="true" />
+            ) : (
+              <span aria-hidden="true">↻</span>
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn icon-btn icon-btn-multi"
+            aria-label="多选"
+            aria-pressed={selecting}
+            title="多选"
+            onClick={toggleMulti}
+          >
+            <span aria-hidden="true">☑</span>
+          </button>
+        </div>
+        <button type="button" className="btn btn-accent new-session-btn" onClick={onNewSession}>
+          <span aria-hidden="true" className="new-session-plus">+</span>新会话…
         </button>
-        <button type="button" className="btn" aria-pressed={statsActive} onClick={onToggleStats}>
-          统计
-        </button>
-        <button type="button" className="btn" aria-pressed={cleanupActive} onClick={onToggleCleanup}>
-          清理
-        </button>
-        <button type="button" className="btn" aria-pressed={historyActive} onClick={onToggleHistory}>
-          提示词历史
-        </button>
-        <button type="button" className="btn" aria-pressed={manageActive} onClick={onToggleManage}>
-          管理
-        </button>
-        <button type="button" className="btn" onClick={onOpenCheatSheet}>
-          速查
-        </button>
-        <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
-          {loading ? <span className="spinner" aria-hidden="true" /> : null}
-          刷新
-        </button>
+        <div className="view-nav" role="group" aria-label="视图切换">
+          <button type="button" className="view-nav-btn" aria-pressed={statsActive} onClick={onToggleStats}>
+            统计
+          </button>
+          <button type="button" className="view-nav-btn" aria-pressed={cleanupActive} onClick={onToggleCleanup}>
+            清理
+          </button>
+          <button type="button" className="view-nav-btn" aria-pressed={historyActive} onClick={onToggleHistory}>
+            提示词历史
+          </button>
+          <button type="button" className="view-nav-btn" aria-pressed={manageActive} onClick={onToggleManage}>
+            管理
+          </button>
+          <button type="button" className="view-nav-btn" onClick={onOpenCheatSheet}>
+            速查
+          </button>
+        </div>
       </div>
-      {checked.size > 0 ? (
+      {selecting && (checked.size > 0 || visiblePaths.length > 0) ? (
         <div className="select-bar">
           <span>已选 {checked.size} 项</span>
           {hasUncheckedVisible ? (
@@ -149,9 +185,11 @@ export function Sidebar({
               全选当前列表
             </button>
           ) : null}
-          <button type="button" className="select-link" onClick={onClearChecks}>
-            清除选择
-          </button>
+          {checked.size > 0 ? (
+            <button type="button" className="select-link" onClick={onClearChecks}>
+              清除选择
+            </button>
+          ) : null}
         </div>
       ) : null}
       {tagCounts.length > 0 ? (
@@ -200,8 +238,11 @@ export function Sidebar({
                 aria-expanded={!collapsed.has(PINNED_KEY)}
                 onClick={() => toggleCollapsed(PINNED_KEY)}
               >
-                <span className="group-arrow" aria-hidden="true">
-                  {collapsed.has(PINNED_KEY) ? "▸" : "▾"}
+                <span
+                  className={collapsed.has(PINNED_KEY) ? "group-arrow" : "group-arrow group-arrow-open"}
+                  aria-hidden="true"
+                >
+                  ▸
                 </span>
                 <span className="pinned-pin" aria-hidden="true">
                   📌
@@ -253,8 +294,11 @@ export function Sidebar({
                   aria-expanded={open}
                   onClick={() => toggleCollapsed(g.cwd)}
                 >
-                  <span className="group-arrow" aria-hidden="true">
-                    {open ? "▾" : "▸"}
+                  <span
+                    className={open ? "group-arrow group-arrow-open" : "group-arrow"}
+                    aria-hidden="true"
+                  >
+                    ▸
                   </span>
                   <span className="group-name">{name}</span>
                   <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
@@ -306,32 +350,36 @@ export function Sidebar({
         })}
       </div>
       <footer className="sidebar-footer">
-        共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
-        {ompVersion !== null ? (
-          <div className="omp-row">
-            <span className="mono muted">omp {ompVersion}</span>
-            <button
-              type="button"
-              className="btn btn-small"
-              disabled={ompChecking}
-              onClick={onCheckOmp}
-            >
-              {ompChecking ? <span className="spinner" aria-hidden="true" /> : null}
-              检查 omp 更新
-            </button>
-            <button
-              type="button"
-              className="changelog-link"
-              title="在浏览器打开 omp 官方更新日志"
-              onClick={() => void openOmpChangelog()}
-            >
-              更新日志
-            </button>
-          </div>
-        ) : null}
-        <div className="omp-row">
+        <div className="footer-row">
+          <span className="footer-count">
+            共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
+          </span>
           <AppearancePanel />
         </div>
+        {ompVersion !== null ? (
+          <div className="footer-row">
+            <span className="mono muted">omp {ompVersion}</span>
+            <div className="footer-actions">
+              <button
+                type="button"
+                className="btn btn-small footer-update"
+                disabled={ompChecking}
+                onClick={onCheckOmp}
+              >
+                {ompChecking ? <span className="spinner" aria-hidden="true" /> : null}
+                检查 omp 更新
+              </button>
+              <button
+                type="button"
+                className="changelog-link"
+                title="在浏览器打开 omp 官方更新日志"
+                onClick={() => void openOmpChangelog()}
+              >
+                更新日志
+              </button>
+            </div>
+          </div>
+        ) : null}
       </footer>
     </aside>
   );

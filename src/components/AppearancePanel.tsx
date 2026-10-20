@@ -82,13 +82,14 @@ export function AppearancePanel() {
       <button
         ref={btnRef}
         type="button"
-        className="btn btn-small"
+        className="btn btn-small icon-btn icon-btn-quiet"
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-label="外观"
         title="切换主题与强调色"
         onClick={() => setOpen((o) => !o)}
       >
-        外观
+        <span aria-hidden="true">⚙</span>
       </button>
       {open ? (
         <div className="appearance-pop" role="dialog" aria-label="外观设置">

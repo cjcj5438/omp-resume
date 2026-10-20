@@ -3,7 +3,7 @@
  *
  * 每条步骤只允许引用 OMP_COMMANDS 中真实存在的命令（含别名），
  * 单测会逐条校验；带参数的步骤写成含 `<占位符>` 的模板，由用户自行替换。
- * 说明文字与紧凑程度都以 omp 内置命令注册表为准（18.12.2），不描述表外的行为。
+ * 说明文字与紧凑程度都以 omp 内置命令注册表为准（18.12.3），不描述表外的行为。
  */
 import { findOmpCommand } from "./ompCommands";
 
@@ -130,11 +130,22 @@ export const OMP_COMBOS: OmpCombo[] = [
   {
     id: "memory",
     title: "记忆库维护",
-    when: "想确认 omp 记住了什么、或整理待合并的记忆。",
+    when: "memory.backend 为 mnemopi 时，想确认 omp 记住了什么、看统计与诊断（其它后端部分子命令不可用）。",
     steps: [
       { cmd: "/memory view", note: "看当前注入的长期记忆。" },
-      { cmd: "/memory queue", note: "看还有多少待合并的记忆增量。" },
-      { cmd: "/memory sync", note: "立刻执行一次记忆合并。" },
+      { cmd: "/memory stats", note: "看记忆库统计：各 bank 的条目、triple 数与最后写入时间。" },
+      { cmd: "/memory diagnose", note: "跑一遍后端诊断，有问题会列出来。" },
+      { cmd: "/memory enqueue", note: "强制合并一次：保留当前会话并 sleep（只合并 12 小时以上的条目）。" },
+    ],
+  },
+  {
+    id: "mcp-setup",
+    title: "给会话接入 MCP 服务",
+    when: "想让 agent 用上外部工具（搜索、数据库、浏览器等）时，先把 MCP 服务接进来再开工。",
+    steps: [
+      { cmd: "/mcp add <服务名>", note: "新增 MCP 服务：只给名称会进交互向导；也可照参数模板补 --url <地址>，或把本地启动命令接在 -- 后面。" },
+      { cmd: "/mcp test <服务名>", note: "测试新服务是否连得通。" },
+      { cmd: "/mcp list", note: "确认服务已在列表中并处于启用状态。" },
     ],
   },
 ];

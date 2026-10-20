@@ -30,9 +30,10 @@
   --danger-fill: #c9291c;
   --danger-soft: rgba(201, 41, 28, 0.1);
   --warn-soft: rgba(200, 130, 0, 0.12);
-  /* 徽章：占用中（橙）/ 树 label（黄） */
+  /* 徽章：占用中（橙•淡底 + 深色字 + 状态点）/ 树 label（黄）；-bg 另供用量图 fallback 色。 */
   --badge-inuse-bg: #b25a00;
-  --badge-inuse-text: #ffffff;
+  --badge-inuse-soft: rgba(178, 90, 0, 0.12);
+  --badge-inuse-ink: #8a4a00;
   --badge-label-bg: #e8c34a;
   --badge-label-text: #4a3800;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -61,7 +62,8 @@
   --danger-soft: rgba(255, 107, 94, 0.14);
   --warn-soft: rgba(255, 190, 80, 0.14);
   --badge-inuse-bg: #b25a00;
-  --badge-inuse-text: #ffffff;
+  --badge-inuse-soft: rgba(255, 176, 32, 0.16);
+  --badge-inuse-ink: #ffb020;
   --badge-label-bg: #e8c34a;
   --badge-label-text: #4a3800;
 }
@@ -196,8 +198,8 @@ body {
 
 .sidebar-top {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px;
   border-bottom: 1px solid var(--border);
 }
@@ -213,14 +215,11 @@ body {
   color: var(--text);
 }
 
-.sidebar-top .filter-input {
-  flex-basis: 100%;
-}
-
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  padding: 0 0 12px;
 }
 
 .sidebar-footer {
@@ -228,14 +227,6 @@ body {
   font-size: 11px;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
-}
-
-.omp-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-top: 4px;
 }
 
 /* omp 更新日志外链按钮：侧栏版本行与更新对话框共用（克制的小号文字链接）。 */
@@ -266,8 +257,9 @@ body {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 4px 6px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: var(--text);
   font-size: 12px;
@@ -283,6 +275,8 @@ body {
   width: 12px;
   flex: none;
   color: var(--text-muted);
+  text-align: center;
+  transition: transform 0.12s ease;
 }
 
 .group-name {
@@ -300,14 +294,26 @@ body {
 }
 
 .group-count {
-  color: var(--text-muted);
-  font-size: 11px;
   flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
 
+/* 组头行吸顶：长列表滚动时组名保持可见；不透明底色盖住下方滑过的行。 */
 .group-header-row {
   display: flex;
   align-items: center;
+  gap: 2px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 3px 4px 3px 9px;
+  background: var(--bg-sidebar);
 }
 
 /* 置顶按钮：已置顶常显；未置顶仅在所在行 hover/focus 时显示。 */
@@ -465,9 +471,9 @@ body {
 
 .row {
   display: flex;
-  gap: 8px;
+  gap: 5px;
   align-items: flex-start;
-  padding: 6px 10px 6px 22px;
+  padding: 5px 8px 5px 6px;
   cursor: default;
   border-left: 3px solid transparent;
 }
@@ -483,7 +489,8 @@ body {
 
 .row-check {
   flex: none;
-  margin-top: 2px;
+  /* 去掉 UA 默认外边距：勾选框左缘与组头勾选框（9px）对齐。 */
+  margin: 2px 0 0;
 }
 
 .row-main {
@@ -495,6 +502,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 /* 别名作主标题时，原标题小号灰字附后，明确区分两者。 */
@@ -508,10 +516,11 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: 3px 7px;
   font-size: 11px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 1px;
+  min-width: 0;
 }
 
 /* ---- 徽章 ---- */
@@ -519,15 +528,28 @@ body {
 .badge {
   display: inline-block;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 999px;
   font-size: 10px;
   line-height: 16px;
   white-space: nowrap;
 }
 
+/* 使用中：淡底 + 深色字 + 状态点（取代原来的实心橙底白字）。 */
 .badge-accent {
-  background: var(--badge-inuse-bg);
-  color: var(--badge-inuse-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--badge-inuse-soft);
+  color: var(--badge-inuse-ink);
+}
+
+.badge-accent::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .badge-grey {
