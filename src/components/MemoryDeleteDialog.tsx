@@ -1,7 +1,7 @@
 /**
- * 记忆删除确认框：由 memory_delete_preview 驱动显示删除/跳过/级联数量，
- * 由 memory_bank_status 做占用门禁；确认后调用 memory_delete_items。
- * 空 ids 时不发任何请求；破坏性命令只在明确点确认后触发。
+ * 记忆删除确认框：memory_delete_preview 给出可删/跳过/级联数字，
+ * memory_bank_status 做占用门禁；确认后才调用 memory_delete_items。
+ * 空 ids 不发任何请求。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { memoryDeleteItems, memoryDeletePreview, normalizeError } from "../api";
@@ -9,26 +9,9 @@ import type { MemoryDeletePreview } from "../types";
 import { errorText } from "../format";
 import { Modal } from "./ui";
 import type { ToastFn } from "./useOmpOp";
-import { formatHolders, memoryWriteErrorText, useBankStatus } from "./useMemoryMaintenance";
+import { MemoryGateNote, memoryWriteErrorText, useBankStatus } from "./useMemoryMaintenance";
 import "./MemoryPanel.css";
 
-function cascadeText(p: MemoryDeletePreview): string {
-  const parts: string[] = [];
-  if (p.cascade.facts > 0) parts.push(`事实 ${p.cascade.facts} 条`);
-  if (p.cascade.embeddings > 0) parts.push(`向量 ${p.cascade.embeddings} 个`);
-  if (p.cascade.annotations > 0) parts.push(`标注 ${p.cascade.annotations} 条`);
-  if (p.cascade.edges > 0) parts.push(`关联边 ${p.cascade.edges} 条`);
-  if (p.cascade.other > 0) parts.push(`其他 ${p.cascade.other} 条`);
-  return parts.length > 0 ? `同时清理：${parts.join(" · ")}。` : "无附带清理项。";
-}
-
-/** 全不可删时说明各原因条数。 */
-function unavailableReasons(p: MemoryDeletePreview): string {
-  const parts: string[] = [];
-  if (p.notFound > 0) parts.push(`${p.notFound} 条已不在库中`);
-  if (p.unsupported > 0) parts.push(`${p.unsupported} 条暂不支持`);
-  return parts.join("，");
-}
 export function MemoryDeleteDialog(props: {
   bank: string;
   displayName: string;
@@ -47,6 +30,12 @@ export function MemoryDeleteDialog(props: {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const gate = useBankStatus(bank, ids.length > 0, retryToken);
   const idsKey = ids.join("\n");
+  const status = gate.status !== null && gate.status.bank === bank ? gate.status : null;
+  const deletable = preview === null ? 0 : preview.deletable.working + preview.deletable.episodic;
+  const ready =
+    ids.length > 0 && !busy && !previewLoading && !gate.loading && preview !== null && previewError === null &&
+    gate.error === null && status !== null && !status.inUse && !status.probeFailed && deletable > 0;
+  const busyRef = useRef(false);
 
   useEffect(() => {
     if (ids.length === 0) return;
@@ -54,36 +43,14 @@ export function MemoryDeleteDialog(props: {
     setPreviewLoading(true);
     setPreviewError(null);
     memoryDeletePreview({ bank, ids })
-      .then((p) => {
-        if (!cancelled) setPreview(p);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setPreviewError(errorText(normalizeError(e)));
-      })
-      .finally(() => {
-        if (!cancelled) setPreviewLoading(false);
-      });
+      .then((p) => !cancelled && setPreview(p))
+      .catch((e: unknown) => !cancelled && setPreviewError(errorText(normalizeError(e))))
+      .finally(() => !cancelled && setPreviewLoading(false));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bank, idsKey, retryToken]);
-
-  const deletable = preview === null ? 0 : preview.deletable.working + preview.deletable.episodic;
-  const blocked =
-    gate.status !== null && (gate.status.inUse || gate.status.probeFailed);
-  const ready =
-    ids.length > 0 &&
-    !busy &&
-    !previewLoading &&
-    !gate.loading &&
-    preview !== null &&
-    previewError === null &&
-    gate.error === null &&
-    !blocked &&
-    deletable > 0;
-
-  const busyRef = useRef(false);
 
   async function confirm(): Promise<void> {
     if (!ready || busyRef.current) return;
@@ -94,9 +61,7 @@ export function MemoryDeleteDialog(props: {
       const result = await memoryDeleteItems({ bank, ids });
       const skipped = result.skipped.length;
       onToast(
-        skipped > 0
-          ? `已删除 ${result.deleted.length} 条，跳过 ${skipped} 条，已备份`
-          : `已删除 ${result.deleted.length} 条，已备份`,
+        skipped > 0 ? `已删除 ${result.deleted.length} 条，跳过 ${skipped} 条，已备份` : `已删除 ${result.deleted.length} 条，已备份`,
         "info",
       );
       onDone();
@@ -108,6 +73,15 @@ export function MemoryDeleteDialog(props: {
     }
   }
 
+  const reasons = preview === null ? [] : [
+    ...(preview.notFound > 0 ? [`${preview.notFound} 条已不在库中`] : []),
+    ...(preview.unsupported > 0 ? [`${preview.unsupported} 条暂不支持`] : []),
+  ];
+  const cascade = preview === null ? "" : ([
+    ["facts", "事实", " 条"], ["embeddings", "向量", " 个"], ["annotations", "标注", " 条"],
+    ["edges", "关联边", " 条"], ["other", "其他", " 条"],
+  ] as const).filter(([k]) => preview.cascade[k] > 0).map(([k, label, unit]) => `${label} ${preview.cascade[k]}${unit}`).join(" · ");
+
   return (
     <Modal
       title={`删除记忆（${displayName}）`}
@@ -116,26 +90,8 @@ export function MemoryDeleteDialog(props: {
       }}
       footer={
         <>
-          <button type="button" className="btn" disabled={busy} onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="btn btn-danger"
-            disabled={!ready}
-            title={
-              ready
-                ? undefined
-                : gate.status?.inUse === true
-                  ? "该库正被 omp 会话使用，先退出后再试"
-                  : gate.status?.probeFailed === true
-                    ? "无法确认占用状态，请稍后重试"
-                    : deletable === 0 && preview !== null
-                      ? "所选记忆都无法删除"
-                      : undefined
-            }
-            onClick={() => void confirm()}
-          >
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>取消</button>
+          <button type="button" className="btn btn-danger" disabled={!ready} onClick={() => void confirm()}>
             {busy ? "删除中…" : `备份并删除 ${deletable} 条`}
           </button>
         </>
@@ -147,48 +103,25 @@ export function MemoryDeleteDialog(props: {
         <p>正在确认可删除内容与占用状态…</p>
       ) : previewError !== null || gate.error !== null ? (
         <>
-          <p>
-            确认信息加载失败：
-            {previewError ?? gate.error}
-          </p>
-          <button type="button" className="btn btn-small" onClick={() => setRetryToken((t) => t + 1)}>
-            重试
-          </button>
+          <p>确认信息加载失败：{previewError ?? gate.error}</p>
+          <button type="button" className="btn btn-small" onClick={() => setRetryToken((t) => t + 1)}>重试</button>
         </>
-      ) : preview !== null && gate.status !== null ? (
+      ) : preview !== null ? (
         <>
           <p>
-            将从「{displayName}」删除 {deletable} 条记忆（工作 {preview.deletable.working} · 情节{" "}
-            {preview.deletable.episodic}）。
+            将从「{displayName}」删除 {deletable} 条记忆（工作 {preview.deletable.working} · 情节 {preview.deletable.episodic}）。
           </p>
           {preview.notFound > 0 ? <p className="muted">{preview.notFound} 条已不在库中，将跳过。</p> : null}
-          {preview.unsupported > 0 ? (
-            <p className="muted">该库的情节摘要暂不支持删除：{preview.unsupported} 条，将跳过。</p>
-          ) : null}
+          {preview.unsupported > 0 ? <p className="muted">该库的情节摘要暂不支持删除：{preview.unsupported} 条，将跳过。</p> : null}
           {preview.citedBySummaries > 0 ? (
             <p className="mem-note-amber">
               有 {preview.citedBySummaries} 条情节摘要引用了这些记忆，删除后摘要保留但不再对应原文。
             </p>
           ) : null}
-          <p className="muted">{cascadeText(preview)}</p>
+          <p className="muted">{cascade === "" ? "无附带清理项。" : `同时清理：${cascade}。`}</p>
           <p className="muted">删除前会自动备份整库，可在「备份与恢复」中还原。</p>
-          {gate.status.inUse ? (
-            <p className="mem-note-danger">
-              该库正被使用：{formatHolders(gate.status.holders)}。先退出占用该库的 omp 会话后再试。
-              <button type="button" className="btn btn-small" onClick={() => setRetryToken((t) => t + 1)}>
-                重试
-              </button>
-            </p>
-          ) : null}
-          {gate.status.probeFailed ? (
-            <p className="mem-note-danger">
-              无法确认是否有 omp 会话在使用该库（占用探测失败），请稍后重试。
-              <button type="button" className="btn btn-small" onClick={() => setRetryToken((t) => t + 1)}>
-                重试
-              </button>
-            </p>
-          ) : null}
-          {deletable === 0 ? <p>所选记忆都无法删除（{unavailableReasons(preview)}）。</p> : null}
+          <MemoryGateNote status={status} loadError={null} onRetry={() => setRetryToken((t) => t + 1)} />
+          {deletable === 0 ? <p>所选记忆都无法删除（{reasons.join("，")}）。</p> : null}
           {submitError !== null ? <p className="mem-note-danger">{submitError}</p> : null}
         </>
       ) : null}
@@ -209,9 +142,7 @@ export function MemoryItemDeleteButton(props: {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" className="btn btn-small" onClick={() => setOpen(true)}>
-        {label}
-      </button>
+      <button type="button" className="btn btn-small" onClick={() => setOpen(true)}>{label}</button>
       {open ? (
         <MemoryDeleteDialog
           bank={bank}

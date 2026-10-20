@@ -161,6 +161,12 @@ body,
   margin: 0;
 }
 
+/* 桌面固定壳：文档本身永不滚动，只有各面板内部滚动（记忆库曾因隐藏表格撑高文档，整页被 scrollIntoView 带跑）。 */
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "Helvetica Neue", sans-serif;

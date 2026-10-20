@@ -1,27 +1,27 @@
-//! 记忆库行级只读：列表/详情/趋势（CONTRACT §18.2–§18.4）。
+//! 记忆库行级只读：列表/详情（CONTRACT §18.2–§18.3）。
 //!
-//! 约束：SQL 内 `COUNT` / `LIMIT` / `OFFSET` / `GROUP BY`，列表不读全文；
-//! 缺表/缺列按“零 / None / 空”降级；`sessions` 目录每命令调用至多扫描一次。
+//! SQL 内 `COUNT` / `LIMIT` / `OFFSET` / `GROUP BY`，列表不读全文；
+//! 缺表/缺列降级；`sessions` 目录每命令调用至多扫描一次。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
-use chrono::{Local, Utc};
+use chrono::Utc;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
 
 use super::{
-    bucket_local_day, iso_millis_opt, like_pattern, make_snippet, metadata_field, metadata_object,
-    open_readonly, parse_memory_ts, scan_session_uuids, table_schema, truncate_bytes,
+    col_or_null, io, iso_millis_opt, like_pattern, make_snippet, metadata_field, metadata_object,
+    not_found, open_readonly, parse_memory_ts, scan_session_uuids, table_schema, truncate_bytes,
     unreadable_reason, validate_bank, TableSchema, CONTENT_CAP_BYTES, DB_FILENAME,
-    DETAIL_FACTS_LIMIT, GROWTH_DAYS_MAX, LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX, SNIPPET_SQL_PREFIX,
+    DETAIL_FACTS_LIMIT, LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX, SNIPPET_SQL_PREFIX,
 };
 use crate::model::{
-    AppError, ErrorCode, MemoryDetail, MemoryFact, MemoryGrowthPoint, MemoryItem, MemoryKind,
-    MemoryKindFilter, MemoryPage, MemorySort,
+    AppError, MemoryDetail, MemoryFact, MemoryItem, MemoryKind, MemoryKindFilter, MemoryPage,
+    MemorySort,
 };
 
-/// `memory_list` 参数（命令层把 `Option` 归一为此结构；`Default` 即全部缺省）。
+/// `memory_list` 参数（`Default` 即全部缺省）。
 pub struct ListParams {
     pub bank: String,
     pub query: Option<String>,
@@ -50,7 +50,7 @@ impl Default for ListParams {
     }
 }
 
-/// 从 SQL 行读出的单条记忆（含两表 UNION 后的统一列）。
+/// UNION 后的统一行。
 struct FetchedRow {
     kind: MemoryKind,
     id: String,
@@ -92,6 +92,30 @@ impl FetchedRow {
             superseded_by: row.get(13)?,
         })
     }
+
+    /// 组装 `MemoryItem`（`source_session_exists` 由调用方回填）。
+    fn into_item(self, now: &chrono::DateTime<Utc>) -> MemoryItem {
+        MemoryItem {
+            id: self.id,
+            kind: self.kind,
+            snippet: make_snippet(&self.snippet_src, self.content_len.max(0) as u64),
+            content_chars: self.content_len.max(0) as u64,
+            created_at: iso_millis_opt(self.timestamp.as_deref()),
+            source_session_id: metadata_field(self.metadata.as_deref(), "session_id"),
+            source_session_exists: None,
+            recall_count: self.recall_count.unwrap_or(0),
+            last_recalled_at: iso_millis_opt(self.last_recalled.as_deref()),
+            importance: self.importance.filter(|v| v.is_finite()),
+            veracity: self.veracity,
+            memory_type: self.memory_type,
+            consolidated: consolidated_of(self.kind, self.consolidated_at.as_deref()),
+            superseded: is_superseded(
+                self.valid_until.as_deref(),
+                self.superseded_by.as_deref(),
+                now,
+            ),
+        }
+    }
 }
 
 /// `superseded`：`superseded_by` 非空，或 `valid_until` 可解析且早于 now。
@@ -108,73 +132,37 @@ fn is_superseded(
         .is_some_and(|dt| dt < *now)
 }
 
-fn finite_or_none(value: Option<f64>) -> Option<f64> {
-    value.filter(|v| v.is_finite())
-}
-
-impl FetchedRow {
-    /// 组装 `MemoryItem`（`source_session_exists` 由调用方按需回填）。
-    fn into_item(self, now: &chrono::DateTime<Utc>) -> MemoryItem {
-        let source_session_id = metadata_field(self.metadata.as_deref(), "session_id");
-        let consolidated = match self.kind {
-            MemoryKind::Working => self
-                .consolidated_at
-                .as_deref()
-                .is_some_and(|s| !s.is_empty()),
-            MemoryKind::Episodic => true,
-        };
-        MemoryItem {
-            id: self.id,
-            kind: self.kind,
-            snippet: make_snippet(&self.snippet_src, self.content_len.max(0) as u64),
-            content_chars: self.content_len.max(0) as u64,
-            created_at: iso_millis_opt(self.timestamp.as_deref()),
-            source_session_id,
-            source_session_exists: None,
-            recall_count: self.recall_count.unwrap_or(0),
-            last_recalled_at: iso_millis_opt(self.last_recalled.as_deref()),
-            importance: finite_or_none(self.importance),
-            veracity: self.veracity,
-            memory_type: self.memory_type,
-            consolidated,
-            superseded: is_superseded(
-                self.valid_until.as_deref(),
-                self.superseded_by.as_deref(),
-                now,
-            ),
-        }
+/// working = `consolidated_at` 非空；episodic 恒 true。
+fn consolidated_of(kind: MemoryKind, at: Option<&str>) -> bool {
+    match kind {
+        MemoryKind::Working => at.is_some_and(|s| !s.is_empty()),
+        MemoryKind::Episodic => true,
     }
 }
 
-/// 单表 SELECT 的统一列（缺列填 `NULL AS <列>`，保证 UNION 两侧列一致）。
+/// 单表 SELECT 的统一列（`id` / `content` 为调用方已保证的前提）。
 fn union_select(table: &str, kind: &str, schema: &TableSchema) -> String {
-    let col = |name: &str| -> String {
-        if schema.has(name) {
-            name.to_owned()
-        } else {
-            format!("NULL AS {name}")
-        }
-    };
-    // `id` / `content` 为参与 UNION 的前提（调用方已保证存在）。
+    let cols = [
+        "timestamp",
+        "metadata_json",
+        "recall_count",
+        "last_recalled",
+        "importance",
+        "veracity",
+        "memory_type",
+        "consolidated_at",
+        "valid_until",
+        "superseded_by",
+    ]
+    .map(|c| col_or_null(schema, c));
     format!(
-        "SELECT '{kind}' AS kind, id, substr(content, 1, {prefix}) AS snippet_src, \
-         LENGTH(content) AS content_len, {ts}, {meta}, {recall}, {last}, {imp}, {vera}, {mtype}, \
-         {consol}, {valid}, {sup} FROM \"{table}\"",
-        prefix = SNIPPET_SQL_PREFIX,
-        ts = col("timestamp"),
-        meta = col("metadata_json"),
-        recall = col("recall_count"),
-        last = col("last_recalled"),
-        imp = col("importance"),
-        vera = col("veracity"),
-        mtype = col("memory_type"),
-        consol = col("consolidated_at"),
-        valid = col("valid_until"),
-        sup = col("superseded_by"),
+        "SELECT '{kind}' AS kind, id, substr(content, 1, {SNIPPET_SQL_PREFIX}) AS snippet_src, \
+         LENGTH(content) AS content_len, {} FROM \"{table}\"",
+        cols.join(", "),
     )
 }
 
-/// 单表 WHERE 子句（`only_missing_source` 需要会话集合与 JSON 抽取）。
+/// 单表 WHERE 子句。
 fn where_clauses(
     params: &ListParams,
     pattern: Option<&str>,
@@ -202,38 +190,32 @@ fn where_clauses(
         if is_working && schema.has("consolidated_at") {
             clauses.push("consolidated_at IS NULL".to_owned());
         } else {
-            // episodic 永不命中；working 缺列时命中 0 行（§18.2）。
+            // episodic 永不命中；working 缺列时命中 0 行。
             clauses.push("0".to_owned());
         }
     }
     if params.only_missing_source {
-        if schema.has("metadata_json") {
-            // 脏 JSON 会让 `json_extract` / `json_type` 直接报错（非 NULL），
-            // 故先用 `json_valid` 守卫；`json_type = 'text'` 保证与 Rust 侧
-            // “非字符串 ⇒ None”一致。
+        if !schema.has("metadata_json") {
+            clauses.push("0".to_owned());
+        } else {
+            // 脏 JSON 会让 `json_extract` / `json_type` 直接报错，故先 `json_valid` 守卫；
+            // `json_type = 'text'` 与 Rust 侧“非字符串 ⇒ None”一致。
             let sid = "(CASE WHEN json_valid(metadata_json) \
                        THEN json_extract(metadata_json, '$.session_id') ELSE NULL END)";
-            let sid_type = "(CASE WHEN json_valid(metadata_json) \
-                            THEN json_type(metadata_json, '$.session_id') ELSE NULL END)";
-            let mut clause = format!("({sid} IS NOT NULL AND {sid} != '' AND {sid_type} = 'text'");
-            if let Some(set) = sessions {
-                if set.is_empty() {
-                    clause.push(')');
-                } else {
-                    let placeholders = set.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-                    clause.push_str(&format!(" AND {sid} NOT IN ({placeholders}))"));
+            let typ = "(CASE WHEN json_valid(metadata_json) \
+                       THEN json_type(metadata_json, '$.session_id') ELSE NULL END)";
+            let mut clause = format!("({sid} IS NOT NULL AND {sid} != '' AND {typ} = 'text'");
+            match sessions.filter(|s| !s.is_empty()) {
+                Some(set) => {
+                    let ph = set.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+                    clause.push_str(&format!(" AND {sid} NOT IN ({ph}))"));
                     let mut ids: Vec<&String> = set.iter().collect();
                     ids.sort();
-                    for id in ids {
-                        values.push(SqlValue::Text(id.clone()));
-                    }
+                    values.extend(ids.into_iter().cloned().map(SqlValue::Text));
                 }
-            } else {
-                clause.push(')');
+                None => clause.push(')'),
             }
             clauses.push(clause);
-        } else {
-            clauses.push("0".to_owned());
         }
     }
     if clauses.is_empty() {
@@ -243,8 +225,8 @@ fn where_clauses(
     }
 }
 
+/// NULL / 空 timestamp 恒排最后；次级 kind 再 id，保证分页稳定。
 fn order_by(sort: MemorySort) -> &'static str {
-    // NULL / 空 timestamp 恒排最后；次级 kind 再 id，保证分页稳定。
     match sort {
         MemorySort::Newest => {
             "(timestamp IS NULL OR timestamp = '') ASC, timestamp DESC, kind ASC, id ASC"
@@ -260,7 +242,7 @@ fn order_by(sort: MemorySort) -> &'static str {
 fn open_bank_db(root: &Path, bank: &str) -> Result<Connection, AppError> {
     let dir = validate_bank(root, bank)?;
     let db = dir.join(DB_FILENAME);
-    open_readonly(&db).ok_or_else(|| AppError::new(ErrorCode::Io, unreadable_reason(&db)))
+    open_readonly(&db).ok_or_else(|| io(unreadable_reason(&db)))
 }
 
 /// CONTRACT §18.2 实现（同步，调用方包 `spawn_blocking`）。
@@ -272,69 +254,64 @@ pub fn list_impl(
     let conn = open_bank_db(root, &params.bank)?;
     let wm = table_schema(&conn, "working_memory");
     let em = table_schema(&conn, "episodic_memory");
-    // 可查侧：表存在且有 `id` + `content`。
-    let use_working = matches!(
-        params.kind,
-        MemoryKindFilter::All | MemoryKindFilter::Working
-    ) && wm.exists
-        && wm.has("id")
-        && wm.has("content");
-    let use_episodic = matches!(
-        params.kind,
-        MemoryKindFilter::All | MemoryKindFilter::Episodic
-    ) && em.exists
-        && em.has("id")
-        && em.has("content");
-    if !use_working && !use_episodic {
-        // 两表皆无 ⇒ 与 overview 一致判不可读；仅 kind 指向缺失侧 ⇒ 空页。
-        if !wm.exists && !em.exists {
-            return Err(AppError::new(ErrorCode::Io, "缺少记忆表"));
-        }
-        return Ok(MemoryPage {
-            total: 0,
-            items: Vec::new(),
-        });
-    }
-    let pattern = params
-        .query
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(like_pattern);
-    // `onlyMissingSource` 需要会话集合（本命令内至多扫一次）。
+    let want = |k: MemoryKindFilter| params.kind == MemoryKindFilter::All || params.kind == k;
+    let mut union_sql = String::new();
+    let mut filter_values: Vec<SqlValue> = Vec::new();
+    // `onlyMissingSource` 的会话集合（本命令内至多扫一次）。
     let sessions: Option<HashSet<String>> = params
         .only_missing_source
         .then(|| scan_session_uuids(sessions_dir));
-    let mut union_sql = String::new();
-    let mut filter_values: Vec<SqlValue> = Vec::new();
-    for (table, kind, schema, is_working) in [
-        ("working_memory", "working", &wm, true),
-        ("episodic_memory", "episodic", &em, false),
+    for (table, kind, schema, wanted) in [
+        (
+            "working_memory",
+            "working",
+            &wm,
+            want(MemoryKindFilter::Working),
+        ),
+        (
+            "episodic_memory",
+            "episodic",
+            &em,
+            want(MemoryKindFilter::Episodic),
+        ),
     ] {
-        let use_side = if is_working {
-            use_working
-        } else {
-            use_episodic
-        };
-        if !use_side {
+        // 可查侧：表存在且有 `id` + `content`。
+        if !(wanted && schema.exists && schema.has("id") && schema.has("content")) {
             continue;
         }
         if !union_sql.is_empty() {
             union_sql.push_str(" UNION ALL ");
         }
+        let pattern = params
+            .query
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(like_pattern);
         let (where_sql, mut values) = where_clauses(
             params,
             pattern.as_deref(),
             schema,
-            is_working,
+            table == "working_memory",
             sessions.as_ref(),
         );
         union_sql.push_str(&union_select(table, kind, schema));
         union_sql.push_str(&where_sql);
         filter_values.append(&mut values);
     }
+    if union_sql.is_empty() {
+        // 两表皆无 ⇒ 不可读；仅 kind 指向缺失侧 ⇒ 空页。
+        if !wm.exists && !em.exists {
+            return Err(io("缺少记忆表"));
+        }
+        return Ok(MemoryPage {
+            total: 0,
+            items: Vec::new(),
+        });
+    }
     let limit = params.limit.clamp(1, LIST_LIMIT_MAX);
     let offset = params.offset.max(0);
+    let list_err = || io("查询记忆列表失败");
     let total: u64 = conn
         .query_row(
             &format!("SELECT COUNT(*) FROM ({union_sql})"),
@@ -342,7 +319,7 @@ pub fn list_impl(
             |row| row.get::<_, i64>(0),
         )
         .map(|n| n.max(0) as u64)
-        .map_err(|_| AppError::new(ErrorCode::Io, "查询记忆列表失败"))?;
+        .map_err(|_| list_err())?;
     let sql = format!(
         "SELECT kind, id, snippet_src, content_len, timestamp, metadata_json, recall_count, \
          last_recalled, importance, veracity, memory_type, consolidated_at, valid_until, \
@@ -352,27 +329,25 @@ pub fn list_impl(
     let mut page_values = filter_values;
     page_values.push(SqlValue::Integer(limit));
     page_values.push(SqlValue::Integer(offset));
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|_| AppError::new(ErrorCode::Io, "查询记忆列表失败"))?;
+    let mut stmt = conn.prepare(&sql).map_err(|_| list_err())?;
     let fetched = stmt
         .query_map(
             rusqlite::params_from_iter(page_values.iter()),
             FetchedRow::from_row,
         )
-        .map_err(|_| AppError::new(ErrorCode::Io, "查询记忆列表失败"))?
+        .map_err(|_| list_err())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AppError::new(ErrorCode::Io, "查询记忆列表失败"))?;
+        .map_err(|_| list_err())?;
     let now = Utc::now();
     let mut items: Vec<MemoryItem> = fetched.into_iter().map(|r| r.into_item(&now)).collect();
     // 来源存在性：已有集合直接用，否则仅当页内有会话 id 时才扫一次。
     if items.iter().any(|i| i.source_session_id.is_some()) {
-        let set: HashSet<String>;
-        let lookup: &HashSet<String> = match sessions.as_ref() {
+        let fresh: HashSet<String>;
+        let lookup = match sessions.as_ref() {
             Some(s) => s,
             None => {
-                set = scan_session_uuids(sessions_dir);
-                &set
+                fresh = scan_session_uuids(sessions_dir);
+                &fresh
             }
         };
         for item in &mut items {
@@ -384,37 +359,32 @@ pub fn list_impl(
     Ok(MemoryPage { total, items })
 }
 
-/// 详情 SELECT 列（缺列填 `NULL AS <列>`；`content` 缺失则该表不可查）。
+/// 详情 SELECT 列（`content` 缺失则该表不可查）。
 fn detail_select(table: &str, schema: &TableSchema, want_summary: bool) -> Option<String> {
     if !schema.exists || !schema.has("id") || !schema.has("content") {
         return None;
     }
-    let col = |name: &str| -> String {
-        if schema.has(name) {
-            name.to_owned()
-        } else {
-            format!("NULL AS {name}")
-        }
-    };
+    let cols = [
+        "content",
+        "embed_text",
+        "timestamp",
+        "metadata_json",
+        "recall_count",
+        "last_recalled",
+        "importance",
+        "veracity",
+        "memory_type",
+        "consolidated_at",
+        "valid_until",
+        "superseded_by",
+    ]
+    .map(|c| col_or_null(schema, c));
+    let mut select = cols.join(", ");
+    if want_summary {
+        select.push_str(&format!(", {}", col_or_null(schema, "summary_of")));
+    }
     Some(format!(
-        "SELECT content, {embed}, {ts}, {meta}, {recall}, {last}, {imp}, {vera}, {mtype}, \
-         {consol}, {valid}, {sup}{summary} FROM \"{table}\" WHERE id = ?1 LIMIT 1",
-        embed = col("embed_text"),
-        ts = col("timestamp"),
-        meta = col("metadata_json"),
-        recall = col("recall_count"),
-        last = col("last_recalled"),
-        imp = col("importance"),
-        vera = col("veracity"),
-        mtype = col("memory_type"),
-        consol = col("consolidated_at"),
-        valid = col("valid_until"),
-        sup = col("superseded_by"),
-        summary = if want_summary {
-            format!(", {}", col("summary_of"))
-        } else {
-            String::new()
-        },
+        "SELECT {select} FROM \"{table}\" WHERE id = ?1 LIMIT 1"
     ))
 }
 
@@ -436,69 +406,62 @@ struct DetailRow {
     summary_of: Option<String>,
 }
 
-/// 查 `facts` / `memoria_facts` 反向引用（§18.3，上限内 facts 在前）。
+/// 查 `facts` / `memoria_facts` 反向引用（facts 在前，各按 rowid 升序）。
 fn detail_facts(conn: &Connection, id: &str) -> Vec<MemoryFact> {
+    // （表，引用列，[取列 0/1/2]，是否 memoria 形态）。
+    let sources = [
+        (
+            "facts",
+            "source_msg_id",
+            ["subject", "predicate", "object"],
+            false,
+        ),
+        (
+            "memoria_facts",
+            "source_memory_id",
+            ["fact_type", "value", "key"],
+            true,
+        ),
+    ];
     let mut out = Vec::new();
-    let facts = table_schema(conn, "facts");
-    if facts.has("source_msg_id") {
-        let col = |name: &str| -> String {
-            if facts.has(name) {
-                name.to_owned()
-            } else {
-                format!("NULL AS {name}")
-            }
-        };
+    for (table, refcol, cols, memoria) in sources {
+        if out.len() as i64 >= DETAIL_FACTS_LIMIT {
+            break;
+        }
+        let schema = table_schema(conn, table);
+        if !schema.has(refcol) {
+            continue;
+        }
+        let sel = cols.map(|c| col_or_null(&schema, c));
         let sql = format!(
-            "SELECT {s}, {p}, {o} FROM facts WHERE source_msg_id = ?1 \
-             ORDER BY rowid LIMIT {DETAIL_FACTS_LIMIT}",
-            s = col("subject"),
-            p = col("predicate"),
-            o = col("object"),
+            "SELECT {}, {}, {} FROM \"{table}\" WHERE {refcol} = ?1 ORDER BY rowid LIMIT {}",
+            sel[0],
+            sel[1],
+            sel[2],
+            DETAIL_FACTS_LIMIT - out.len() as i64,
         );
         if let Ok(mut stmt) = conn.prepare(&sql) {
-            let rows = stmt.query_map([id], |row| {
-                Ok(MemoryFact {
-                    subject: row.get(0)?,
-                    predicate: row.get(1)?,
-                    object: row.get(2)?,
-                    key: None,
-                })
-            });
-            if let Ok(rows) = rows {
-                out.extend(rows.flatten());
-            }
-        }
-    }
-    let remaining = DETAIL_FACTS_LIMIT - out.len() as i64;
-    if remaining > 0 {
-        let memoria = table_schema(conn, "memoria_facts");
-        if memoria.has("source_memory_id") {
-            let col = |name: &str| -> String {
-                if memoria.has(name) {
-                    name.to_owned()
-                } else {
-                    format!("NULL AS {name}")
-                }
-            };
-            let sql = format!(
-                "SELECT {p}, {o}, {k} FROM memoria_facts WHERE source_memory_id = ?1 \
-                 ORDER BY rowid LIMIT {remaining}",
-                p = col("fact_type"),
-                o = col("value"),
-                k = col("key"),
-            );
-            if let Ok(mut stmt) = conn.prepare(&sql) {
-                let rows = stmt.query_map([id], |row| {
-                    Ok(MemoryFact {
+            if let Ok(rows) = stmt.query_map([id], |row| {
+                let a: Option<String> = row.get(0)?;
+                let b: Option<String> = row.get(1)?;
+                let c: Option<String> = row.get(2)?;
+                Ok(if memoria {
+                    MemoryFact {
                         subject: None,
-                        predicate: row.get(0)?,
-                        object: row.get(1)?,
-                        key: row.get(2)?,
-                    })
-                });
-                if let Ok(rows) = rows {
-                    out.extend(rows.flatten());
-                }
+                        predicate: a,
+                        object: b,
+                        key: c,
+                    }
+                } else {
+                    MemoryFact {
+                        subject: a,
+                        predicate: b,
+                        object: c,
+                        key: None,
+                    }
+                })
+            }) {
+                out.extend(rows.flatten());
             }
         }
     }
@@ -516,7 +479,7 @@ pub fn detail_impl(
     let wm = table_schema(&conn, "working_memory");
     let em = table_schema(&conn, "episodic_memory");
     if !wm.exists && !em.exists {
-        return Err(AppError::new(ErrorCode::Io, "缺少记忆表"));
+        return Err(io("缺少记忆表"));
     }
     let mut found: Option<DetailRow> = None;
     for (table, kind, schema, want_summary) in [
@@ -550,30 +513,23 @@ pub fn detail_impl(
                 break;
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => continue,
-            Err(_) => return Err(AppError::new(ErrorCode::Io, "查询记忆详情失败")),
+            Err(_) => return Err(io("查询记忆详情失败")),
         }
     }
-    let row = found.ok_or_else(|| AppError::new(ErrorCode::NotFound, "记忆不存在"))?;
+    let row = found.ok_or_else(|| not_found("记忆不存在"))?;
     let now = Utc::now();
     let content_full = row.content.unwrap_or_default();
+    let content_chars = content_full.chars().count() as u64;
     let (content, truncated) = truncate_bytes(&content_full, CONTENT_CAP_BYTES);
     let embed_text = match row.embed_text {
         Some(e) if e != content_full => Some(truncate_bytes(&e, CONTENT_CAP_BYTES).0),
         _ => None,
     };
     let source_session_id = metadata_field(row.metadata.as_deref(), "session_id");
-    let source_session_exists = source_session_id.as_deref().map(|sid| {
-        // 仅有会话 id 时才扫 sessions 目录（本命令内至多一次）。
-        scan_session_uuids(sessions_dir).contains(sid)
-    });
-    let consolidated = match row.kind {
-        MemoryKind::Working => row
-            .consolidated_at
-            .as_deref()
-            .is_some_and(|s| !s.is_empty()),
-        MemoryKind::Episodic => true,
-    };
-    let summary_of = match row.kind {
+    let source_session_exists = source_session_id
+        .as_deref()
+        .map(|sid| scan_session_uuids(sessions_dir).contains(sid));
+    let summary_of: Vec<String> = match row.kind {
         MemoryKind::Episodic => row
             .summary_of
             .as_deref()
@@ -601,17 +557,17 @@ pub fn detail_impl(
         item: MemoryItem {
             id: id.to_owned(),
             kind: row.kind,
-            snippet: make_snippet(&content_full, content_full.chars().count() as u64),
-            content_chars: content_full.chars().count() as u64,
+            snippet: make_snippet(&content_full, content_chars),
+            content_chars,
             created_at: iso_millis_opt(row.timestamp.as_deref()),
             source_session_id,
             source_session_exists,
             recall_count: row.recall_count.unwrap_or(0),
             last_recalled_at: iso_millis_opt(row.last_recalled.as_deref()),
-            importance: finite_or_none(row.importance),
+            importance: row.importance.filter(|v| v.is_finite()),
             veracity: row.veracity,
             memory_type: row.memory_type,
-            consolidated,
+            consolidated: consolidated_of(row.kind, row.consolidated_at.as_deref()),
             superseded: is_superseded(
                 row.valid_until.as_deref(),
                 row.superseded_by.as_deref(),
@@ -626,112 +582,4 @@ pub fn detail_impl(
         summary_of,
         related_edges,
     })
-}
-
-/// 收集单库两表时间戳 → 本地日期桶计数。
-fn collect_growth(conn: &Connection, buckets: &mut HashMap<String, (u64, u64)>) {
-    for (table, is_working) in [("working_memory", true), ("episodic_memory", false)] {
-        let schema = table_schema(conn, table);
-        if !schema.has("timestamp") {
-            continue;
-        }
-        let sql = format!("SELECT timestamp FROM \"{table}\"");
-        let Ok(mut stmt) = conn.prepare(&sql) else {
-            continue;
-        };
-        let Ok(rows) = stmt.query_map([], |row| row.get::<_, Option<String>>(0)) else {
-            continue;
-        };
-        for ts in rows.flatten() {
-            let Some(day) = bucket_local_day(ts.as_deref()) else {
-                continue;
-            };
-            let entry = buckets.entry(day).or_insert((0, 0));
-            if is_working {
-                entry.0 += 1;
-            } else {
-                entry.1 += 1;
-            }
-        }
-    }
-}
-
-/// CONTRACT §18.4 实现（同步，调用方包 `spawn_blocking`）。
-/// `bank=None` 聚合全部可读 bank（坏 bank 静默跳过）；`days` 越界 ⇒ `INVALID_INPUT`。
-pub fn growth_impl(
-    root: &Path,
-    bank: Option<&str>,
-    days: i64,
-) -> Result<Vec<MemoryGrowthPoint>, AppError> {
-    if !(1..=GROWTH_DAYS_MAX).contains(&days) {
-        return Err(AppError::new(
-            ErrorCode::InvalidInput,
-            "天数需在 1–365 之间",
-        ));
-    }
-    let mut buckets: HashMap<String, (u64, u64)> = HashMap::new();
-    match bank {
-        Some(name) => {
-            let conn = open_bank_db(root, name)?;
-            collect_growth(&conn, &mut buckets);
-        }
-        None => {
-            let Ok(entries) = std::fs::read_dir(root) else {
-                // 根目录不可读：返回全零 dense 序列（非错误，与 overview 空态一致）。
-                return Ok(empty_growth(days));
-            };
-            for entry in entries.flatten() {
-                let is_dir = entry
-                    .file_type()
-                    .map(|t| t.is_dir() || t.is_symlink())
-                    .unwrap_or(false);
-                if !is_dir {
-                    continue;
-                }
-                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                    continue;
-                };
-                if name.starts_with('.') {
-                    continue;
-                }
-                // 聚合模式：坏 bank 静默跳过。
-                let Ok(dir) = validate_bank(root, &name) else {
-                    continue;
-                };
-                let Some(conn) = open_readonly(&dir.join(DB_FILENAME)) else {
-                    continue;
-                };
-                collect_growth(&conn, &mut buckets);
-            }
-        }
-    }
-    let today = Local::now().date_naive();
-    let mut points = Vec::with_capacity(days as usize);
-    for back in (0..days).rev() {
-        let date = today - chrono::Duration::days(back);
-        let key = date.format("%Y-%m-%d").to_string();
-        let (working, episodic) = buckets.get(&key).copied().unwrap_or((0, 0));
-        points.push(MemoryGrowthPoint {
-            date: key,
-            working,
-            episodic,
-        });
-    }
-    Ok(points)
-}
-
-/// 全零 dense 序列（根目录不可读时）。
-fn empty_growth(days: i64) -> Vec<MemoryGrowthPoint> {
-    let today = Local::now().date_naive();
-    (0..days)
-        .rev()
-        .map(|back| {
-            let date = today - chrono::Duration::days(back);
-            MemoryGrowthPoint {
-                date: date.format("%Y-%m-%d").to_string(),
-                working: 0,
-                episodic: 0,
-            }
-        })
-        .collect()
 }

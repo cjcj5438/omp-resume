@@ -642,12 +642,6 @@ export interface MemoryDetail extends MemoryItem {
   relatedEdges: number;
 }
 
-export interface MemoryGrowthPoint {
-  date: string;
-  working: number;
-  episodic: number;
-}
-
 // 记忆库写操作（CONTRACT §18.8）：备份/删除/恢复，JSON camelCase。
 
 export type MemoryBackupKind = "before-delete" | "before-restore" | "bank-removed";

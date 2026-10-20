@@ -1,8 +1,5 @@
-/**
- * DEV-ONLY 记忆库 mock：本地 Mnemopi 库的合成数据（虚构中文内容，无真实用户数据）。
- * 探针标记（用于 build 后 grep 验证）：__OMP_RESUME_FIXTURE_ONLY__
- * URL 参数：`?memory=off`（available:false）、`?memoryBackend=<name>`（改 backend 字段）。
- */
+/** DEV-ONLY 记忆库 mock（虚构数据）。探针标记：__OMP_RESUME_FIXTURE_ONLY__。 */
+/** 参数：`?memory=off`（不可用）、`?memoryBackend=<名>`、`?memoryInUse=<bank>`（写报 IN_USE）、`?memoryProbe=fail`（写报 PROBE_FAILED）、`?memoryBanks=N`（批量库）。 */
 import type {
   MemoryBackup,
   MemoryBankStatus,
@@ -11,7 +8,6 @@ import type {
   MemoryDeleteResult,
   MemoryDeleteSkipped,
   MemoryDetail,
-  MemoryGrowthPoint,
   MemoryItem,
   MemoryKind,
   MemoryOverview,
@@ -28,7 +24,6 @@ const MEMORY_TRUNCATE_AT = 200 * 1024;
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
-    a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -63,13 +58,10 @@ const WORKING_SNIPPETS = [
   "接口返回的 createdAt 是 ISO 字符串，前端直接解析",
   "深色模式用 data-theme 切换，不要用媒体查询硬编码",
   "后端错误统一走 AppError，前端用 normalizeError 归一",
-  "用户习惯先看类型定义再看实现，注释写在文件头",
   "发布前必须跑 typecheck 与全部单测",
   "组件样式用手写 CSS，不引入组件库",
   "中文文案里的数字与英文两侧各留一个空格",
   "截图存放到 /tmp，禁止提交到仓库",
-  "该项目 Node 版本要求 22，CI 会校验",
-  "遇到 flaky 测试先复现三次再修",
   "重构时保持对外接口不变，内部可随意调整",
 ];
 
@@ -79,9 +71,7 @@ const EPISODIC_SNIPPETS = [
   "10 月初上线用量统计，用户反馈趋势图比表格更直观",
   "修复过一次深色模式下按钮看不清的问题，原因是变量漏覆盖",
   "之前讨论过是否引入图表库，决定手写 SVG 以控制体积",
-  "上季度做过清理功能：空会话与过期会话是主要的可删项",
   "曾经因为时区 bug 把「昨天」算错，改用本地日历比较修复",
-  "去年底迁移过一次配置格式，旧字段保留兼容读取",
 ];
 
 const FACT_POOL: MemoryDetail["facts"] = [
@@ -91,9 +81,7 @@ const FACT_POOL: MemoryDetail["facts"] = [
   { subject: null, predicate: null, object: null, key: "note:unparsed" },
 ];
 
-function pick<T>(rand: () => number, arr: readonly T[]): T {
-  return arr[Math.floor(rand() * arr.length)];
-}
+const pick = <T,>(rand: () => number, arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)];
 
 function isoDaysAgo(daysAgo: number, hour = 10): string {
   const d = new Date(Date.now() - daysAgo * DAY);
@@ -101,39 +89,18 @@ function isoDaysAgo(daysAgo: number, hour = 10): string {
   return d.toISOString();
 }
 
-function localDay(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-interface SourcePlan {
-  id: string | null;
-  exists: boolean | null;
-}
-
-/** 来源会话三态：已加载（夹具会话）/ 存在但未加载 / 已不在。 */
-function planSource(rand: () => number, i: number): SourcePlan {
+function makeItem(bank: string, i: number, kind: MemoryKind, snippet: string, rand: () => number, daysAgo: number): FullMemory {
+  // 来源会话三态：已加载（夹具会话）/ 存在但未加载 / 已不在。
   const r = rand();
-  if (r < 0.3) return { id: null, exists: null };
-  if (r < 0.55) {
-    const s = FIXTURE_SESSIONS[i % FIXTURE_SESSIONS.length].summary;
-    return { id: s.id, exists: true };
-  }
-  if (r < 0.75) return { id: `0199-mem-only-${String(i).padStart(4, "0")}`, exists: true };
-  return { id: `0199-mem-gone-${String(i).padStart(4, "0")}`, exists: false };
-}
-
-function makeItem(
-  bank: string,
-  i: number,
-  kind: MemoryKind,
-  snippet: string,
-  rand: () => number,
-  daysAgo: number,
-): FullMemory {
-  const source = planSource(rand, i);
-  const neverRecalled = rand() < 0.6;
-  const recallCount = neverRecalled ? 0 : 1 + Math.floor(rand() * 20);
-  const consolidated = kind === "episodic" ? true : rand() < 0.5;
+  const source =
+    r < 0.3
+      ? { id: null, exists: null }
+      : r < 0.55
+        ? { id: FIXTURE_SESSIONS[i % FIXTURE_SESSIONS.length].summary.id, exists: true }
+        : r < 0.75
+          ? { id: `0199-mem-only-${String(i).padStart(4, "0")}`, exists: true }
+          : { id: `0199-mem-gone-${String(i).padStart(4, "0")}`, exists: false };
+  const recallCount = rand() < 0.6 ? 0 : 1 + Math.floor(rand() * 20);
   const body = `${snippet}。\n\n补充说明：这是第 ${i + 1} 条合成记忆（${bank}/${kind}），内容为虚构，用于开发与截图验证。\n关键细节：${pick(rand, WORKING_SNIPPETS)}；${pick(rand, EPISODIC_SNIPPETS)}。`;
   return {
     id: `mem-${bank}-${String(i).padStart(4, "0")}`,
@@ -148,7 +115,7 @@ function makeItem(
     importance: rand() < 0.2 ? null : Math.round(rand() * 100) / 100,
     veracity: rand() < 0.3 ? null : pick(rand, ["confirmed", "likely", "uncertain"] as const),
     memoryType: rand() < 0.3 ? null : pick(rand, ["preference", "fact", "procedure"] as const),
-    consolidated,
+    consolidated: kind === "episodic" ? true : rand() < 0.5,
     superseded: rand() < 0.05,
     content: body,
     embedText: rand() < 0.5 ? snippet : null,
@@ -162,140 +129,120 @@ function makeItem(
 function summarize(store: BankStore): MemoryBankSummary {
   if (!store.readable) {
     return {
-      bank: store.bank,
-      displayName: store.displayName,
-      cwd: store.cwd,
-      cwdExists: store.cwdExists,
-      working: 0,
-      episodic: 0,
-      facts: 0,
-      bytes: 0,
-      firstMemoryAt: null,
-      lastMemoryAt: null,
-      neverRecalled: 0,
-      unconsolidated: 0,
-      sourceSessions: 0,
-      missingSourceSessions: 0,
-      readable: false,
-      error: store.error,
-    };
+      ...store,
+      working: 0, episodic: 0, facts: 0, bytes: 0, firstMemoryAt: null, lastMemoryAt: null,
+      neverRecalled: 0, unconsolidated: 0, sourceSessions: 0, missingSourceSessions: 0,
+    } as MemoryBankSummary;
   }
-  const items = store.items;
-  const times = items.map((m) => m.createdAt).filter((t): t is string => t !== null).sort();
-  const sources = new Set(items.map((m) => m.sourceSessionId).filter((s): s is string => s !== null));
-  const missingSources = new Set(
-    items.filter((m) => m.sourceSessionExists === false).map((m) => m.sourceSessionId),
-  );
+  const times = store.items.map((m) => m.createdAt).filter((t): t is string => t !== null).sort();
   return {
     bank: store.bank,
     displayName: store.displayName,
     cwd: store.cwd,
     cwdExists: store.cwdExists,
-    working: items.filter((m) => m.kind === "working").length,
-    episodic: items.filter((m) => m.kind === "episodic").length,
-    facts: items.reduce((n, m) => n + m.facts.length, 0),
-    bytes: items.reduce((n, m) => n + m.contentChars, 0),
+    working: store.items.filter((m) => m.kind === "working").length,
+    episodic: store.items.filter((m) => m.kind === "episodic").length,
+    facts: store.items.reduce((n, m) => n + m.facts.length, 0),
+    bytes: store.items.reduce((n, m) => n + m.contentChars, 0),
     firstMemoryAt: times[0] ?? null,
-    lastMemoryAt: times.length > 0 ? times[times.length - 1] : null,
-    neverRecalled: items.filter((m) => m.recallCount === 0).length,
-    unconsolidated: items.filter((m) => !m.consolidated).length,
-    sourceSessions: sources.size,
-    missingSourceSessions: missingSources.size,
+    lastMemoryAt: times[times.length - 1] ?? null,
+    neverRecalled: store.items.filter((m) => m.recallCount === 0).length,
+    unconsolidated: store.items.filter((m) => !m.consolidated).length,
+    sourceSessions: new Set(store.items.map((m) => m.sourceSessionId).filter((s) => s !== null)).size,
+    missingSourceSessions: new Set(
+      store.items.filter((m) => m.sourceSessionExists === false).map((m) => m.sourceSessionId),
+    ).size,
     readable: true,
     error: null,
   };
 }
 
-function buildStores(extraItems = 0): BankStore[] {
+/** 批量库的固定分布：空库 / 目录已删 / 不可读，其余规模递减。 */
+export const BULK_IN_USE_BANK = "bulk-01";
+
+function bulkStores(count: number): BankStore[] {
+  const rand = mulberry32(20261020);
+  const sizes = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120];
+  return Array.from({ length: count }, (_, i) => {
+    const id = `bulk-${String(i + 1).padStart(2, "0")}`;
+    const readable = i !== 6;
+    const items = !readable
+      ? []
+      : Array.from({ length: sizes[i % sizes.length] }, (_, k) => {
+          const kind: MemoryKind = k % 3 === 2 ? "episodic" : "working";
+          return makeItem(id, k, kind, `${pick(rand, kind === "working" ? WORKING_SNIPPETS : EPISODIC_SNIPPETS)}（${id}）`, rand, Math.floor(rand() * 240));
+        });
+    return {
+      bank: id,
+      displayName: id,
+      cwd: `/Users/demo/my/${id}`,
+      cwdExists: ![2, 8, 14].includes(i),
+      readable,
+      error: readable ? null : "目录无读取权限",
+      items,
+    };
+  });
+}
+
+function buildStores(bulkBanks = 0): BankStore[] {
   const rand = mulberry32(20261019);
-
-  // 大库：~120 条，混合全部状态。
-  const big: FullMemory[] = [];
-  for (let i = 0; i < 120; i += 1) {
+  const bank = (id: string, items: FullMemory[], over: Partial<BankStore> = {}): BankStore => ({
+    bank: id,
+    displayName: id,
+    cwd: `/Users/demo/my/${id}`,
+    cwdExists: true,
+    readable: true,
+    error: null,
+    items,
+    ...over,
+  });
+  // 大库：~120 条，混合全部状态；含通配符字面量、30KB 长文与超限条目。
+  const big = Array.from({ length: 120 }, (_, i) => {
     const kind: MemoryKind = i % 3 === 2 ? "episodic" : "working";
-    const pool = kind === "working" ? WORKING_SNIPPETS : EPISODIC_SNIPPETS;
-    big.push(makeItem("omp-resume", i, kind, `${pick(rand, pool)}（${i + 1}）`, rand, Math.floor(rand() * 200)));
-  }
-  // 通配符字面量：搜索 % / _ 时必须按字面匹配。
-  big[5] = { ...big[5], snippet: "CPU 占用跑到 100% 时先看火焰图再下结论", content: "CPU 占用跑到 100% 时先看火焰图再下结论。\n\n虚构的性能排查记忆。" };
-  big[5].contentChars = big[5].content.length;
-  big[6] = { ...big[6], snippet: "表名统一用 snake_case，如 session_meta", content: "表名统一用 snake_case，如 session_meta。\n\n虚构的命名规范记忆。" };
-  big[6].contentChars = big[6].content.length;
-  // 30KB 长条目：验证详情的折叠 / 展开（未超过 200KB 上限，truncated=false）。
+    return makeItem("omp-resume", i, kind, `${pick(rand, kind === "working" ? WORKING_SNIPPETS : EPISODIC_SNIPPETS)}（${i + 1}）`, rand, Math.floor(rand() * 200));
+  });
+  const special = (i: number, snippet: string, content: string): void => {
+    big[i] = { ...big[i], snippet, content, contentChars: content.length };
+  };
+  special(5, "CPU 占用跑到 100% 时先看火焰图再下结论", "CPU 占用跑到 100% 时先看火焰图再下结论。\n\n虚构的性能排查记忆。");
+  special(6, "表名统一用 snake_case，如 session_meta", "表名统一用 snake_case，如 session_meta。\n\n虚构的命名规范记忆。");
   const longPara = "这是一段很长的合成记忆正文，用于验证详情折叠逻辑。包含中文标点，。！？与换行。\n";
-  const longContent = longPara.repeat(Math.ceil((30 * 1024) / longPara.length)).slice(0, 30 * 1024);
-  big[7] = {
-    ...big[7],
-    snippet: longContent.slice(0, 120),
-    content: longContent,
-    contentChars: longContent.length,
-    facts: [FACT_POOL[0], FACT_POOL[1]],
-  };
-  // 超过 200KB 上限的条目：detail 必须截断并标注。
+  special(7, longPara.slice(0, 120).repeat(1), longPara.repeat(Math.ceil((30 * 1024) / longPara.length)).slice(0, 30 * 1024));
   const capPara = "这是一段超过上限的合成记忆正文，用于验证截断标注。同样包含中文标点，。！？与换行。\n";
-  const capContent = capPara.repeat(Math.ceil((210 * 1024) / capPara.length)).slice(0, 210 * 1024);
-  big[8] = {
-    ...big[8],
-    snippet: capContent.slice(0, 120),
-    content: capContent,
-    contentChars: capContent.length,
-    facts: [],
-  };
-  // 可选：额外条目（`?memoryMany`），用于验证「全选筛选结果」在 500 上限时的截断。
-  for (let i = 0; i < extraItems; i += 1) {
-    const kind: MemoryKind = i % 3 === 2 ? "episodic" : "working";
-    const pool = kind === "working" ? WORKING_SNIPPETS : EPISODIC_SNIPPETS;
-    big.push(makeItem("omp-resume", 120 + i, kind, `${pick(rand, pool)}（批量 ${i + 1}）`, rand, Math.floor(rand() * 200)));
-  }
-  // episodic 的 summaryOf 指向同库 working 条目。
+  big[8] = { ...big[8], content: capPara.repeat(Math.ceil((210 * 1024) / capPara.length)).slice(0, 210 * 1024) };
+  big[8].contentChars = big[8].content.length;
+  big[8].snippet = big[8].content.slice(0, 120);
+  big[8].facts = [];
   const workingIds = big.filter((m) => m.kind === "working").map((m) => m.id);
-  for (const m of big) {
-    if (m.kind === "episodic") m.summaryOf = [workingIds[Math.floor(rand() * workingIds.length)]];
-  }
-
-  const smallRand = mulberry32(77);
-  const notes: FullMemory[] = [];
-  for (let i = 0; i < 8; i += 1) {
-    notes.push(makeItem("notes-app", i, i % 2 === 0 ? "working" : "episodic", `${pick(smallRand, WORKING_SNIPPETS)}（备忘 ${i + 1}）`, smallRand, 2 + Math.floor(smallRand() * 60)));
-  }
-  const goneRand = mulberry32(913);
-  const gone: FullMemory[] = [];
-  for (let i = 0; i < 3; i += 1) {
-    gone.push(makeItem("gone-proj", i, "working", `${pick(goneRand, WORKING_SNIPPETS)}（旧项目 ${i + 1}）`, goneRand, 60 + Math.floor(goneRand() * 300)));
-  }
-  const homeRand = mulberry32(451);
-  const home: FullMemory[] = [];
-  for (let i = 0; i < 3; i += 1) {
-    home.push(makeItem("home-lab", i, "working", `${pick(homeRand, WORKING_SNIPPETS)}（家庭 ${i + 1}）`, homeRand, 30 + Math.floor(homeRand() * 300)));
-  }
-
+  for (const m of big) if (m.kind === "episodic") m.summaryOf = [workingIds[Math.floor(rand() * workingIds.length)]];
+  const small = (seed: number, id: string, n: number, tag: string): FullMemory[] => {
+    const r = mulberry32(seed);
+    return Array.from({ length: n }, (_, i) =>
+      makeItem(id, i, i % 2 === 0 ? "working" : "episodic", `${pick(r, WORKING_SNIPPETS)}（${tag} ${i + 1}）`, r, 2 + Math.floor(r() * 60)),
+    );
+  };
   return [
-    { bank: "omp-resume", displayName: "omp-resume", cwd: "/Users/demo/my/omp-resume", cwdExists: true, readable: true, error: null, items: big },
-    { bank: "notes-app", displayName: "notes-app", cwd: "/Users/demo/my/notes-app", cwdExists: true, readable: true, error: null, items: notes },
-    { bank: "empty-proj", displayName: "empty-proj", cwd: "/Users/demo/my/empty-proj", cwdExists: true, readable: true, error: null, items: [] },
-    { bank: "gone-proj", displayName: "gone-proj", cwd: "/Users/demo/my/gone-proj", cwdExists: false, readable: true, error: null, items: gone },
-    { bank: "locked-proj", displayName: "locked-proj", cwd: "/Users/demo/my/locked-proj", cwdExists: true, readable: false, error: "目录无读取权限", items: [] },
-    { bank: "home-lab", displayName: "home-lab", cwd: null, cwdExists: null, readable: true, error: null, items: home },
+    bank("omp-resume", big),
+    bank("notes-app", small(77, "notes-app", 8, "备忘")),
+    bank("empty-proj", []),
+    bank("gone-proj", small(913, "gone-proj", 3, "旧项目"), { cwd: "/Users/demo/my/gone-proj", cwdExists: false }),
+    bank("locked-proj", [], { readable: false, error: "目录无读取权限" }),
+    ...bulkStores(bulkBanks),
   ];
 }
 
-function err(code: string, message: string): { code: string; message: string } {
-  return { code, message };
-}
+const err = (code: string, message: string): { code: string; message: string } => ({ code, message });
 
 export interface MemoryMockOptions {
   available: boolean;
   backend: string | null;
-  /** 该 bank 报占用中（`?memoryInUse=<bank>`），写操作报 IN_USE。 */
   inUseBank?: string | null;
-  /** 占用探测失败（`?memoryProbe=fail`），写操作报 PROBE_FAILED。 */
   probeFailed?: boolean;
-  /** 额外生成 560 条记忆（`?memoryMany`），用于 500 上限的可视化验证。 */
-  manyItems?: boolean;
+  bulkBanks?: number;
 }
 
 export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: Record<string, unknown>) => unknown {
-  const stores = buildStores(opts.manyItems === true ? 560 : 0);
+  const stores = buildStores(opts.bulkBanks ?? 0);
   const byBank = new Map(stores.map((s) => [s.bank, s]));
   /** 已移除的库（目录已“移走”，可从 bank-removed 备份恢复）。 */
   const removed = new Map<string, BankStore>();
@@ -316,26 +263,23 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
   /** 占用门禁：与真实后端同码（IN_USE 含 pid + 命令名，探测失败 PROBE_FAILED）。 */
   function gate(bank: string): void {
     if (opts.probeFailed === true) throw err("PROBE_FAILED", "占用探测失败：无法确认是否有 omp 会话在使用该库");
-    if (opts.inUseBank != null && opts.inUseBank !== "" && opts.inUseBank === bank) {
+    if ((opts.inUseBank != null && opts.inUseBank === bank) || ((opts.bulkBanks ?? 0) > 0 && bank === BULK_IN_USE_BANK)) {
       throw err("IN_USE", "库正被 omp 会话使用：omp (pid 4242)");
     }
   }
+
   function overview(): MemoryOverview {
-    if (!opts.available) {
-      return {
-        available: false,
-        backend: opts.backend,
-        root: "/Users/demo/.omp/agent/memory",
-        banks: [],
-        totals: { banks: 0, working: 0, episodic: 0, facts: 0, bytes: 0, neverRecalled: 0, unconsolidated: 0, missingSourceSessions: 0, sourceSessions: 0 },
-      };
-    }
+    const empty: MemoryOverview = {
+      available: false,
+      backend: opts.backend,
+      root: "/Users/demo/.omp/agent/memory",
+      banks: [],
+      totals: { banks: 0, working: 0, episodic: 0, facts: 0, bytes: 0, neverRecalled: 0, unconsolidated: 0, missingSourceSessions: 0, sourceSessions: 0 },
+    };
+    if (!opts.available) return empty;
     // 与后端一致：lastMemoryAt 倒序（null 视为最小），再按 bank 名升序。
-    const order = (b: MemoryBankSummary): number =>
-      b.lastMemoryAt === null ? Number.NEGATIVE_INFINITY : Date.parse(b.lastMemoryAt);
-    const banks = [...byBank.values()]
-      .map(summarize)
-      .sort((a, b) => order(b) - order(a) || a.bank.localeCompare(b.bank));
+    const order = (b: MemoryBankSummary): number => (b.lastMemoryAt === null ? -Infinity : Date.parse(b.lastMemoryAt));
+    const banks = [...byBank.values()].map(summarize).sort((a, b) => order(b) - order(a) || a.bank.localeCompare(b.bank));
     const readable = banks.filter((b) => b.readable);
     const totals: MemoryTotals = {
       banks: banks.length,
@@ -356,32 +300,26 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     const q = typeof args["query"] === "string" ? args["query"].trim().toLowerCase() : "";
     const kind = args["kind"];
     if (kind !== undefined && kind !== "all" && kind !== "working" && kind !== "episodic") throw err("INVALID_INPUT", "kind 非法");
-    let rows: FullMemory[] = store.items;
-    if (q !== "") {
-      rows = rows.filter((m) =>
-        `${m.id}\n${m.content}\n${m.embedText ?? ""}`.toLowerCase().includes(q),
-      );
-    }
+    const sort = args["sort"] ?? "newest";
+    if (sort !== "newest" && sort !== "oldest" && sort !== "mostRecalled") throw err("INVALID_INPUT", "sort 非法");
+    const limit = Math.min(200, Math.max(1, Math.floor(Number(args["limit"] ?? 50))));
+    const offset = Math.floor(Number(args["offset"] ?? 0));
+    if (!Number.isFinite(limit) || !Number.isFinite(offset) || offset < 0) throw err("INVALID_INPUT", "分页参数非法");
+    let rows = store.items;
+    if (q !== "") rows = rows.filter((m) => `${m.id}\n${m.content}\n${m.embedText ?? ""}`.toLowerCase().includes(q));
     if (kind === "working" || kind === "episodic") rows = rows.filter((m) => m.kind === kind);
     if (args["onlyNeverRecalled"] === true) rows = rows.filter((m) => m.recallCount === 0);
     if (args["onlyUnconsolidated"] === true) rows = rows.filter((m) => !m.consolidated);
     if (args["onlyMissingSource"] === true) rows = rows.filter((m) => m.sourceSessionExists === false);
-    const sort = args["sort"] ?? "newest";
-    if (sort !== "newest" && sort !== "oldest" && sort !== "mostRecalled") throw err("INVALID_INPUT", "sort 非法");
     const time = (t: string | null): number => (t === null ? -1 : Date.parse(t));
-    rows.sort((a, b) =>
+    rows = [...rows].sort((a, b) =>
       sort === "oldest"
         ? time(a.createdAt) - time(b.createdAt) || a.id.localeCompare(b.id)
         : sort === "mostRecalled"
           ? b.recallCount - a.recallCount || time(b.createdAt) - time(a.createdAt)
           : time(b.createdAt) - time(a.createdAt) || a.id.localeCompare(b.id),
     );
-    const limitRaw = Number(args["limit"] ?? 50);
-    const offsetRaw = Number(args["offset"] ?? 0);
-    if (!Number.isFinite(limitRaw) || !Number.isFinite(offsetRaw) || offsetRaw < 0) throw err("INVALID_INPUT", "分页参数非法");
-    const limit = Math.min(200, Math.max(1, Math.floor(limitRaw)));
-    const offset = Math.floor(offsetRaw);
-    const items: MemoryItem[] = rows.map(({ content: _c, embedText: _e, metadata: _m, facts: _f, summaryOf: _s, relatedEdges: _r, ...rest }) => rest);
+    const items = rows.map(({ content: _c, embedText: _e, metadata: _m, facts: _f, summaryOf: _s, relatedEdges: _r, ...rest }) => rest);
     return { total: items.length, items: items.slice(offset, offset + limit) };
   }
 
@@ -394,30 +332,6 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     const truncated = found.content.length > MEMORY_TRUNCATE_AT;
     const { content, ...rest } = found;
     return { ...rest, content: truncated ? content.slice(0, MEMORY_TRUNCATE_AT) : content, truncated };
-  }
-
-  function growth(args: Record<string, unknown>): MemoryGrowthPoint[] {
-    const daysRaw = Number(args["days"]);
-    if (!Number.isFinite(daysRaw) || daysRaw < 1 || daysRaw > 365) throw err("INVALID_INPUT", "days 非法");
-    const days = Math.floor(daysRaw);
-    const bankArg = args["bank"];
-    const live = [...byBank.values()];
-    const targets = bankArg == null ? live.filter((s) => s.readable) : live.filter((s) => s.bank === bankArg && s.readable);
-    const buckets = new Map<string, { working: number; episodic: number }>();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    for (let i = days - 1; i >= 0; i -= 1) {
-      buckets.set(localDay(new Date(today.getTime() - i * DAY)), { working: 0, episodic: 0 });
-    }
-    for (const s of targets) {
-      for (const m of s.items) {
-        if (m.createdAt === null) continue;
-        const key = localDay(new Date(Date.parse(m.createdAt)));
-        const b = buckets.get(key);
-        if (b) b[m.kind] += 1;
-      }
-    }
-    return [...buckets.entries()].map(([date, v]) => ({ date, working: v.working, episodic: v.episodic }));
   }
 
   /** ids 去重（保序）；非字符串元素视为非法。 */
@@ -447,15 +361,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     return { deletable, skipped };
   }
 
-  function snapshotBytes(items: FullMemory[]): number {
-    return items.reduce((n, m) => n + m.contentChars, 0);
-  }
-
-  function utcStamp(ms: number): string {
-    const d = new Date(ms);
-    const p = (n: number, w = 2): string => String(n).padStart(w, "0");
-    return `${p(d.getUTCFullYear(), 4)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
-  }
+  const utcStamp = (ms: number): string => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 
   /** 整库快照：before-delete / before-restore 只留最新 5 份，bank-removed 永不剪。 */
   function takeBackup(store: BankStore, kind: MemoryBackup["kind"]): MemoryBackup {
@@ -466,13 +372,13 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
       bank: store.bank,
       kind,
       createdAt: new Date(at).toISOString(),
-      bytes: snapshotBytes(store.items),
+      bytes: store.items.reduce((n, m) => n + m.contentChars, 0),
       working: store.items.filter((m) => m.kind === "working").length,
       episodic: store.items.filter((m) => m.kind === "episodic").length,
       cwd: store.cwd,
     };
     backups.push({ record, snapshot: structuredClone(store.items) });
-    if (kind === "before-delete" || kind === "before-restore") {
+    if (kind !== "bank-removed") {
       const same = backups.filter((b) => b.record.bank === store.bank && b.record.kind === kind);
       while (same.length > 5) {
         const oldest = same.shift();
@@ -484,31 +390,19 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     return record;
   }
 
-  function bankBackups(bank: string): MemoryBackup[] {
-    return backups
+  const bankBackups = (bank: string): MemoryBackup[] =>
+    backups
       .filter((b) => b.record.bank === bank)
       .map((b) => b.record)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }
 
   function bankStatus(bank: unknown): MemoryBankStatus {
     if (typeof bank !== "string" || bank === "") throw err("INVALID_INPUT", "bank 不能为空");
     if (opts.probeFailed === true) return { bank, inUse: false, probeFailed: true, holders: [], backups: bankBackups(bank) };
-    const live = byBank.has(bank);
-    const inUse = live && opts.inUseBank === bank;
-    return {
-      bank,
-      inUse,
-      probeFailed: false,
-      holders: inUse ? [{ pid: 4242, command: "omp" }] : [],
-      backups: bankBackups(bank),
-    };
-  }
-
-  function backupsList(args: Record<string, unknown>): MemoryBackup[] {
-    const bank = args["bank"];
-    const rows = (bank == null ? backups : backups.filter((b) => b.record.bank === bank)).map((b) => b.record);
-    return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const inUse =
+      byBank.has(bank) &&
+      ((opts.inUseBank != null && opts.inUseBank === bank) || ((opts.bulkBanks ?? 0) > 0 && bank === BULK_IN_USE_BANK));
+    return { bank, inUse, probeFailed: false, holders: inUse ? [{ pid: 4242, command: "omp" }] : [], backups: bankBackups(bank) };
   }
 
   function deletePreview(args: Record<string, unknown>): MemoryDeletePreview {
@@ -518,10 +412,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     const selectedWorking = new Set(deletable.filter((m) => m.kind === "working").map((m) => m.id));
     return {
       requested: ids.length,
-      deletable: {
-        working: deletable.filter((m) => m.kind === "working").length,
-        episodic: deletable.filter((m) => m.kind === "episodic").length,
-      },
+      deletable: { working: deletable.filter((m) => m.kind === "working").length, episodic: deletable.filter((m) => m.kind === "episodic").length },
       unsupported: skipped.filter((s) => s.reason === "unsupported").length,
       notFound: skipped.filter((s) => s.reason === "not_found").length,
       cascade: {
@@ -531,9 +422,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
         edges: deletable.reduce((n, m) => n + m.relatedEdges, 0),
         other: 0,
       },
-      citedBySummaries: store.items.filter(
-        (m) => m.kind === "episodic" && m.summaryOf.some((id) => selectedWorking.has(id)),
-      ).length,
+      citedBySummaries: store.items.filter((m) => m.kind === "episodic" && m.summaryOf.some((id) => selectedWorking.has(id))).length,
     };
   }
 
@@ -563,11 +452,8 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     const at = raw.lastIndexOf("@");
     const bank = at < 0 ? "" : raw.slice(0, at);
     const dirname = at < 0 ? "" : raw.slice(at + 1);
-    const badShape =
-      bank === "" || bank === "." || bank === ".." || bank.includes("/") || bank.includes("\\") || bank.includes("\0");
-    if (badShape || !/^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$/.test(dirname)) {
-      throw err("OUTSIDE_ROOT", "备份标识非法");
-    }
+    const badShape = bank === "" || bank === "." || bank === ".." || bank.includes("/") || bank.includes("\\") || bank.includes("\0");
+    if (badShape || !/^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$/.test(dirname)) throw err("OUTSIDE_ROOT", "备份标识非法");
     const found = backups.find((b) => b.record.id === raw);
     if (!found) throw err("NOT_FOUND", "备份不存在");
     return found;
@@ -583,8 +469,8 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
       safetyBackup = takeBackup(live, "before-restore");
       live.items = structuredClone(snapshot);
     } else {
-      const meta = removed.get(record.bank);
       gate(record.bank);
+      const meta = removed.get(record.bank);
       const store: BankStore = meta ?? {
         bank: record.bank,
         displayName: record.bank,
@@ -611,28 +497,21 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
 
   return (cmd: string, args: Record<string, unknown>): unknown => {
     switch (cmd) {
-      case "memory_overview":
-        return structuredClone(overview());
-      case "memory_list":
-        return structuredClone(list(args));
-      case "memory_detail":
-        return structuredClone(detail(args));
-      case "memory_growth":
-        return structuredClone(growth(args));
-      case "memory_bank_status":
-        return structuredClone(bankStatus(args["bank"]));
+      case "memory_overview": return structuredClone(overview());
+      case "memory_list": return structuredClone(list(args));
+      case "memory_detail": return structuredClone(detail(args));
+      case "memory_bank_status": return structuredClone(bankStatus(args["bank"]));
       case "memory_backups":
-        return structuredClone(backupsList(args));
-      case "memory_delete_preview":
-        return structuredClone(deletePreview(args));
-      case "memory_delete_items":
-        return structuredClone(deleteItems(args));
-      case "memory_delete_bank":
-        return structuredClone(deleteBank(args));
-      case "memory_restore":
-        return structuredClone(restore(args));
-      case "memory_delete_backup":
-        return structuredClone(deleteBackup(args));
+        return structuredClone(
+          (args["bank"] == null ? backups.map((b) => b.record) : bankBackups(args["bank"] as string)).sort((a, b) =>
+            a.createdAt < b.createdAt ? 1 : -1,
+          ),
+        );
+      case "memory_delete_preview": return structuredClone(deletePreview(args));
+      case "memory_delete_items": return structuredClone(deleteItems(args));
+      case "memory_delete_bank": return structuredClone(deleteBank(args));
+      case "memory_restore": return structuredClone(restore(args));
+      case "memory_delete_backup": return structuredClone(deleteBackup(args));
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }

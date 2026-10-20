@@ -1,5 +1,5 @@
-/* 记忆库标签页：状态头条 / 健康卡 / 趋势图 / 项目库表 / 记忆列表。 */
-.mem-panel { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; padding: 16px; overflow-y: auto; }
+/* 记忆库标签页：状态头条 / 健康卡 / 项目库图表 / 操作条 / 记忆列表。 */
+.mem-panel { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
 .mem-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .mem-intro { margin: 0; font-size: 12px; }
 .mem-panel > p.muted { margin: 0; font-size: 12px; }
@@ -13,45 +13,87 @@
 .mem-card-warn { background: var(--warn-soft); }
 .mem-card-label { font-size: 12px; color: var(--text-muted); }
 .mem-card-value { font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.3; }
-.mem-card-dim { font-size: 14px; color: var(--text-muted); }
 .mem-card-sub { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.mem-card-hint { font-size: 11px; color: var(--text-muted); }
 
 /* ---- 分区头 ---- */
 .mem-section { display: flex; flex-direction: column; gap: 8px; }
-.mem-section .chart, .mem-section .chart-legend { max-width: 640px; }
 .mem-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .mem-section-head h3 { margin: 0; font-size: 14px; }
 .mem-section-head .filter-input { max-width: 240px; }
 .mem-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .mem-kind select { font-size: 12px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
 
-/* ---- 项目库表 ---- */
-.mem-banks tbody tr { cursor: pointer; }
-.mem-banks tbody tr:hover { background: var(--bg-hover); }
-.mem-banks tr.mem-bank-active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
-.mem-banks tr.mem-bank-unreadable { color: var(--text-muted); cursor: default; }
-.mem-banks th, .mem-banks td { white-space: nowrap; }
-.mem-banks thead th:first-child { width: 34%; }
-.mem-banks tbody th { padding-right: 16px; }
-.mem-health { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 11px; line-height: 1.5; }
-.mem-bank-health { display: none; font-size: 11px; white-space: nowrap; }
-@media (max-width: 1050px) {
-  .mem-banks .mem-col-facts, .mem-banks .mem-col-bytes, .mem-banks .mem-col-health { display: none; }
-  .mem-banks thead th:first-child { width: 38%; }
-  .mem-bank-health { display: block; }
+/* ---- 项目库图表：每行一个按钮，统一 grid 三段（名称 / 条形 / 条数），不嵌套表格。 ---- */
+.mem-bank-chart { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.mem-bank-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 260px) minmax(80px, 1fr) 3.5em;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.mem-list-anchor { scroll-margin-top: 12px; }
-.mem-bank-name { padding: 0; border: none; background: none; color: var(--accent); font-size: 12px; cursor: pointer; }
-.mem-bank-name:disabled { color: var(--text-muted); cursor: default; }
-.mem-bank-name:hover:not(:disabled) { text-decoration: underline; }
-.mem-bank-active .mem-bank-name { font-weight: 600; }
+.mem-bank-row:hover { background: var(--bg-hover); }
+.mem-bank-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mem-bank-active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.mem-bank-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* 两行都固定高度：不受字形（如下行字母）影响，每行严格等高。 */
+.mem-bank-title { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; height: 18px; overflow: hidden; }
+.mem-bank-name { flex: 0 1 auto; min-width: 0; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-bank-title .badge { flex: none; }
+/* 元信息恒为单行：路径可省略（min-width:0），计数/大小/时间不截断。 */
+.mem-bank-sub { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; height: 16px; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.mem-bank-sub > span:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-bank-sub > span:not(:first-child) { flex: none; }
+.mem-bank-bars { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mem-bank-bar { display: block; height: 9px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.mem-bank-fill { display: flex; height: 100%; min-width: 4px; border-radius: 3px; overflow: hidden; }
+.mem-bank-fill > i { display: block; height: 100%; }
+.mem-bar-work { background: var(--accent); }
+.mem-bar-epi { background: var(--badge-label-bg); }
+/* 两条独立占比条（未召回 / 未合并），各自按自己的分母，不叠加以免误导。 */
+.mem-bank-health { display: flex; flex-direction: column; gap: 2px; }
+.mem-meter { display: block; height: 2px; border-radius: 1px; background: var(--bg-hover); overflow: hidden; }
+.mem-meter > i { display: block; height: 100%; border-radius: 1px; }
+.mem-meter-never { background: var(--badge-inuse-bg); }
+.mem-meter-uncons { background: var(--danger); opacity: 0.6; }
+.mem-bank-num { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+/* 无效库：条纹条 + 弱化文字，仍可选中（用于查看错误或清理）。 */
+.mem-bank-invalid .mem-bank-bar { background: repeating-linear-gradient(135deg, var(--border) 0 3px, transparent 3px 7px); }
+.mem-bank-invalid .mem-bank-name { color: var(--text-muted); }
+.mem-bank-invalid .mem-bank-num { color: var(--text-muted); }
+.mem-footnote { margin: 0; font-size: 11px; }
+@media (max-width: 900px) {
+  .mem-bank-row { grid-template-columns: minmax(120px, 1fr) minmax(60px, 1fr) 3em; }
+}
 
-/* ---- 图表附色：情节摘要柱 ---- */
-.chart-bar-episodic { fill: var(--badge-label-bg); }
-.legend-working { background: var(--accent); }
-.legend-episodic { background: var(--badge-label-bg); }
-.mem-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* ---- 选中库的操作条 ---- */
+.mem-bank-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.mem-bank-header-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.mem-bank-header-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.mem-bank-header-stats { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mem-bank-header-actions { display: inline-flex; gap: 6px; }
+.mem-list-anchor { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 12px; }
+
+/* ---- 无效库清理对话框 ---- */
+.mem-cleanup-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow-y: auto; }
+.mem-cleanup-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.mem-cleanup-list li:last-child { border-bottom: none; }
+.mem-cleanup-list label { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
+.mem-cleanup-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mem-cleanup-name .mono { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-cleanup-stat { flex: none; font-variant-numeric: tabular-nums; }
+.mem-cleanup-blocked { color: var(--text-muted); }
+.mem-cleanup-reason { flex-basis: 100%; font-size: 11px; color: var(--badge-inuse-ink); padding-left: 22px; }
+.mem-cleanup-results { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.mem-step-fail { color: var(--danger); }
 
 /* ---- 记忆列表 ---- */
 .mem-list { display: flex; flex-direction: column; gap: 8px; }
@@ -92,21 +134,19 @@
 @media (max-width: 1100px) { .mem-meta { grid-template-columns: repeat(2, 1fr); } }
 .mem-facts h4 { margin: 0 0 4px; font-size: 12px; color: var(--text-muted); font-weight: 600; }
 .mem-facts ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.8; }
-/* ---- 维护：选择条 / 库操作 / 备份表 / 对话框提示 ---- */
+
+/* ---- 维护：选择条 / 备份表 / 对话框提示 ---- */
 .mem-head-actions { display: inline-flex; gap: 6px; }
-.mem-preset { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .mem-selectbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
 .mem-check { flex: none; align-self: center; width: 14px; height: 14px; margin: 0 2px 0 0; accent-color: var(--accent-fill); cursor: pointer; }
 .mem-check:disabled { cursor: default; }
-.mem-bank-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .mem-backups-toolbar { display: flex; align-items: center; gap: 12px; }
-.mem-backups-wrap { overflow-x: auto; }
-.mem-backups { font-size: 12px; table-layout: auto; }
-.mem-backups thead th:first-child { width: auto; }
-.mem-backups tbody th:first-child { width: 99%; }
-.mem-backups td, .mem-backups th { white-space: nowrap; }
-.mem-backup-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.mem-footnote { font-size: 11px; }
+.mem-backup-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.mem-backup { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 2px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.mem-backup:last-child { border-bottom: none; }
+.mem-backup-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mem-backup-main > span:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mem-backup-actions { display: flex; gap: 6px; }
 .mem-note-amber { color: var(--badge-inuse-ink); background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
 .mem-note-amber .btn { margin-left: 8px; }
 .mem-note-danger { color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 8px 10px; }

@@ -367,7 +367,6 @@ pub fn run() {
             memory::memory_overview,
             memory::memory_list,
             memory::memory_detail,
-            memory::memory_growth,
             memory::memory_bank_status,
             memory::memory_backups,
             memory::memory_delete_preview,

@@ -47,7 +47,6 @@ import type {
   MemoryDeletePreview,
   MemoryDeleteResult,
   MemoryDetail,
-  MemoryGrowthPoint,
   MemoryListRequest,
   MemoryOverview,
   MemoryPage,
@@ -346,11 +345,6 @@ export function memoryList(req: MemoryListRequest): Promise<MemoryPage> {
 /** 单条记忆详情（含全文与 facts）。 */
 export function memoryDetail(req: { bank: string; id: string }): Promise<MemoryDetail> {
   return call("memory_detail", { bank: req.bank, id: req.id });
-}
-
-/** 每日新增堆叠（按本地日补零）；bank 为 null 时汇总全部。 */
-export function memoryGrowth(req: { bank?: string | null; days: number }): Promise<MemoryGrowthPoint[]> {
-  return call("memory_growth", { bank: req.bank ?? null, days: req.days });
 }
 
 /** 库占用状态与该库备份（只读，无门禁；lsof 失败时 probeFailed=true）。 */

@@ -1,12 +1,7 @@
 //! 记忆库（Mnemopi bank）浏览与维护（CONTRACT §18）。
 //!
-//! - 数据源：`OMP_RESUME_MEMORY_DIR` >
-//!   `$HOME/.omp/agent/memories/mnemopi/banks/<bank>/mnemopi.db`（+ WAL/SHM 边车）。
-//! - 读路径（§18.1–§18.4）**只读**：`SQLITE_OPEN_READ_ONLY` 打开 live 库（含 WAL），
-//!   永不创建/修改文件；写路径（§18.8，`memory/delete.rs`）另走门禁 + 备份 + 事务。
-//! - omp 私有 schema，随时可能变化：缺表/缺列一律按“零 / None / 空”降级，
-//!   用 `PRAGMA table_info` / `sqlite_master` 事先探测，永不 panic。
-//! - 后端日志/错误永不含记忆正文。
+//! 读路径只读打开 live 库（含 WAL），永不写文件；缺表/缺列按零/None/空降级。
+//! 写路径见 `delete.rs`（门禁 + 备份 + 事务）。日志/错误永不含记忆正文。
 
 pub mod backup;
 pub mod delete;
@@ -17,40 +12,35 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use chrono::{DateTime, Local, NaiveDateTime, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OpenFlags};
 
 use crate::config::Config;
-use crate::model::{AppError, ErrorCode, MemoryBankSummary, MemoryOverview, MemoryTotals};
-/// Bank 根目录覆盖（测试/开发用，供 `resolve_bank_root`）。
+use crate::model::{
+    AppError, ErrorCode, MemoryBackup, MemoryBankStatus, MemoryBankSummary, MemoryDeletePreview,
+    MemoryDeleteResult, MemoryDetail, MemoryKindFilter, MemoryOverview, MemoryPage,
+    MemoryRestoreResult, MemorySort, MemoryTotals,
+};
+
+/// 根目录覆盖 / 库文件名 / 只读忙等待 / snippet 前缀与长度 / 正文上限 /
+/// 列表条数 / 详情 facts（对应 CONTRACT §18 的 `MEMORY_*`）。
 pub const MEMORY_DIR_ENV: &str = "OMP_RESUME_MEMORY_DIR";
-/// 每 bank 目录内的库文件名（上游 `BankManager` 固定）。
 pub const DB_FILENAME: &str = "mnemopi.db";
-/// 只读忙等待（同 `history.rs`：omp 可能正在写入）。
 pub const BUSY_TIMEOUT_MS: u64 = 500;
-/// 列表 snippet 字符数（CONTRACT `MEMORY_SNIPPET_CHARS`）。
 pub const SNIPPET_CHARS: usize = 240;
-/// 列表在 SQL 内截取的正文前缀字符数（Rust 侧再折叠截断为 snippet）。
 pub const SNIPPET_SQL_PREFIX: u32 = 512;
-/// 详情全文上限字节数（CONTRACT `MEMORY_CONTENT_CAP_BYTES`）。
 pub const CONTENT_CAP_BYTES: usize = 204_800;
-/// 列表默认/最大条数（CONTRACT `MEMORY_LIST_LIMIT`）。
 pub const LIST_LIMIT_DEFAULT: i64 = 50;
 pub const LIST_LIMIT_MAX: i64 = 200;
-/// 详情 facts 上限（CONTRACT `MEMORY_DETAIL_FACTS_LIMIT`）。
 pub const DETAIL_FACTS_LIMIT: i64 = 50;
-/// 趋势最大天数（CONTRACT `MEMORY_GROWTH_DAYS`）。
-pub const GROWTH_DAYS_MAX: i64 = 365;
 
-/// 覆盖 bank 根目录的环境变量名（`resolve_bank_root_with` 注入点）。
+/// 解析 bank 根目录：`OMP_RESUME_MEMORY_DIR` > `$HOME/.omp/agent/memories/mnemopi/banks`。
 pub fn resolve_bank_root_with(env: impl Fn(&str) -> Option<String>, home: &Path) -> PathBuf {
     env(MEMORY_DIR_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".omp/agent/memories/mnemopi/banks"))
 }
 
-/// 解析 bank 根目录：`OMP_RESUME_MEMORY_DIR` >
-/// `$HOME/.omp/agent/memories/mnemopi/banks`。
 pub fn resolve_bank_root() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -61,7 +51,7 @@ pub fn resolve_bank_root() -> PathBuf {
     )
 }
 
-/// 只读打开；库不存在或无法打开 ⇒ `None`（不创建文件）。
+/// 只读打开；失败 ⇒ `None`（不创建文件）。
 pub(crate) fn open_readonly(db: &Path) -> Option<Connection> {
     let conn = Connection::open_with_flags(
         db,
@@ -73,13 +63,13 @@ pub(crate) fn open_readonly(db: &Path) -> Option<Connection> {
     Some(conn)
 }
 
-/// 单表存在性 + 列集合（表/列缺失时降级，不报错）。
+/// 单表存在性 + 列集合（缺表/列时降级，不报错）。
 pub(crate) struct TableSchema {
     pub exists: bool,
     pub columns: HashSet<String>,
 }
 
-/// 探测表结构。`table` 只取内部常量（PRAGMA 不支持绑定参数，禁止外部输入）。
+/// 探测表结构（`table` 只取内部常量，禁止外部输入）。
 pub(crate) fn table_schema(conn: &Connection, table: &str) -> TableSchema {
     let exists: bool = conn
         .query_row(
@@ -90,14 +80,9 @@ pub(crate) fn table_schema(conn: &Connection, table: &str) -> TableSchema {
         .unwrap_or(false);
     let mut columns = HashSet::new();
     if exists {
-        // `table` 为内部常量；PRAGMA 标识符加双引号。
-        let pragma = format!("PRAGMA table_info(\"{table}\")");
-        if let Ok(mut stmt) = conn.prepare(&pragma) {
-            let rows = stmt.query_map([], |row| row.get::<_, String>(1));
-            if let Ok(rows) = rows {
-                for name in rows.flatten() {
-                    columns.insert(name);
-                }
+        if let Ok(mut stmt) = conn.prepare(&format!("PRAGMA table_info(\"{table}\")")) {
+            if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(1)) {
+                columns.extend(rows.flatten());
             }
         }
     }
@@ -110,52 +95,84 @@ impl TableSchema {
     }
 }
 
-/// 校验 bank id（CONTRACT §18.5）：非空纯目录名单段；join 根目录后 canonicalize
-/// 必须仍位于根目录内（防 symlink 逃逸）。不存在 ⇒ `NOT_FOUND`。
-pub fn validate_bank(root: &Path, bank: &str) -> Result<PathBuf, AppError> {
-    if bank.is_empty()
+/// 缺列填 `NULL AS <列>`（UNION 两侧列对齐）。
+pub(crate) fn col_or_null(schema: &TableSchema, name: &str) -> String {
+    if schema.has(name) {
+        name.to_owned()
+    } else {
+        format!("NULL AS {name}")
+    }
+}
+
+/// 错误构造捷径（message 均非敏感）。
+pub(crate) fn io(msg: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::Io, msg)
+}
+pub(crate) fn invalid(msg: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::InvalidInput, msg)
+}
+pub(crate) fn outside(msg: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::OutsideRoot, msg)
+}
+pub(crate) fn not_found(msg: impl Into<String>) -> AppError {
+    AppError::new(ErrorCode::NotFound, msg)
+}
+
+/// bank 名词法：非空纯目录名单段。
+pub(crate) fn bank_segment_ok(bank: &str) -> bool {
+    !(bank.is_empty()
         || bank == "."
         || bank == ".."
         || bank.contains('/')
         || bank.contains('\\')
-        || bank.contains('\0')
-    {
-        return Err(AppError::new(ErrorCode::OutsideRoot, "非法的记忆库名称"));
-    }
-    let joined = root.join(bank);
+        || bank.contains('\0'))
+}
+
+/// `root` 下相对路径必须存在、为目录、canonicalize 后仍在根内（防 symlink 逃逸）。
+pub(crate) fn resolve_contained_dir(
+    root: &Path,
+    rel: &Path,
+    missing: &str,
+    outside_msg: &str,
+) -> Result<PathBuf, AppError> {
+    let joined = root.join(rel);
     if std::fs::symlink_metadata(&joined).is_err() {
-        return Err(AppError::new(ErrorCode::NotFound, "记忆库不存在"));
+        return Err(not_found(missing));
     }
-    let canon_root = root
-        .canonicalize()
-        .map_err(|_| AppError::new(ErrorCode::NotFound, "记忆库不存在"))?;
-    let canon_bank = joined
-        .canonicalize()
-        .map_err(|_| AppError::new(ErrorCode::NotFound, "记忆库不存在"))?;
-    if !canon_bank.starts_with(&canon_root) {
-        return Err(AppError::new(ErrorCode::OutsideRoot, "记忆库路径越界"));
+    let canon_root = root.canonicalize().map_err(|_| not_found(missing))?;
+    let canon = joined.canonicalize().map_err(|_| not_found(missing))?;
+    if !canon.starts_with(&canon_root) {
+        return Err(outside(outside_msg));
     }
-    if !canon_bank.is_dir() {
-        return Err(AppError::new(ErrorCode::NotFound, "记忆库不存在"));
+    if !canon.is_dir() {
+        return Err(not_found(missing));
     }
-    Ok(canon_bank)
+    Ok(canon)
 }
 
-/// bank 不可读时的简短非敏感原因（overview 置灰行展示）。
+/// 校验 bank id：词法 + 存在 + 不逃逸。不存在 ⇒ `NOT_FOUND`。
+pub fn validate_bank(root: &Path, bank: &str) -> Result<PathBuf, AppError> {
+    if !bank_segment_ok(bank) {
+        return Err(outside("非法的记忆库名称"));
+    }
+    resolve_contained_dir(root, Path::new(bank), "记忆库不存在", "记忆库路径越界")
+}
+
+/// bank 不可读的简短非敏感原因（overview 置灰行展示）。
 pub(crate) fn unreadable_reason(db: &Path) -> String {
-    if !db.exists() {
-        "数据库文件缺失".to_owned()
-    } else {
+    if db.exists() {
         "数据库文件损坏".to_owned()
+    } else {
+        "数据库文件缺失".to_owned()
     }
 }
 
-/// 单个库文件的字节数（缺失/不可读按 0）。
+/// 单个库文件字节数（缺失按 0）。
 pub(crate) fn file_bytes(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// bank 磁盘占用：`mnemopi.db` + `-wal` + `-shm`。
+/// bank 磁盘占用：db + `-wal` + `-shm`。
 pub(crate) fn bank_bytes(bank_dir: &Path) -> u64 {
     let db = bank_dir.join(DB_FILENAME);
     file_bytes(&db)
@@ -163,27 +180,39 @@ pub(crate) fn bank_bytes(bank_dir: &Path) -> u64 {
         + file_bytes(&db.with_extension("db-shm"))
 }
 
-/// UUID 形状校验（`8-4-4-4-12` 十六进制，sessions 文件名匹配用）。
-fn is_uuid_shape(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.len() != 36 {
-        return false;
-    }
-    for (i, b) in bytes.iter().enumerate() {
-        if i == 8 || i == 13 || i == 18 || i == 23 {
-            if *b != b'-' {
-                return false;
+/// 根下非点子目录名；根不可读 ⇒ `None`。
+pub(crate) fn list_bank_names(root: &Path) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let is_dir = entry
+            .file_type()
+            .map(|t| t.is_dir() || t.is_symlink())
+            .unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str() {
+            if !name.starts_with('.') {
+                names.push(name.to_owned());
             }
-        } else if !b.is_ascii_hexdigit() {
-            return false;
         }
     }
-    true
+    Some(names)
 }
 
-/// 扫描 sessions 目录**文件名**收集会话 UUID（CONTRACT §18.6）：
-/// 各项目顶层非点文件 `*.jsonl`，取末段 `_` 后、`.jsonl` 前的部分。
-/// 不读文件内容；目录不可读时返回空集（调用方按“来源缺失”偏高处理）。
+/// UUID 形状（`8-4-4-4-12` 十六进制）。
+fn is_uuid_shape(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// 扫 sessions 目录**文件名**收会话 UUID（`*.jsonl` 取末段 `_` 后部分；不读内容）。
 pub fn scan_session_uuids(sessions_dir: &Path) -> HashSet<String> {
     let mut out = HashSet::new();
     let Ok(projects) = std::fs::read_dir(sessions_dir) else {
@@ -201,20 +230,17 @@ pub fn scan_session_uuids(sessions_dir: &Path) -> HashSet<String> {
                 continue;
             }
             let stem = &name[..name.len() - ".jsonl".len()];
-            let Some((_, uuid)) = stem.rsplit_once('_') else {
-                continue;
-            };
-            if is_uuid_shape(uuid) {
-                out.insert(uuid.to_owned());
+            if let Some((_, uuid)) = stem.rsplit_once('_') {
+                if is_uuid_shape(uuid) {
+                    out.insert(uuid.to_owned());
+                }
             }
         }
     }
     out
 }
 
-/// 解析记忆库时间戳为 UTC：RFC3339（含 `Z` / 偏移）优先，回退
-/// `YYYY-MM-DD HH:MM:SS[.f]`（SQLite `CURRENT_TIMESTAMP`，UTC）与
-/// `YYYY-MM-DDTHH:MM:SS[.f]`（无时区，按 UTC）。解析失败 ⇒ `None`。
+/// 记忆库时间戳 → UTC：RFC3339 优先，回退 SQLite `CURRENT_TIMESTAMP` 与无时区 `T` 形态。
 pub fn parse_memory_ts(raw: &str) -> Option<DateTime<Utc>> {
     let text = raw.trim();
     if text.is_empty() {
@@ -228,37 +254,37 @@ pub fn parse_memory_ts(raw: &str) -> Option<DateTime<Utc>> {
             return Some(naive.and_utc());
         }
     }
-    // 日期独行（`occurred_on` 类注解形态，容忍）：按 UTC 午夜。
+    // 日期独行（容忍）：按 UTC 午夜。
     if let Ok(date) = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d") {
         return date.and_hms_opt(0, 0, 0).map(|d| d.and_utc());
     }
     None
 }
 
-/// 时间戳 → ISO-8601 UTC 毫秒（§0 时间约定）；解析失败 ⇒ `None`。
+/// 时间戳 → ISO-8601 UTC 毫秒；解析失败 ⇒ `None`。
 pub fn iso_millis_opt(raw: Option<&str>) -> Option<String> {
     raw.and_then(parse_memory_ts)
         .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
-/// 把用户输入转为 `LIKE` 子串模式：转义 `\`、`%`、`_`（SQL 中配合 `ESCAPE '\'`），
-/// 两端加 `%`（同 `history.rs`）。
-pub(crate) fn like_pattern(query: &str) -> String {
-    let mut out = String::with_capacity(query.len() + 2);
-    out.push('%');
-    for ch in query.chars() {
-        if ch == '\\' || ch == '%' || ch == '_' {
+/// `LIKE` 转义（`%`/`_`/`\`），配合 `ESCAPE '\'`。
+pub(crate) fn escape_like(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
             out.push('\\');
         }
         out.push(ch);
     }
-    out.push('%');
     out
 }
 
-/// 列表 snippet：空白折叠为单空格后取前 [`SNIPPET_CHARS`] 字符，
-/// 字符边界安全，超长尾加 `…`。`total_chars` 为正文总字符数，
-/// `prefix` 为 SQL 侧截取的前缀（[`SNIPPET_SQL_PREFIX`] 字符内）。
+/// 用户输入 → `LIKE` 子串模式（两端加 `%`，同 `history.rs`）。
+pub(crate) fn like_pattern(query: &str) -> String {
+    format!("%{}%", escape_like(query))
+}
+
+/// 列表 snippet：空白折叠后取前 [`SNIPPET_CHARS`] 字符，超长尾加 `…`。
 pub fn make_snippet(prefix: &str, total_chars: u64) -> String {
     let mut folded = String::with_capacity(prefix.len().min(512));
     for word in prefix.split_whitespace() {
@@ -268,8 +294,7 @@ pub fn make_snippet(prefix: &str, total_chars: u64) -> String {
         folded.push_str(word);
     }
     let prefix_chars = prefix.chars().count() as u64;
-    let truncated = folded.chars().count() > SNIPPET_CHARS || total_chars > prefix_chars;
-    if !truncated {
+    if folded.chars().count() <= SNIPPET_CHARS && total_chars <= prefix_chars {
         return folded;
     }
     let mut out: String = folded.chars().take(SNIPPET_CHARS).collect();
@@ -291,8 +316,7 @@ pub fn truncate_bytes(text: &str, cap: usize) -> (String, bool) {
 
 /// 取 `metadata_json` 的字符串字段（缺失/非字符串/空串 ⇒ `None`）。
 pub fn metadata_field(meta: Option<&str>, field: &str) -> Option<String> {
-    let text = meta?;
-    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let value: serde_json::Value = serde_json::from_str(meta?).ok()?;
     value
         .get(field)?
         .as_str()
@@ -311,11 +335,9 @@ const SECRET_SUBSTRINGS: [&str; 7] = [
     "credential",
 ];
 
-/// 解析 `metadata_json` 为对象（数组/标量/解析失败 ⇒ `None`），
-/// 防御性删除键名含疑似密钥子串的顶层键。
+/// `metadata_json` → 对象（非对象/解析失败 ⇒ `None`），删疑似密钥顶层键。
 pub fn metadata_object(meta: Option<&str>) -> Option<serde_json::Value> {
-    let text = meta?;
-    let mut value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let mut value: serde_json::Value = serde_json::from_str(meta?).ok()?;
     let object = value.as_object_mut()?;
     object.retain(|k, _| {
         let lower = k.to_lowercase();
@@ -326,40 +348,33 @@ pub fn metadata_object(meta: Option<&str>) -> Option<serde_json::Value> {
 
 /// bank 展示名：cwd basename；cwd 未知时去掉目录名末段 `-<hash>` 后缀。
 pub fn display_name(bank: &str, cwd: Option<&str>) -> String {
-    if let Some(dir) = cwd {
-        if let Some(base) = Path::new(dir)
-            .file_name()
-            .and_then(|b| b.to_str())
-            .filter(|b| !b.is_empty())
-        {
-            return base.to_owned();
-        }
+    if let Some(base) = cwd
+        .and_then(|d| Path::new(d).file_name())
+        .and_then(|b| b.to_str())
+        .filter(|b| !b.is_empty())
+    {
+        return base.to_owned();
     }
-    match bank
-        .rsplit_once('-')
+    bank.rsplit_once('-')
         .map(|(pre, _)| pre)
         .filter(|pre| !pre.is_empty())
-    {
-        Some(pre) => pre.to_owned(),
-        None => bank.to_owned(),
-    }
+        .unwrap_or(bank)
+        .to_owned()
 }
 
-/// 只读读取 `memory.backend` 配置（经既有安全 runner，不占写门禁）；
-/// omp 缺失/超时/输出异常 ⇒ `None`（永不让 overview 失败）。
+/// 只读读 `memory.backend` 配置；omp 缺失/异常 ⇒ `None`（永不让 overview 失败）。
 pub(crate) fn memory_backend() -> Option<String> {
     let bin = crate::omp_cli::resolve_omp()?;
-    let mut discard = |_: &str| {};
     let output = crate::omp_cli::run_omp(
         &bin,
         &["config", "get", "memory.backend", "--json"],
         crate::omp_cli::VERSION_TIMEOUT,
-        &mut discard,
+        &mut |_: &str| {},
     )
     .ok()?;
     let stdout = crate::omp_cli::require_success(output, "读取记忆后端配置").ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).ok()?;
-    parsed
+    serde_json::from_str::<serde_json::Value>(&stdout)
+        .ok()?
         .get("value")?
         .as_str()
         .filter(|s| !s.is_empty())
@@ -367,33 +382,40 @@ pub(crate) fn memory_backend() -> Option<String> {
 }
 
 fn join_error(e: impl std::fmt::Display) -> AppError {
-    AppError::new(ErrorCode::Io, format!("后台任务失败：{e}"))
+    io(format!("后台任务失败：{e}"))
 }
 
-/// CONTRACT §18.1：bank 总览（阻塞 IO 在后台线程）。
-#[tauri::command]
-pub async fn memory_overview(cfg: tauri::State<'_, Config>) -> Result<MemoryOverview, AppError> {
-    let sessions_dir = cfg.sessions_dir.clone();
-    tauri::async_runtime::spawn_blocking(move || overview_impl(&resolve_bank_root(), &sessions_dir))
+/// 阻塞 IO 统一包 `spawn_blocking`。
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, AppError> + Send + 'static,
+) -> Result<T, AppError> {
+    tauri::async_runtime::spawn_blocking(job)
         .await
         .map_err(join_error)?
 }
 
-/// CONTRACT §18.2：bank 内分页列表 + 搜索（阻塞 IO 在后台线程）。
+/// CONTRACT §18.1：bank 总览。
+#[tauri::command]
+pub async fn memory_overview(cfg: tauri::State<'_, Config>) -> Result<MemoryOverview, AppError> {
+    let sessions_dir = cfg.sessions_dir.clone();
+    blocking(move || overview_impl(&resolve_bank_root(), &sessions_dir)).await
+}
+
+/// CONTRACT §18.2：bank 内分页列表 + 搜索。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn memory_list(
     cfg: tauri::State<'_, Config>,
     bank: String,
     query: Option<String>,
-    kind: Option<crate::model::MemoryKindFilter>,
+    kind: Option<MemoryKindFilter>,
     only_never_recalled: Option<bool>,
     only_unconsolidated: Option<bool>,
     only_missing_source: Option<bool>,
-    sort: Option<crate::model::MemorySort>,
+    sort: Option<MemorySort>,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<crate::model::MemoryPage, AppError> {
+) -> Result<MemoryPage, AppError> {
     let sessions_dir = cfg.sessions_dir.clone();
     let params = rows::ListParams {
         bank,
@@ -406,68 +428,40 @@ pub async fn memory_list(
         limit: limit.unwrap_or(LIST_LIMIT_DEFAULT),
         offset: offset.unwrap_or(0),
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        rows::list_impl(&resolve_bank_root(), &sessions_dir, &params)
-    })
-    .await
-    .map_err(join_error)?
+    blocking(move || rows::list_impl(&resolve_bank_root(), &sessions_dir, &params)).await
 }
 
-/// CONTRACT §18.3：单条记忆详情（阻塞 IO 在后台线程）。
+/// CONTRACT §18.3：单条记忆详情。
 #[tauri::command]
 pub async fn memory_detail(
     cfg: tauri::State<'_, Config>,
     bank: String,
     id: String,
-) -> Result<crate::model::MemoryDetail, AppError> {
+) -> Result<MemoryDetail, AppError> {
     let sessions_dir = cfg.sessions_dir.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        rows::detail_impl(&resolve_bank_root(), &sessions_dir, &bank, &id)
-    })
-    .await
-    .map_err(join_error)?
+    blocking(move || rows::detail_impl(&resolve_bank_root(), &sessions_dir, &bank, &id)).await
 }
 
-/// CONTRACT §18.4：增长趋势（阻塞 IO 在后台线程）。
+/// CONTRACT §4.43：bank 状态（lsof 失败 ⇒ probe_failed，非错误）。
 #[tauri::command]
-pub async fn memory_growth(
-    bank: Option<String>,
-    days: i64,
-) -> Result<Vec<crate::model::MemoryGrowthPoint>, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        rows::growth_impl(&resolve_bank_root(), bank.as_deref(), days)
+pub async fn memory_bank_status(bank: String) -> Result<MemoryBankStatus, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || {
+        delete::status_impl_with(
+            &resolve_bank_root(),
+            &data_dir,
+            &bank,
+            &delete::Gate::production(),
+        )
     })
     .await
-    .map_err(join_error)?
-}
-/// 数据目录（备份根父目录；`meta::data_dir`，`OMP_RESUME_DATA_DIR` 可覆盖）。
-fn data_dir_or_io() -> Result<PathBuf, AppError> {
-    crate::meta::data_dir()
-}
-
-/// CONTRACT §4.43：bank 状态（占用 + 备份；lsof 失败 ⇒ probe_failed，非错误）。
-#[tauri::command]
-pub async fn memory_bank_status(bank: String) -> Result<crate::model::MemoryBankStatus, AppError> {
-    let data_dir = data_dir_or_io()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        delete::status_impl(&resolve_bank_root(), &data_dir, &bank)
-    })
-    .await
-    .map_err(join_error)?
 }
 
 /// CONTRACT §4.44：备份列表（`bank=None` ⇒ 全部）。
 #[tauri::command]
-pub async fn memory_backups(
-    bank: Option<String>,
-) -> Result<Vec<crate::model::MemoryBackup>, AppError> {
-    let data_dir = data_dir_or_io()?;
-    let out = tauri::async_runtime::spawn_blocking(move || {
-        delete::backups_impl(&data_dir, bank.as_deref())
-    })
-    .await
-    .map_err(join_error)?;
-    Ok(out)
+pub async fn memory_backups(bank: Option<String>) -> Result<Vec<MemoryBackup>, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || Ok(delete::backups_impl(&data_dir, bank.as_deref()))).await
 }
 
 /// CONTRACT §4.45：删除预览（纯只读，不设门禁）。
@@ -475,12 +469,8 @@ pub async fn memory_backups(
 pub async fn memory_delete_preview(
     bank: String,
     ids: Vec<String>,
-) -> Result<crate::model::MemoryDeletePreview, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        delete::preview_impl(&resolve_bank_root(), &bank, &ids)
-    })
-    .await
-    .map_err(join_error)?
+) -> Result<MemoryDeletePreview, AppError> {
+    blocking(move || delete::preview_impl(&resolve_bank_root(), &bank, &ids)).await
 }
 
 /// CONTRACT §4.46：删除选中记忆（门禁 → 备份 → 复检 → 事务）。
@@ -488,46 +478,55 @@ pub async fn memory_delete_preview(
 pub async fn memory_delete_items(
     bank: String,
     ids: Vec<String>,
-) -> Result<crate::model::MemoryDeleteResult, AppError> {
-    let data_dir = data_dir_or_io()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        delete::delete_items_impl(&resolve_bank_root(), &data_dir, &bank, &ids)
+) -> Result<MemoryDeleteResult, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || {
+        delete::delete_items_impl_with(
+            &resolve_bank_root(),
+            &data_dir,
+            &bank,
+            &ids,
+            &delete::Gate::production(),
+        )
     })
     .await
-    .map_err(join_error)?
 }
 
 /// CONTRACT §4.47：整 bank 移入备份区（可恢复）。
 #[tauri::command]
-pub async fn memory_delete_bank(bank: String) -> Result<crate::model::MemoryBackup, AppError> {
-    let data_dir = data_dir_or_io()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        delete::delete_bank_impl(&resolve_bank_root(), &data_dir, &bank)
+pub async fn memory_delete_bank(bank: String) -> Result<MemoryBackup, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || {
+        delete::delete_bank_impl_with(
+            &resolve_bank_root(),
+            &data_dir,
+            &bank,
+            &delete::Gate::production(),
+        )
     })
     .await
-    .map_err(join_error)?
 }
 
 /// CONTRACT §4.48：从备份恢复（含校验与回滚）。
 #[tauri::command]
-pub async fn memory_restore(
-    backup_id: String,
-) -> Result<crate::model::MemoryRestoreResult, AppError> {
-    let data_dir = data_dir_or_io()?;
-    tauri::async_runtime::spawn_blocking(move || {
-        delete::restore_impl(&resolve_bank_root(), &data_dir, &backup_id)
+pub async fn memory_restore(backup_id: String) -> Result<MemoryRestoreResult, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || {
+        delete::restore_impl_with(
+            &resolve_bank_root(),
+            &data_dir,
+            &backup_id,
+            &delete::Gate::production(),
+        )
     })
     .await
-    .map_err(join_error)?
 }
 
 /// CONTRACT §4.49：永久删除一个备份。
 #[tauri::command]
 pub async fn memory_delete_backup(backup_id: String) -> Result<(), AppError> {
-    let data_dir = data_dir_or_io()?;
-    tauri::async_runtime::spawn_blocking(move || delete::delete_backup_impl(&data_dir, &backup_id))
-        .await
-        .map_err(join_error)?
+    let data_dir = crate::meta::data_dir()?;
+    blocking(move || delete::delete_backup_impl(&data_dir, &backup_id)).await
 }
 
 /// 单表轻量行（overview 只取时间戳与元数据，不读正文）。
@@ -538,73 +537,54 @@ struct OverviewRow {
     consolidated_at: Option<String>,
 }
 
-/// 取单表 overview 所需列（缺列则该字段恒 `None`，调用方按降级语义处理）。
+/// 取单表 overview 所需列（缺列恒 `None`，调用方降级）。
 fn overview_rows(
     conn: &Connection,
     table: &str,
     schema: &TableSchema,
-) -> Result<(Vec<OverviewRow>, bool), rusqlite::Error> {
-    let has_ts = schema.has("timestamp");
-    let has_meta = schema.has("metadata_json");
-    let has_recall = schema.has("recall_count");
-    let has_consol = schema.has("consolidated_at");
-    let select = format!(
-        "SELECT {ts}, {meta}, {recall}, {consol} FROM \"{table}\"",
-        ts = if has_ts { "timestamp" } else { "NULL" },
-        meta = if has_meta { "metadata_json" } else { "NULL" },
-        recall = if has_recall { "recall_count" } else { "NULL" },
-        consol = if has_consol {
-            "consolidated_at"
-        } else {
-            "NULL"
-        },
-    );
-    let mut stmt = conn.prepare(&select)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(OverviewRow {
-                timestamp: row.get(0)?,
-                metadata: row.get(1)?,
-                recall_count: row.get(2)?,
-                consolidated_at: row.get(3)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((rows, has_consol))
+) -> Result<Vec<OverviewRow>, rusqlite::Error> {
+    let cols = [
+        "timestamp",
+        "metadata_json",
+        "recall_count",
+        "consolidated_at",
+    ]
+    .map(|c| col_or_null(schema, c));
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM \"{table}\"", cols.join(", ")))?;
+    let rows = stmt.query_map([], |row| {
+        Ok(OverviewRow {
+            timestamp: row.get(0)?,
+            metadata: row.get(1)?,
+            recall_count: row.get(2)?,
+            consolidated_at: row.get(3)?,
+        })
+    })?;
+    rows.collect()
 }
 
 /// 汇总单个 bank（任何失败都降级为 `readable=false` 行，不抛错）。
 fn summarize_bank(root: &Path, bank: &str, sessions: &HashSet<String>) -> MemoryBankSummary {
-    let bytes_of = |dir: &Path| bank_bytes(dir);
     let unreadable = |bytes: u64, reason: &str| MemoryBankSummary {
         bank: bank.to_owned(),
         display_name: display_name(bank, None),
-        cwd: None,
-        cwd_exists: None,
-        working: 0,
-        episodic: 0,
-        facts: 0,
         bytes,
-        first_memory_at: None,
-        last_memory_at: None,
-        never_recalled: 0,
-        unconsolidated: 0,
-        source_sessions: 0,
-        missing_source_sessions: 0,
         readable: false,
         error: Some(reason.to_owned()),
+        ..MemoryBankSummary::default()
     };
     let dir = match validate_bank(root, bank) {
         Ok(dir) => dir,
         Err(e) => {
-            let reason = match e.code {
-                ErrorCode::OutsideRoot => "记忆库路径越界",
-                _ => "记忆库不存在",
-            };
-            return unreadable(0, reason);
+            return unreadable(
+                0,
+                match e.code {
+                    ErrorCode::OutsideRoot => "记忆库路径越界",
+                    _ => "记忆库不存在",
+                },
+            );
         }
     };
-    let bytes = bytes_of(&dir);
+    let bytes = bank_bytes(&dir);
     let db = dir.join(DB_FILENAME);
     let Some(conn) = open_readonly(&db) else {
         return unreadable(bytes, &unreadable_reason(&db));
@@ -614,58 +594,48 @@ fn summarize_bank(root: &Path, bank: &str, sessions: &HashSet<String>) -> Memory
     if !wm.exists && !em.exists {
         return unreadable(bytes, "缺少记忆表");
     }
-    let facts_schema = table_schema(&conn, "facts");
-    let facts: u64 = if facts_schema.exists {
+    let facts: u64 = if table_schema(&conn, "facts").exists {
         conn.query_row("SELECT COUNT(*) FROM facts", [], |row| row.get::<_, i64>(0))
             .map(|n| n.max(0) as u64)
             .unwrap_or(0)
     } else {
         0
     };
-    // 两表轻量行：计数/首末时间/cwd/来源会话一次算完。
-    let mut working_rows: Vec<OverviewRow> = Vec::new();
-    let mut episodic_rows: Vec<OverviewRow> = Vec::new();
-    let mut consol_col = false;
+    let mut working_rows = Vec::new();
+    let mut episodic_rows = Vec::new();
     if wm.exists {
         match overview_rows(&conn, "working_memory", &wm) {
-            Ok((rows, has_consol)) => {
-                working_rows = rows;
-                consol_col = has_consol;
-            }
+            Ok(rows) => working_rows = rows,
             Err(_) => return unreadable(bytes, "数据库文件损坏"),
         }
     }
     if em.exists {
         match overview_rows(&conn, "episodic_memory", &em) {
-            Ok((rows, _)) => episodic_rows = rows,
+            Ok(rows) => episodic_rows = rows,
             Err(_) => return unreadable(bytes, "数据库文件损坏"),
         }
     }
-    let working = working_rows.len() as u64;
-    let episodic = episodic_rows.len() as u64;
-    // recall 列缺失时 `recall_count` 恒 None ⇒ 全算 neverRecalled（§18.1）。
-    let never_recalled = working_rows
-        .iter()
-        .chain(episodic_rows.iter())
-        .filter(|r| r.recall_count.unwrap_or(0) == 0)
-        .count() as u64;
-    // consolidated_at 列缺失时为 0（视为已巩固，不过滤）。
-    let unconsolidated = if consol_col {
-        working_rows
-            .iter()
-            .filter(|r| r.consolidated_at.as_deref().is_none_or(str::is_empty))
-            .count() as u64
-    } else {
-        0
-    };
-    // 首末时间：解析后比较（混用格式时仍正确），输出统一 ISO。
+    // 单遍：首末时间 / never / 来源会话 / 最新 cwd（同 timestamp 时首行 wins，与排序等价）。
     let mut first: Option<DateTime<Utc>> = None;
     let mut last: Option<DateTime<Utc>> = None;
-    for row in working_rows.iter().chain(episodic_rows.iter()) {
-        let Some(text) = row.timestamp.as_deref() else {
-            continue;
-        };
-        let Some(dt) = parse_memory_ts(text) else {
+    let mut never = 0u64;
+    let mut sources = HashSet::new();
+    let mut cwd_best: (Option<DateTime<Utc>>, Option<String>) = (None, None);
+    for row in working_rows.iter().chain(&episodic_rows) {
+        if row.recall_count.unwrap_or(0) == 0 {
+            never += 1;
+        }
+        let meta = row.metadata.as_deref();
+        if let Some(sid) = metadata_field(meta, "session_id") {
+            sources.insert(sid);
+        }
+        let dt = row.timestamp.as_deref().and_then(parse_memory_ts);
+        if let Some(c) = metadata_field(meta, "cwd") {
+            if cwd_best.1.is_none() || dt > cwd_best.0 {
+                cwd_best = (dt, Some(c));
+            }
+        }
+        let Some(dt) = dt else {
             continue;
         };
         if first.is_none_or(|f| dt < f) {
@@ -675,48 +645,34 @@ fn summarize_bank(root: &Path, bank: &str, sessions: &HashSet<String>) -> Memory
             last = Some(dt);
         }
     }
-    // cwd：按 timestamp 倒序第一条非空 `metadata_json.cwd`。
-    let mut by_time: Vec<(Option<DateTime<Utc>>, Option<&str>)> = working_rows
-        .iter()
-        .chain(episodic_rows.iter())
-        .map(|r| {
-            (
-                r.timestamp.as_deref().and_then(parse_memory_ts),
-                r.metadata.as_deref(),
-            )
-        })
-        .collect();
-    by_time.sort_by_key(|r| std::cmp::Reverse(r.0));
-    let cwd = by_time
-        .iter()
-        .find_map(|(_, meta)| metadata_field(*meta, "cwd"));
-    let cwd_exists = cwd.as_ref().map(|c| Path::new(c).is_dir());
-    // 来源会话去重 + 缺失统计。
-    let mut source_ids: HashSet<String> = HashSet::new();
-    for row in working_rows.iter().chain(episodic_rows.iter()) {
-        if let Some(sid) = metadata_field(row.metadata.as_deref(), "session_id") {
-            source_ids.insert(sid);
-        }
-    }
-    let missing_source_sessions = source_ids
-        .iter()
-        .filter(|sid| !sessions.contains(sid.as_str()))
-        .count() as u64;
+    // recall 列缺失时恒 None ⇒ 全算 never；consolidated 列缺失 ⇒ 0。
+    let unconsolidated = if wm.has("consolidated_at") {
+        working_rows
+            .iter()
+            .filter(|r| r.consolidated_at.as_deref().is_none_or(str::is_empty))
+            .count() as u64
+    } else {
+        0
+    };
+    let cwd = cwd_best.1;
     MemoryBankSummary {
         bank: bank.to_owned(),
         display_name: display_name(bank, cwd.as_deref()),
+        cwd_exists: cwd.as_ref().map(|c| Path::new(c).is_dir()),
         cwd,
-        cwd_exists,
-        working,
-        episodic,
+        working: working_rows.len() as u64,
+        episodic: episodic_rows.len() as u64,
         facts,
         bytes,
         first_memory_at: first.map(|d| d.to_rfc3339_opts(SecondsFormat::Millis, true)),
         last_memory_at: last.map(|d| d.to_rfc3339_opts(SecondsFormat::Millis, true)),
-        never_recalled,
+        never_recalled: never,
         unconsolidated,
-        source_sessions: source_ids.len() as u64,
-        missing_source_sessions,
+        source_sessions: sources.len() as u64,
+        missing_source_sessions: sources
+            .iter()
+            .filter(|sid| !sessions.contains(sid.as_str()))
+            .count() as u64,
         readable: true,
         error: None,
     }
@@ -727,35 +683,15 @@ fn summarize_bank(root: &Path, bank: &str, sessions: &HashSet<String>) -> Memory
 pub fn overview_impl(root: &Path, sessions_dir: &Path) -> Result<MemoryOverview, AppError> {
     let backend = memory_backend();
     let root_display = root.to_string_lossy().into_owned();
-    let mut names: Vec<String> = Vec::new();
-    match std::fs::read_dir(root) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let is_dir = entry
-                    .file_type()
-                    .map(|t| t.is_dir() || t.is_symlink())
-                    .unwrap_or(false);
-                if !is_dir {
-                    continue;
-                }
-                if let Some(name) = entry.file_name().to_str() {
-                    if !name.starts_with('.') {
-                        names.push(name.to_owned());
-                    }
-                }
-            }
-        }
-        Err(_) => {
-            return Ok(MemoryOverview {
-                available: false,
-                backend,
-                root: root_display,
-                banks: Vec::new(),
-                totals: MemoryTotals::default(),
-            });
-        }
-    }
-    // sessions 目录每命令调用只扫一次（文件名，不读内容）。
+    let Some(names) = list_bank_names(root) else {
+        return Ok(MemoryOverview {
+            available: false,
+            backend,
+            root: root_display,
+            banks: Vec::new(),
+            totals: MemoryTotals::default(),
+        });
+    };
     let sessions = scan_session_uuids(sessions_dir);
     let mut banks: Vec<MemoryBankSummary> = names
         .iter()
@@ -788,13 +724,6 @@ pub fn overview_impl(root: &Path, sessions_dir: &Path) -> Result<MemoryOverview,
         banks,
         totals,
     })
-}
-
-/// 时间戳 → 本地日期桶（与 `usage.rs` 同约定：UTC 解析 → 本地时区分桶）。
-/// 解析失败 ⇒ `None`（不计入任何一天）。
-pub fn bucket_local_day(raw: Option<&str>) -> Option<String> {
-    let dt = parse_memory_ts(raw?)?;
-    Some(dt.with_timezone(&Local).format("%Y-%m-%d").to_string())
 }
 
 #[cfg(test)]

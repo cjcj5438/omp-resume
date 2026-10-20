@@ -890,41 +890,62 @@ mod tests {
 
     #[test]
     fn memory_contract_shapes_match_typescript() {
-        assert_eq!(
-            serde_json::to_value(MemoryKind::Working).unwrap(),
-            "working"
-        );
-        assert_eq!(
-            serde_json::to_value(MemoryKind::Episodic).unwrap(),
-            "episodic"
-        );
-        assert_eq!(serde_json::to_value(MemoryKindFilter::All).unwrap(), "all");
-        assert_eq!(
-            serde_json::to_value(MemorySort::MostRecalled).unwrap(),
-            "mostRecalled"
-        );
+        // 枚举线形：小写 / camelCase / kebab-case / snake_case。
+        for (value, want) in [
+            (
+                serde_json::to_value(MemoryKind::Working).unwrap(),
+                "working",
+            ),
+            (
+                serde_json::to_value(MemoryKind::Episodic).unwrap(),
+                "episodic",
+            ),
+            (serde_json::to_value(MemoryKindFilter::All).unwrap(), "all"),
+            (
+                serde_json::to_value(MemorySort::MostRecalled).unwrap(),
+                "mostRecalled",
+            ),
+            (
+                serde_json::to_value(MemoryBackupKind::BeforeDelete).unwrap(),
+                "before-delete",
+            ),
+            (
+                serde_json::to_value(MemoryBackupKind::BankRemoved).unwrap(),
+                "bank-removed",
+            ),
+            (
+                serde_json::to_value(MemorySkipReason::NotFound).unwrap(),
+                "not_found",
+            ),
+        ] {
+            assert_eq!(value, want);
+        }
         assert_eq!(
             serde_json::from_str::<MemorySort>("\"mostRecalled\"").unwrap(),
             MemorySort::MostRecalled
         );
-        let item = MemoryItem {
-            id: "m1".into(),
-            kind: MemoryKind::Working,
-            snippet: "hi".into(),
-            content_chars: 2,
-            created_at: None,
-            source_session_id: None,
-            source_session_exists: None,
-            recall_count: 0,
-            last_recalled_at: None,
-            importance: None,
-            veracity: None,
-            memory_type: None,
-            consolidated: false,
-            superseded: false,
-        };
-        let detail = MemoryDetail {
-            item,
+        assert_eq!(
+            serde_json::from_str::<MemoryBackupKind>("\"before-restore\"").unwrap(),
+            MemoryBackupKind::BeforeRestore
+        );
+        // `flatten` 让详情与列表行同属一层（TS `extends` 对应扁平 JSON）。
+        let v = serde_json::to_value(&MemoryDetail {
+            item: MemoryItem {
+                id: "m1".into(),
+                kind: MemoryKind::Working,
+                snippet: "hi".into(),
+                content_chars: 2,
+                created_at: None,
+                source_session_id: None,
+                source_session_exists: None,
+                recall_count: 0,
+                last_recalled_at: None,
+                importance: None,
+                veracity: None,
+                memory_type: None,
+                consolidated: false,
+                superseded: false,
+            },
             content: "hi".into(),
             truncated: false,
             embed_text: None,
@@ -932,9 +953,8 @@ mod tests {
             facts: vec![],
             summary_of: vec![],
             related_edges: 0,
-        };
-        let v = serde_json::to_value(&detail).unwrap();
-        // `flatten` 让详情与列表行同属一层（TS `extends` 对应扁平 JSON）。
+        })
+        .unwrap();
         assert_eq!(v["id"], "m1");
         assert_eq!(v["kind"], "working");
         assert_eq!(v["contentChars"], 2);
@@ -942,24 +962,7 @@ mod tests {
         assert_eq!(v["memoryType"], serde_json::Value::Null);
         assert_eq!(v["embedText"], serde_json::Value::Null);
         assert!(v.get("item").is_none());
-        // 写路径枚举：备份 kind 为 kebab-case，跳过原因为 snake_case。
-        assert_eq!(
-            serde_json::to_value(MemoryBackupKind::BeforeDelete).unwrap(),
-            "before-delete"
-        );
-        assert_eq!(
-            serde_json::to_value(MemoryBackupKind::BankRemoved).unwrap(),
-            "bank-removed"
-        );
-        assert_eq!(
-            serde_json::to_value(MemorySkipReason::NotFound).unwrap(),
-            "not_found"
-        );
-        assert_eq!(
-            serde_json::from_str::<MemoryBackupKind>("\"before-restore\"").unwrap(),
-            MemoryBackupKind::BeforeRestore
-        );
-        let status = MemoryBankStatus {
+        let s = serde_json::to_value(&MemoryBankStatus {
             bank: "b".into(),
             in_use: true,
             probe_failed: false,
@@ -968,8 +971,8 @@ mod tests {
                 command: "omp".into(),
             }],
             backups: vec![],
-        };
-        let s = serde_json::to_value(&status).unwrap();
+        })
+        .unwrap();
         assert_eq!(s["inUse"], true);
         assert_eq!(s["probeFailed"], false);
         assert_eq!(s["holders"][0]["pid"], 1);
@@ -1359,7 +1362,7 @@ pub struct MemoryTotals {
 }
 
 /// 单个 bank 的概览行。`readable=false` 时计数按 0，UI 置灰并显示 `error`。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryBankSummary {
     pub bank: String,
@@ -1443,15 +1446,6 @@ pub struct MemoryDetail {
     pub facts: Vec<MemoryFact>,
     pub summary_of: Vec<String>,
     pub related_edges: u64,
-}
-
-/// `memory_growth` 返回点：`date` 为本地时区 `YYYY-MM-DD`。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MemoryGrowthPoint {
-    pub date: String,
-    pub working: u64,
-    pub episodic: u64,
 }
 
 // ---------------------------------------------------------------------------

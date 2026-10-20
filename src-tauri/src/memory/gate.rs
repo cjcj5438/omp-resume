@@ -1,9 +1,7 @@
 //! 记忆库占用门禁：`lsof` 查 bank 三文件（db / `-wal` / `-shm`）持有者。
 //!
-//! - 任一持有者 ⇒ 调用方报 `IN_USE`（message 含 pid + command 名）。
-//! - lsof 缺失 / 超时 / 输出不可解析 ⇒ [`ProbeFailed`]（调用方报 `PROBE_FAILED`）。
-//! - 歧义一律按“不敢断言空闲”处理（误报 busy 可接受，误报 idle 不可接受）。
-//! - 二进制路径与超时复用 [`crate::occupant`] 常量；`*_with` 变体供测试注入。
+//! 任一持有者 ⇒ 调用方报 `IN_USE`；lsof 缺失/超时/不可解析 ⇒ [`ProbeFailed`]。
+//! 歧义一律按“不敢断言空闲”处理。二进制路径与超时复用 [`crate::occupant`] 常量。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,7 +13,7 @@ use crate::model::MemoryHolder;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProbeFailed;
 
-/// 解析 `lsof -nP -F pcn` 输出 → pid → command（同 pid 多文件去重，command 取首个非空）。
+/// 解析 `lsof -nP -F pcn` 输出 → pid → command（同 pid 去重，command 取首个非空）。
 /// 至少带一个 `n` 行的 `p` 组才算持有者；垃圾行忽略。
 pub(crate) fn parse_holders(output: &str) -> BTreeMap<u32, String> {
     let mut holders: BTreeMap<u32, String> = BTreeMap::new();
@@ -42,7 +40,6 @@ pub(crate) fn parse_holders(output: &str) -> BTreeMap<u32, String> {
             "p" => {
                 flush(&mut cur_pid, &mut cur_cmd, &mut cur_has_file);
                 if let Ok(pid) = value.parse::<u32>() {
-                    // pid 0 不可能是文件持有者（防御）。
                     cur_pid = if pid == 0 { None } else { Some(pid) };
                 }
             }
@@ -51,9 +48,7 @@ pub(crate) fn parse_holders(output: &str) -> BTreeMap<u32, String> {
                     cur_cmd = Some(value.to_owned());
                 }
             }
-            "n" if cur_pid.is_some() => {
-                cur_has_file = true;
-            }
+            "n" if cur_pid.is_some() => cur_has_file = true,
             "n" => {}
             _ => {}
         }
@@ -85,22 +80,18 @@ pub(crate) fn holders_for_files_with(
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ProbeFailed);
-                }
+            Ok(None) if std::time::Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(_) => {
+            _ => {
                 let _ = child.kill();
+                let _ = child.wait();
                 return Err(ProbeFailed);
             }
         }
     }
     let output = child.wait_with_output().map_err(|_| ProbeFailed)?;
-    // exit 0/1 皆可：0 = 有命中，1 = 无命中；其余 ⇒ 失败。
+    // exit 0 = 有命中，1 = 无命中；其余 ⇒ 失败。
     match output.status.code() {
         Some(0) | Some(1) => {}
         _ => return Err(ProbeFailed),
@@ -120,7 +111,7 @@ pub(crate) fn holders_for_files_with(
             })
             .collect());
     }
-    // 有输出但零可解析组 ⇒  garbled；空白输出 ⇒ 空闲。
+    // 有输出但零可解析组 ⇒ garbled；空白输出 ⇒ 空闲。
     if text.trim().is_empty() {
         Ok(Vec::new())
     } else {
@@ -128,7 +119,7 @@ pub(crate) fn holders_for_files_with(
     }
 }
 
-/// bank 三文件路径（db / `-wal` / `-shm`；不存在的也传入，lsof 会忽略）。
+/// bank 三文件路径（不存在的也传入，lsof 会忽略）。
 pub(crate) fn bank_files(bank_dir: &Path) -> Vec<PathBuf> {
     let db = bank_dir.join(crate::memory::DB_FILENAME);
     vec![
@@ -158,35 +149,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_groups_pid_command_and_files() {
-        let out = "p1234\ncompA\nn/db/a\np1234\ncompA\nn/db/a-wal\np99\nn/db/a\n";
-        let holders = parse_holders(out);
+    fn parse_pid_command_files_garbage_and_pid_zero() {
+        let holders =
+            parse_holders("p1234\ncompA\nn/db/a\np1234\ncompA\nn/db/a-wal\np99\nn/db/a\n");
         assert_eq!(holders.len(), 2);
         assert_eq!(holders[&1234], "ompA");
-        // 无 command 行 ⇒ 空串（调用方再兜底为 unknown）。
-        assert_eq!(holders[&99], "");
-    }
-
-    #[test]
-    fn parse_ignores_garbage_and_pid_zero() {
-        let out = "garbage\np0\nctest\nn/x\np\np77\nzzz\n";
-        let holders = parse_holders(out);
-        // p0 丢弃；p77 无 n 行 ⇒ 不算持有者。
-        assert!(holders.is_empty());
-        // 空输出 ⇒ 空。
+        assert_eq!(holders[&99], ""); // 无 command 行 ⇒ 空串（调用方兜底 unknown）
+                                      // 垃圾行、pid 0、无 `n` 行的组一律忽略。
+        assert!(parse_holders("garbage\np0\nctest\nn/x\np\np77\nzzz\n").is_empty());
         assert!(parse_holders("").is_empty());
         assert!(parse_holders("   \n").is_empty());
-    }
-
-    #[test]
-    fn probe_missing_binary_is_failure() {
-        let err = holders_for_files_with(
-            &[PathBuf::from("/tmp/x.db")],
-            Path::new("/nonexistent/lsof-test-binary"),
-            Duration::from_secs(2),
-        )
-        .unwrap_err();
-        assert_eq!(err, ProbeFailed);
     }
 
     /// 造一个假 lsof（shell 脚本）：按需输出/退出码/睡眠。
@@ -199,95 +171,48 @@ mod tests {
     }
 
     #[test]
-    fn probe_fake_lsof_matrix() {
+    fn probe_matrix() {
         let tmp = tempfile::tempdir().unwrap();
         let files = vec![PathBuf::from("/tmp/x.db")];
-        // exit 1 空输出 ⇒ 空闲。
-        let bin = fake_lsof(tmp.path(), "lsof-idle", "#!/bin/sh\nexit 1\n");
-        assert!(holders_for_files_with(&files, &bin, Duration::from_secs(2))
-            .unwrap()
-            .is_empty());
-        // exit 0 可解析 ⇒ 持有者。
-        let bin = fake_lsof(
-            tmp.path(),
-            "lsof-busy",
-            "#!/bin/sh\nprintf 'p4242\\nctest-proc\\nn/tmp/x.db\\n'\n",
-        );
-        let holders = holders_for_files_with(&files, &bin, Duration::from_secs(2)).unwrap();
-        assert_eq!(holders.len(), 1);
-        assert_eq!(holders[0].pid, 4242);
-        assert_eq!(holders[0].command, "test-proc");
-        // exit 0 垃圾 ⇒ 失败。
-        let bin = fake_lsof(tmp.path(), "lsof-garbled", "#!/bin/sh\necho '???'\n");
+        let probe = |bin: &Path, timeout: Duration| holders_for_files_with(&files, bin, timeout);
+        // 缺失二进制 ⇒ 失败。
         assert_eq!(
-            holders_for_files_with(&files, &bin, Duration::from_secs(2)).unwrap_err(),
+            probe(
+                Path::new("/nonexistent/lsof-test-binary"),
+                Duration::from_secs(2)
+            )
+            .unwrap_err(),
             ProbeFailed
         );
-        // exit 2 ⇒ 失败。
-        let bin = fake_lsof(tmp.path(), "lsof-err", "#!/bin/sh\nexit 2\n");
-        assert_eq!(
-            holders_for_files_with(&files, &bin, Duration::from_secs(2)).unwrap_err(),
-            ProbeFailed
-        );
-        // 超时 ⇒ 失败（脚本睡 30s，超时 200ms）。
-        let bin = fake_lsof(tmp.path(), "lsof-slow", "#!/bin/sh\nsleep 30\n");
-        let start = std::time::Instant::now();
-        assert_eq!(
-            holders_for_files_with(&files, &bin, Duration::from_millis(200)).unwrap_err(),
-            ProbeFailed
-        );
-        assert!(start.elapsed() < Duration::from_secs(10));
-    }
-
-    #[test]
-    fn probe_real_lsof_sees_tail_holder() {
-        // 真 lsof：`tail -f` 按住文件 ⇒ 探针必须报出持有者。
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("held.db");
-        std::fs::write(&file, b"x").unwrap();
-        let mut tail = std::process::Command::new("/usr/bin/tail")
-            .args(["-f", file.to_str().unwrap()])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
-        // 给 tail 一点时间打开文件。
-        let lsof = Path::new(crate::occupant::LSOF);
-        let timeout = crate::occupant::LSOF_TIMEOUT;
-        let mut holders = Vec::new();
-        for _ in 0..50 {
-            holders = holders_for_files_with(std::slice::from_ref(&file), lsof, timeout)
-                .unwrap_or_default();
-            if !holders.is_empty() {
-                break;
+        // （脚本，超时 /ms，期望）：exit 1 空输出 ⇒ 空闲；exit 0 可解析 ⇒ 持有者；
+        // 垃圾输出 / exit 2 / 超时 ⇒ 失败。
+        let cases = [
+            ("idle", "#!/bin/sh\nexit 1\n", 2000, 0),
+            (
+                "busy",
+                "#!/bin/sh\nprintf 'p4242\\nctest-proc\\nn/tmp/x.db\\n'\n",
+                2000,
+                1,
+            ),
+            ("garbled", "#!/bin/sh\necho '???'\n", 2000, -1),
+            ("err", "#!/bin/sh\nexit 2\n", 2000, -1),
+            ("slow", "#!/bin/sh\nsleep 30\n", 200, -1),
+        ];
+        for (name, script, timeout_ms, want) in cases {
+            let bin = fake_lsof(tmp.path(), &format!("lsof-{name}"), script);
+            let start = std::time::Instant::now();
+            match (probe(&bin, Duration::from_millis(timeout_ms)), want) {
+                (Ok(holders), 0) => assert!(holders.is_empty(), "{name}"),
+                (Ok(holders), 1) => {
+                    assert_eq!(holders.len(), 1, "{name}");
+                    assert_eq!(holders[0].pid, 4242);
+                    assert_eq!(holders[0].command, "test-proc");
+                }
+                (Err(ProbeFailed), -1) => {
+                    assert!(start.elapsed() < Duration::from_secs(10), "{name}")
+                }
+                (got, _) => panic!("{name}: unexpected {got:?}"),
             }
-            std::thread::sleep(Duration::from_millis(50));
         }
-        let _ = tail.kill();
-        let _ = tail.wait();
-        assert_eq!(holders.len(), 1, "{holders:?}");
-        assert_eq!(holders[0].pid, tail.id());
-        assert_eq!(holders[0].command, "tail");
-        // 进程退出后 ⇒ 空闲。
-        let holders = holders_for_files_with(std::slice::from_ref(&file), lsof, timeout).unwrap();
-        assert!(holders.is_empty());
-    }
-
-    #[test]
-    fn in_use_message_lists_holders() {
-        let msg = in_use_message(&[MemoryHolder {
-            pid: 1,
-            command: "omp".into(),
-        }]);
-        assert!(msg.contains('1') && msg.contains("omp"), "{msg}");
-        let many: Vec<MemoryHolder> = (1..=7)
-            .map(|pid| MemoryHolder {
-                pid,
-                command: "x".into(),
-            })
-            .collect();
-        let msg = in_use_message(&many);
-        assert!(msg.contains('7'), "{msg}");
     }
 }

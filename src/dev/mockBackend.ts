@@ -382,7 +382,7 @@ export async function installMockBackend(): Promise<MockHandle> {
     backend: params.get("memoryBackend") ?? "mnemopi",
     inUseBank: params.get("memoryInUse"),
     probeFailed: params.get("memoryProbe") === "fail",
-    manyItems: params.get("memoryMany") === "1",
+    bulkBanks: Number(params.get("memoryBanks") ?? 0),
   });
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [
@@ -734,7 +734,6 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "memory_overview":
       case "memory_list":
       case "memory_detail":
-      case "memory_growth":
       case "memory_bank_status":
       case "memory_backups":
       case "memory_delete_preview":
