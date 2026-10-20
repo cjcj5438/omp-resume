@@ -14,6 +14,7 @@ import {
 import { errorText } from "../format";
 import type { OmpUpdateCheck, PluginUpgradeChange } from "../types";
 import { McpPanel } from "./McpPanel";
+import { MemoryPanel } from "./MemoryPanel";
 import { ModelsAgentsPanel } from "./ModelsAgentsPanel";
 import { PluginsPanel, upgradeIsUpToDate } from "./PluginsPanel";
 import { SkillsPanel } from "./SkillsPanel";
@@ -30,9 +31,12 @@ interface ManageViewProps {
   onBack: () => void;
   /** 与侧栏「检查 omp 更新」同一回调：有新版时打开更新对话框。 */
   onCheckOmp: () => void;
+  /** 当前列表已加载的会话 id：记忆库「查看来源会话」据此判断可用性。 */
+  loadedSessionIds: ReadonlySet<string>;
+  onOpenSession: (sessionId: string) => void;
 }
 
-type ManageTab = "models" | "plugins" | "skills" | "mcp";
+type ManageTab = "models" | "plugins" | "skills" | "mcp" | "memory";
 
 interface UpdateAllStep {
   name: string;
@@ -45,9 +49,10 @@ const TABS: { key: ManageTab; label: string }[] = [
   { key: "plugins", label: "插件" },
   { key: "skills", label: "Skills" },
   { key: "mcp", label: "MCP" },
+  { key: "memory", label: "记忆库" },
 ];
 
-export function ManageView({ projects, onToast, onBack, onCheckOmp }: ManageViewProps) {
+export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessionIds, onOpenSession }: ManageViewProps) {
   const op = useOmpOp();
   const alive = useAlive();
   const [tab, setTab] = useState<ManageTab>("models");
@@ -195,10 +200,16 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp }: ManageView
           <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} />
         ) : tab === "skills" ? (
           <SkillsPanel op={op} onToast={onToast} refreshToken={refreshToken} />
-        ) : (
+        ) : tab === "mcp" ? (
           <fieldset disabled={busy} className="manage-fieldset">
             <McpPanel projects={projects} onToast={onToast} />
           </fieldset>
+        ) : (
+          <MemoryPanel
+            loadedSessionIds={loadedSessionIds}
+            onOpenSession={onOpenSession}
+            onToast={onToast}
+          />
         )}
       </div>
       {busy || op.lines.length > 0 ? (

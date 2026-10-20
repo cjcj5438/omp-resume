@@ -548,3 +548,23 @@ describe("omp 版本与更新", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+describe("记忆库跳转来源会话", () => {
+  it("在管理页点击查看来源会话会离开管理视图并选中该会话", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(screen.getByRole("button", { name: "管理" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "记忆库" }));
+    fireEvent.click(await screen.findByRole("button", { name: "omp-resume" }));
+
+    const jumps = await screen.findAllByRole("button", { name: "查看来源会话" });
+    const enabled = jumps.find((b) => (b as HTMLButtonElement).disabled === false);
+    expect(enabled).toBeTruthy();
+    fireEvent.click(enabled as HTMLButtonElement);
+
+    expect(screen.queryByRole("heading", { name: "管理" })).toBeNull();
+    expect(document.querySelector(".detail-head")).not.toBeNull();
+  });
+});

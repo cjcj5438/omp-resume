@@ -15,9 +15,9 @@ use std::time::Duration;
 use crate::model::Occupant;
 
 /// `lsof` 绝对路径（GUI 应用 PATH 极简，必须写死）。
-const LSOF: &str = "/usr/sbin/lsof";
-/// `lsof` 硬超时：超时则杀子进程，降级为无信息。
-const LSOF_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const LSOF: &str = "/usr/sbin/lsof";
+/// `lsof` 硬超时：超时则杀子进程，调用方按各自语义降级。
+pub(crate) const LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// 环境白名单：只提取这些变量，其余一律丢弃（不保留、不日志、不传前端）。
 const WL_TERM_PROGRAM: &str = "TERM_PROGRAM";

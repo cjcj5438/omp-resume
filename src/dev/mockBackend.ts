@@ -24,6 +24,7 @@ import {
   type FixtureSession,
 } from "./fixtures";
 import { mockEmptyUsageHealth, mockEmptyUsageStats, mockSessionUsage, mockUsageHealth, mockUsageStats } from "./usageMock";
+import { createMemoryMock } from "./memoryMock";
 
 interface FailAs {
   code: string;
@@ -376,6 +377,13 @@ export async function installMockBackend(): Promise<MockHandle> {
     (params.get("conflict") ?? "").split(",").includes("update_model_config"),
     params.get("fallback") === "off",
   );
+  const memory = createMemoryMock({
+    available: params.get("memory") !== "off",
+    backend: params.get("memoryBackend") ?? "mnemopi",
+    inUseBank: params.get("memoryInUse"),
+    probeFailed: params.get("memoryProbe") === "fail",
+    manyItems: params.get("memoryMany") === "1",
+  });
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [
     { ...metadata, id: "hello-plugin@probe-mkt", name: "hello-plugin", marketplace: "probe-mkt", version: "1.0.0", enabled: true },
@@ -723,6 +731,18 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "get_model_config":
       case "update_model_config":
         return model(cmd, args);
+      case "memory_overview":
+      case "memory_list":
+      case "memory_detail":
+      case "memory_growth":
+      case "memory_bank_status":
+      case "memory_backups":
+      case "memory_delete_preview":
+      case "memory_delete_items":
+      case "memory_delete_bank":
+      case "memory_restore":
+      case "memory_delete_backup":
+        return memory(cmd, args);
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }

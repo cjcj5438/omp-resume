@@ -19,6 +19,8 @@ pub mod config;
 pub mod history;
 pub mod lock;
 pub mod mcp_config;
+/// 记忆库（Mnemopi bank）浏览与维护（见 CONTRACT §18）。
+pub mod memory;
 /// macOS 菜单栏：运行中 omp 会话的只读检测 + 聚焦（见 CONTRACT §17）。
 pub mod menubar;
 pub mod meta;
@@ -361,7 +363,18 @@ pub fn run() {
             omp_plugins::omp_skills_update,
             omp_models::list_models,
             omp_models::get_model_config,
-            omp_models::update_model_config
+            omp_models::update_model_config,
+            memory::memory_overview,
+            memory::memory_list,
+            memory::memory_detail,
+            memory::memory_growth,
+            memory::memory_bank_status,
+            memory::memory_backups,
+            memory::memory_delete_preview,
+            memory::memory_delete_items,
+            memory::memory_delete_bank,
+            memory::memory_restore,
+            memory::memory_delete_backup
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

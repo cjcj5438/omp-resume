@@ -9,12 +9,14 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer: ReactNode;
+  /** 宽版（表格类内容用，如备份列表）；默认 520px 窄版。 */
+  wide?: boolean;
 }
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ title, onClose, children, footer }: ModalProps) {
+export function Modal({ title, onClose, children, footer, wide = false }: ModalProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const auto = boxRef.current?.querySelector<HTMLElement>("[data-autofocus]");
@@ -23,7 +25,7 @@ export function Modal({ title, onClose, children, footer }: ModalProps) {
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
-        className="modal"
+        className={wide ? "modal modal-wide" : "modal"}
         role="dialog"
         aria-modal="true"
         aria-label={title}

@@ -382,6 +382,8 @@ function App() {
           onToast={addToast}
           onBack={() => setView("sessions")}
           onCheckOmp={handleCheckOmp}
+          loadedSessionIds={loadedSessionIds}
+          onOpenSession={handleOpenSession}
         />
       ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} /> : view === "cleanup" ? (
         <CleanupView

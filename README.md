@@ -92,6 +92,26 @@ UI 文案为中文。
 - **主题切换**：侧栏底部状态条的「外观」按钮（齿轮图标），主题模式（跟随系统 / 浅色 / 深色，
   跟随系统实时响应 `prefers-color-scheme` 变化）与 6 种强调色
   （蓝 / 紫 / 绿 / 橙 / 粉 / 灰）即时生效；macOS 原生标题栏跟随应用主题。
+- **记忆库**：管理视图「记忆库」标签页浏览 omp 长期记忆（Mnemopi 各项目 bank）：
+  健康概览（未召回 / 未合并 / 来源缺失 / 磁盘占用）、新增趋势、项目库表；
+  记忆列表支持子串搜索（LIKE，非分词）、工作/情节过滤、分页与单条全文，
+  可复制片段或跳到来源会话；库结构不符的 bank 置灰。
+- **记忆维护（写）**：删除单条记忆（工作 / 情节记忆，含 facts、embeddings、
+  annotations、gists、memoria_*、graph_edges 的级联清理与 episodic summary 引用提示）、
+  整库移除、备份列表 / 恢复 / 永久删除。每次破坏性操作前自动 `VACUUM INTO` 快照到
+  应用数据目录 `memory-backups/<bank>/<UTC>-<kind>/`（目录 0700、文件 0600，
+  每 bank 保留最新 5 份；整库移除的快照永不自动清理），恢复带完整性校验与失败回滚。
+  任何写入前用 `lsof` 检查 bank 的 db / `-wal` / `-shm` 是否被 omp 占用，
+  占用或探测失败一律拒绝（`IN_USE` / `PROBE_FAILED`）。
+- **记忆库维护界面**：列表头「选择」进入多选（行内复选框、选择条「已选 N 条 · 全选当前已加载 ·
+  清除 · 选中当前筛选的全部结果」，一次最多 500 条，选择只在同库同筛选内跨页保持，切库 / 改筛选 /
+  刷新即清空；「从未召回且来源已不在」只是筛选建议，不会自动选中）；
+  「删除所选…」与详情里的「删除这条…」都先弹确认框，用 `memory_delete_preview` 显示将删除的
+  工作 / 情节条数、级联清理、被情节摘要引用的提示与跳过项，并检查占用（使用中 / 探测失败时
+  禁用确认、点名持有者、可重试），确认按钮为「备份并删除 N 条」。项目库行有「备份与恢复」与
+  「移除此库…」（整库移入备份区，可恢复；空库 / 目录已不存在的库带「建议清理」提示）；
+  「备份与恢复」面板按时间倒序列出 删除前 / 恢复前 / 移除的库 三类备份，可恢复（现存库先自动留
+  恢复前安全备份）或二次确认后永久删除备份。
 
 ## 安全规则（如何保证不弄坏数据）
 
@@ -224,6 +244,7 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
 | 租约目录 `ownersDir` | `OMP_RESUME_OWNERS_DIR` | `$HOME/.omp/run/session-owners` |
 | omp 二进制 | `OMP_RESUME_OMP_BIN` > `~/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` > `~/.bun/bin/omp` | 逐项检查存在性，不依赖 PATH |
 | 提示词库 `history.db` | `OMP_RESUME_HISTORY_DB` | `$HOME/.omp/agent/history.db` |
+| 记忆库 bank 根 `memoryDir` | `OMP_RESUME_MEMORY_DIR` | `$HOME/.omp/agent/memories/mnemopi/banks` |
 | 应用数据目录（含 `meta.json` / `settings.json`） | `OMP_RESUME_DATA_DIR` | `$HOME/Library/Application Support/omp-resume` |
 
 带参数启动（GUI 的 argv 不易透传，可直接跑二进制）：
@@ -252,6 +273,7 @@ npm run tauri build        # 额外产出 .app.tar.gz + .sig
   `omp_models.rs`（模型与 Agent 白名单配置）、`usage.rs`（用量与运行看板统计）、`history.rs`
   （recap/提示词历史只读）、`cleanup.rs`（清理候选）、`meta.rs`（别名/标签/备注）、
   `menubar/`（托盘菜单/检测/聚焦/通知/设置）、`mcp_config.rs`（MCP 原生配置读写）、
+  `memory/`（记忆库浏览 + 备份/删除/恢复）、
   `model.rs`（前后端共享类型）、`lib.rs`（命令注册）。
 - `docs/CONTRACT.md`：**权威规格**（数据格式、命令、语义、错误码）。
 - `scripts/fixtures/`：合成会话冒烟套件（详见其 README）。
@@ -287,7 +309,10 @@ kill %1
 仅 dev 构建包含）。可用参数：`?omp=new`（模拟有新版 omp）/
 `?omp=managed`（模拟包管理器托管）、`?fail=<命令名>`（强制该命令失败）、
 `?conflict=<命令名>`（强制该命令报 CONFLICT）、`?pick=cancel`（模拟取消选目录）、
-`?fallback=off`（模拟兜底总开关关闭）、`?latency=<毫秒>`（所有命令延迟）。
+`?fallback=off`（模拟兜底总开关关闭）、`?latency=<毫秒>`（所有命令延迟）、
+`?memory=off`（模拟没有本地记忆库）、`?memoryBackend=<名称>`（改记忆后端名，默认 mnemopi）、
+`?memoryInUse=<库名>`（该库报占用中，写操作报 `IN_USE`）、`?memoryProbe=fail`（占用探测失败，
+写操作报 `PROBE_FAILED`）、`?memoryMany=1`（大库额外 560 条，验证 500 条上限）。
 
 开发者注意：omp 收到绝对路径形式的 `PI_CONFIG_DIR` 时会把状态写到 `$HOME`
 下的重复路径；沙箱测试只用 HOME 隔离，不要用它指向临时目录。
@@ -335,3 +360,7 @@ kill %1
   「系统设置 → 通知」允许对应应用、且勿扰关闭后才可见。转换检测与发送链路本身有单测覆盖。
 - 关闭主窗口（红钮或 ⌘W「Close Window」）= 隐藏并驻留菜单栏（Dock 图标按设置隐藏，`ActivationPolicy::Accessory`，点 Dock 图标回到主窗口）；
   「退出 omp-resume」/ ⌘Q / Dock 退出 / 系统关机才真正退出（不拦截）。Dock 右键菜单经运行时注入实现，若未来 tao 自带该方法会静默消失（仅日志），不影响其他功能。
+- 记忆库（Mnemopi）schema 是 omp 私有实现（按 18.12.3 实测），omp 升级可能变化：对不上的 bank 按「不可读」置灰静默降级，不报错；「来源会话缺失」只看 sessions 文件名近似判断（不解析文件）；搜索是 LIKE 子串匹配（大小写不敏感仅 ASCII），非分词全文检索。
+- 记忆删除只镜像 omp 自己的 `forget` 语义：含 `vec_episodes`（sqlite-vec 虚表，需外部扩展）的 bank 上，情节记忆一律不可删（报告为「不支持」）——本机 37 个 bank 均无该表；删除工作记忆不会改动引用它的情节摘要 `summary_of`（上游行为一致，UI 用「被 N 条摘要引用」提示）；`memory_validations` 审计行保留不删。
+- 备份是 `VACUUM INTO` 全库快照（含 WAL 已提交内容）；恢复只覆盖 db 文件、不还原已被移动前的目录权限细节；设备跨盘移动整库时用「复制 + 逐字节校验 + 删源」，大库会更慢。
+- bank 占用检测同样依赖 `lsof`；`lsof` 缺失 / 超时一律按「探测失败」拒绝写（宁可误拒不会误删）。omp 进程内的 recall 结果缓存（默认关闭）可能在删除后数分钟内仍返回已删条目。

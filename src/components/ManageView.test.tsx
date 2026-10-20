@@ -23,15 +23,18 @@ function renderManageView() {
   const onToast = vi.fn();
   const onBack = vi.fn();
   const onCheckOmp = vi.fn();
+  const onOpenSession = vi.fn();
   render(
     <ManageView
       projects={[{ cwd: "/tmp/a", name: "a" }]}
       onToast={onToast}
       onBack={onBack}
       onCheckOmp={onCheckOmp}
+      loadedSessionIds={new Set()}
+      onOpenSession={onOpenSession}
     />,
   );
-  return { onToast, onBack, onCheckOmp };
+  return { onToast, onBack, onCheckOmp, onOpenSession };
 }
 
 const UPDATE_CMDS = [

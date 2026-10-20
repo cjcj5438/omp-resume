@@ -545,3 +545,161 @@ export interface UpdateModelConfigResult {
   key: string;
   value: unknown;
 }
+
+// 记忆库（CONTRACT §18）：本地 Mnemopi 记忆库浏览与维护。
+
+export interface MemoryTotals {
+  banks: number;
+  working: number;
+  episodic: number;
+  facts: number;
+  bytes: number;
+  neverRecalled: number;
+  unconsolidated: number;
+  missingSourceSessions: number;
+  sourceSessions: number;
+}
+
+export interface MemoryBankSummary {
+  bank: string;
+  displayName: string;
+  cwd: string | null;
+  cwdExists: boolean | null;
+  working: number;
+  episodic: number;
+  facts: number;
+  bytes: number;
+  firstMemoryAt: string | null;
+  lastMemoryAt: string | null;
+  neverRecalled: number;
+  unconsolidated: number;
+  sourceSessions: number;
+  missingSourceSessions: number;
+  readable: boolean;
+  error: string | null;
+}
+
+export interface MemoryOverview {
+  available: boolean;
+  backend: string | null;
+  root: string;
+  banks: MemoryBankSummary[];
+  totals: MemoryTotals;
+}
+
+export type MemoryKind = "working" | "episodic";
+export type MemoryKindFilter = "all" | MemoryKind;
+export type MemorySort = "newest" | "oldest" | "mostRecalled";
+
+export interface MemoryListRequest {
+  bank: string;
+  query?: string | null;
+  kind?: MemoryKindFilter;
+  onlyNeverRecalled?: boolean;
+  onlyUnconsolidated?: boolean;
+  onlyMissingSource?: boolean;
+  sort?: MemorySort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MemoryItem {
+  id: string;
+  kind: MemoryKind;
+  snippet: string;
+  contentChars: number;
+  createdAt: string | null;
+  sourceSessionId: string | null;
+  sourceSessionExists: boolean | null;
+  recallCount: number;
+  lastRecalledAt: string | null;
+  importance: number | null;
+  veracity: string | null;
+  memoryType: string | null;
+  consolidated: boolean;
+  superseded: boolean;
+}
+
+export interface MemoryPage {
+  total: number;
+  items: MemoryItem[];
+}
+
+export interface MemoryFact {
+  subject: string | null;
+  predicate: string | null;
+  object: string | null;
+  key: string | null;
+}
+
+export interface MemoryDetail extends MemoryItem {
+  content: string;
+  truncated: boolean;
+  embedText: string | null;
+  metadata: Record<string, unknown> | null;
+  facts: MemoryFact[];
+  summaryOf: string[];
+  relatedEdges: number;
+}
+
+export interface MemoryGrowthPoint {
+  date: string;
+  working: number;
+  episodic: number;
+}
+
+// 记忆库写操作（CONTRACT §18.8）：备份/删除/恢复，JSON camelCase。
+
+export type MemoryBackupKind = "before-delete" | "before-restore" | "bank-removed";
+
+export interface MemoryBackupHolder {
+  pid: number;
+  command: string;
+}
+
+export interface MemoryBackup {
+  id: string;
+  bank: string;
+  kind: MemoryBackupKind;
+  createdAt: string;
+  bytes: number;
+  working: number | null;
+  episodic: number | null;
+  cwd: string | null;
+}
+
+export interface MemoryBankStatus {
+  bank: string;
+  inUse: boolean;
+  probeFailed: boolean;
+  holders: MemoryBackupHolder[];
+  backups: MemoryBackup[];
+}
+
+export type MemorySkippedReason = "not_found" | "unsupported";
+
+export interface MemoryDeleteSkipped {
+  id: string;
+  reason: MemorySkippedReason;
+}
+
+export interface MemoryDeletePreview {
+  requested: number;
+  deletable: { working: number; episodic: number };
+  unsupported: number;
+  notFound: number;
+  cascade: { facts: number; embeddings: number; annotations: number; edges: number; other: number };
+  citedBySummaries: number;
+}
+
+export interface MemoryDeleteResult {
+  deleted: string[];
+  skipped: MemoryDeleteSkipped[];
+  backup: MemoryBackup;
+}
+
+export interface MemoryRestoreResult {
+  bank: string;
+  restoredFrom: MemoryBackup;
+  safetyBackup: MemoryBackup | null;
+}

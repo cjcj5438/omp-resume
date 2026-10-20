@@ -8,7 +8,7 @@
 管理 `omp`（oh-my-pi）的会话、CLI 版本、用户级插件与技能。功能包括：
 会话浏览（按项目分组）、只读会话预览、树视图、iTerm 一键续聊、
 永久删除、从树节点续聊、omp 版本查询与更新、插件/marketplace 管理、技能查询/更新、
-MCP 原生配置管理、用量与运行统计、清理。无会话重命名、无 fork 建文件、无导出、
+MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）浏览与维护。无会话重命名、无 fork 建文件、无导出、
 无全文搜索、无多 profile、无回收站。
 
 ## 0. 一致性规则（给后续 worker）
@@ -29,6 +29,8 @@ MCP 原生配置管理、用量与运行统计、清理。无会话重命名、�
   环境变量 `OMP_RESUME_SESSIONS_DIR` > `$HOME/.omp/agent/sessions`。
 - `ownersDir`：环境变量 `OMP_RESUME_OWNERS_DIR` >
   `$HOME/.omp/run/session-owners`。
+- `memoryDir`：环境变量 `OMP_RESUME_MEMORY_DIR` >
+  `$HOME/.omp/agent/memories/mnemopi/banks`（记忆库 bank 根目录，见 §18）。
 - `get_config() -> { sessionsDir, ownersDir }` 返回解析后的绝对路径。
 - 启动参数由 `main.rs` 解析后存入 Tauri `State`（实现细节，后续 worker 定）。
 - omp 二进制：存在的 `OMP_RESUME_OMP_BIN` 环境变量路径 >
@@ -633,7 +635,7 @@ header `.title`、每个 `title_change` 的 `.title`。
   `sessions/`（`parse` 解析 + 树索引、`list` / `conversation` / `tree`）、
   `ops/`（删除 / 标记 / iTerm）、`omp_cli.rs`（omp 路径解析 / 安全 runner /
   版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
-  `mcp_config.rs`（MCP 原生配置读写）。
+  `mcp_config.rs`（MCP 原生配置读写）、`memory/`（记忆库浏览 + 备份/删除/恢复，见 §18）。
 
 ## 9. 常量
 
@@ -646,6 +648,13 @@ header `.title`、每个 `title_change` 的 `.title`。
 | `TREE_PREVIEW_CHARS` | 80（含尾 `…`，总长 ≤80） | 树节点 preview |
 | `MARKER_CUSTOM_TYPE` | `omp-resume-branch` | 分支标记 customType |
 | `UNTITLED` | `(无标题)` | 无标题兜底 |
+| `MEMORY_SNIPPET_CHARS` | 240（空白折叠后字符数，字符边界截断，超长尾加 `…`） | 记忆列表 snippet |
+| `MEMORY_CONTENT_CAP_BYTES` | 204800（200KB，UTF-8 字节，字符边界截断） | `memory_detail` 全文上限 |
+| `MEMORY_LIST_LIMIT` | 默认 50，钳制 1..=200 | `memory_list` 分页 |
+| `MEMORY_DETAIL_FACTS_LIMIT` | 50 | `memory_detail` facts 上限 |
+| `MEMORY_GROWTH_DAYS` | 1..=365，越界 `INVALID_INPUT` | `memory_growth` 范围 |
+| `MEMORY_DELETE_IDS_MAX` | 500（去重后计数，超 ⇒ `INVALID_INPUT`） | 单次删除 id 上限 |
+| `MEMORY_BACKUP_KEEP` | 5（`before-delete` / `before-restore` 按 bank+kind 留存） | 备份自动修剪 |
 
 ## 10. 打包要求
 
@@ -1697,3 +1706,535 @@ classify:
   再 `npx tauri icon src-tauri/icons/app-icon.png` 产出各尺寸（随后删掉 CLI
   额外生成的 `android/`、`ios/`、`64x64.png`）；macOS 可能缓存旧图标，
   必要时 `killall Dock`。
+
+## 18. 记忆库（§4.39–§4.49，Mnemopi 维护：只读 + 写操作）
+
+> 可视化维护 omp 长期记忆库（Mnemopi 本地 SQLite，每项目一个 bank）。
+> §18.1–§18.7 只读命令；§18.8 写操作（备份/删除/恢复/备份管理）。
+> 后端 `src-tauri/src/memory/`（`mod`/`rows` 只读，`gate`/`backup`/`delete` 写路径），
+> 共享类型在 `model.rs`，命令注册到 `lib.rs`。
+
+- 数据源：bank 根目录 `OMP_RESUME_MEMORY_DIR` >
+  `$HOME/.omp/agent/memories/mnemopi/banks/`（§1 `memoryDir`），每 bank 为
+  `<bank>/mnemopi.db`（+ `-wal` / `-shm` 边车）。bank 目录名 = cwd basename +
+  绝对路径稳定 hash（上游命名，见 omp `docs/mnemosyne-memory-backend.md`）。
+- UI 中文；命令名 snake_case、进出 JSON camelCase（§0）。
+
+### 18.1 `memory_overview() -> MemoryOverview`（§4.39）
+
+```ts
+MemoryOverview = {
+  available: boolean; backend: string | null; root: string;
+  banks: MemoryBankSummary[];
+  totals: { banks: number; working: number; episodic: number; facts: number; bytes: number;
+            neverRecalled: number; unconsolidated: number;
+            missingSourceSessions: number; sourceSessions: number };
+}
+MemoryBankSummary = {
+  bank: string; displayName: string; cwd: string | null; cwdExists: boolean | null;
+  working: number; episodic: number; facts: number; bytes: number;
+  firstMemoryAt: string | null; lastMemoryAt: string | null;
+  neverRecalled: number; unconsolidated: number;
+  sourceSessions: number; missingSourceSessions: number;
+  readable: boolean; error: string | null;
+}
+```
+
+- `available`：bank 根目录存在且可读；false 时 UI 显示友好空状态（**不是错误**），
+  此时 `banks=[]`、`totals` 全零、`root` 仍为展示路径。
+- `backend`：经既有安全 runner（`omp_cli::run_omp`）只读执行
+  `omp config get memory.backend --json` 取 `.value` 字符串；omp 缺失 / 超时 /
+  输出异常 → null。**永不因此让命令失败**。
+- `root`：解析后的 bank 根目录绝对路径（展示用）。
+- `banks` 排序：`lastMemoryAt` 倒序（null 视为最小），再按 `bank` 名升序稳定；
+  空 bank（working + episodic 均为 0）自然沉底。
+- 单 bank 字段：
+  - `bank`：目录名（即后三个命令用的 id）。
+  - `cwd`：该 bank working + episodic 按 `timestamp` 倒序第一条非空
+    `metadata_json.cwd`；`displayName`：cwd basename，cwd 未知时取目录名去掉末段
+    `-<hash>` 后缀（无后缀则原样）。
+  - `cwdExists`：cwd 存在且为目录；cwd 未知时 null。
+  - `bytes`：`mnemopi.db` + `-wal` + `-shm` 三文件大小之和（缺失按 0）。
+  - `firstMemoryAt` / `lastMemoryAt`：两表 `timestamp` 的最小 / 最大（§0 时间格式；
+    解析失败的行忽略，无有效行则 null）。
+  - `neverRecalled`：两表 `recall_count = 0` 的行数（列缺失时每行视为 0，即全计入）。
+  - `unconsolidated`：working 表 `consolidated_at IS NULL` 的行数（列缺失时为 0）。
+  - `sourceSessions`：`metadata_json.session_id` 去重数（解析失败 / 缺失的行忽略）；
+    `missingSourceSessions`：其中在 sessions 目录无同名 UUID 文件的个数（§18.6）。
+  - `readable` / `error`：库不可用（db 缺失 / 非 SQLite / 关键表缺失到无法计数）
+    时 `readable=false`，`error` 为简短非敏感中文原因（如 `数据库文件损坏`），
+    UI 置灰该行；计数按 0 计入 totals。
+- `totals`：各 bank 同名字段求和（`banks` 为 bank 数）。
+
+### 18.2 `memory_list(args) -> MemoryPage`（§4.40）
+
+```ts
+memory_list(args: { bank: string; query?: string | null; kind?: "all" | "working" | "episodic";
+                    onlyNeverRecalled?: boolean; onlyUnconsolidated?: boolean; onlyMissingSource?: boolean;
+                    sort?: "newest" | "oldest" | "mostRecalled"; limit?: number; offset?: number }): MemoryPage
+MemoryPage = { total: number; items: MemoryItem[] }
+MemoryItem = {
+  id: string; kind: "working" | "episodic";
+  snippet: string; contentChars: number;
+  createdAt: string | null; sourceSessionId: string | null; sourceSessionExists: boolean | null;
+  recallCount: number; lastRecalledAt: string | null;
+  importance: number | null; veracity: string | null; memoryType: string | null;
+  consolidated: boolean; superseded: boolean;
+}
+```
+
+- `bank` 校验见 §18.5；形状非法 → `OUTSIDE_ROOT`，目录不存在 → `NOT_FOUND`，
+  库损坏 / 打不开 / 两表皆无 → `IO`（message 简短非敏感）。
+  `kind` 指向的表缺失但另一表存在时返回空页（`total=0`，非错误）。
+- `query`：空白 / null = 不过滤；否则 LIKE 子串（§18.7）匹配 `content` 与
+  `embed_text`（两表 UNION）。
+- `kind` 默认 `all`；`sort` 默认 `newest`。
+- `onlyNeverRecalled`：`recall_count = 0`（列缺失视为 0）；
+  `onlyUnconsolidated`：working 且 `consolidated_at IS NULL`（episodic 永不命中；
+  列缺失时命中 0 行）；`onlyMissingSource`：`sourceSessionId` 非空且 sessions
+  目录无同名文件（§18.6）。
+- 排序：`newest` = `timestamp` 文本倒序，`oldest` = 正序，`mostRecalled` =
+  `recall_count` 倒序；NULL / 空 `timestamp` 恒排最后；次级 `kind`（`episodic` <
+  `working` 按字母序）再 `id` 升序，保证分页稳定。
+- `limit` 默认 50，钳制 1..=200；`offset` 默认 0，负数按 0。
+- `total` = 过滤后总数（与分页无关）；`items` 最多 `limit` 条。
+- `MemoryItem`：
+  - `snippet`：`content` 空白（`\s+`）折叠为单空格后取前
+    `MEMORY_SNIPPET_CHARS`（240）字符，字符边界安全，超长尾加 `…`。
+  - `contentChars`：`content` 字符数（非字节）。
+  - `createdAt`：`timestamp` → §0 时间格式，解析失败 → null。
+  - `sourceSessionId`：`metadata_json.session_id`（非字符串 / 缺失 → null）；
+    `sourceSessionExists`：id 为 null → null，否则按 §18.6 文件名匹配。
+  - `recallCount`：列缺失 / NULL → 0；`lastRecalledAt`：§0 时间格式或 null。
+  - `importance` / `veracity` / `memoryType`：原文（列缺失 → null）。
+  - `consolidated`：working = `consolidated_at` 非空（列缺失 → false）；
+    episodic 恒 true。
+  - `superseded`：`superseded_by` 非空，或 `valid_until` 可解析且早于 now；
+    列缺失 / 解析失败 → false。
+
+### 18.3 `memory_detail { bank, id } -> MemoryDetail`（§4.41）
+
+```ts
+MemoryDetail = MemoryItem & {
+  content: string; truncated: boolean; embedText: string | null;
+  metadata: Record<string, unknown> | null;
+  facts: { subject: string | null; predicate: string | null; object: string | null; key: string | null }[];
+  summaryOf: string[]; relatedEdges: number;
+}
+```
+
+- 查找顺序：working 先、episodic 后，`id` 精确匹配；两边都无 → `NOT_FOUND`。
+  `bank` 错误语义同 §18.2（含两表皆无 → `IO`）。
+- `content` 全文，上限 `MEMORY_CONTENT_CAP_BYTES`（200KB，UTF-8 字节，
+  字符边界截断，超出则 `truncated=true`）。
+- `embedText`：NULL 或与 `content` 完全相同 → null；否则原文（同样 200KB 上限，
+  `truncated` 仅描述 `content`）。
+- `metadata`：`metadata_json` 解析为对象则返回（数组 / 标量 / 解析失败 → null）；
+  防御性删除顶层键名（小写）含 `token` / `key` / `passwd` / `password` / `secret` /
+  `authorization` / `credential` 任一子串的键。
+- `facts`（≤50，`facts` 表在前、`memoria_facts` 在后，各按 rowid 升序）：
+  - `facts` 表 `source_msg_id = id` 的行 →
+    `{ subject, predicate, object, key: null }`；
+  - `memoria_facts` 表 `source_memory_id = id` 的行 →
+    `{ subject: null, predicate: fact_type, object: value, key }`；
+  - 表 / 列缺失 → 该来源贡献 0 条。
+- `summaryOf`：episodic 的 `summary_of` 按 `,` 切分去空白去空；working 为 `[]`；
+  列缺失 → `[]`。
+- `relatedEdges`：`graph_edges` 缺失 → 0；否则 `source = id OR target = id` 计数。
+
+### 18.4 `memory_growth { bank?, days } -> MemoryGrowthPoint[]`（§4.42）
+
+```ts
+MemoryGrowthPoint = { date: string /* YYYY-MM-DD，本地时区 */; working: number; episodic: number }
+```
+
+- `bank` 指定时先校验（同 §18.2）；null / 缺省 = 聚合全部**可读** bank
+  （不可读 bank 静默跳过）。
+- `days` 越界（1..=365 之外）→ `INVALID_INPUT`。
+- 范围：本地今天起往前 `days` 天（含今天），每天一行（dense，零填充）。
+- 分桶与 `usage.rs` 同约定：`timestamp` 解析为 UTC 毫秒 → 本地时区
+  `format("%Y-%m-%d")`；不可解析 / 缺失的行不计入任何一天。
+- 在 SQL 内按天 `GROUP BY` 计数，不逐行读 `content`；`timestamp` 列缺失 → 全零。
+
+### 18.5 只读、校验与降级规则
+
+- 连接：`SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX` + `busy_timeout` 500ms
+  （同 `history.rs`）；4 个命令永不创建 / 修改任何文件；读 live 库（含 WAL），
+  不拷贝（部分 bank 数据可能只在 WAL 里）。
+- 实测副作用（2026-10-20，37 banks 只读）：只读打开会刷新 `-shm` 的 mtime
+  （SQLite WAL-index 协调行为，omp 每次连接同样如此）；文件名 / 大小 / db 主文件 /
+  `-wal` 均不变，不产生新文件。
+- `bank` id 校验：非空纯目录名单段（不含 `/`、`\`、`\0`，不是 `.` / `..`）；
+  join 根目录后 canonicalize（含 symlink）必须仍位于根目录内，否则 `OUTSIDE_ROOT`
+  （与 §6 同精神，但 bank 是单段目录名）。
+- 缺表 / 缺列一律按“零 / None / 空”语义，用 `PRAGMA table_info` /
+  `sqlite_master` 事先探测，永不 panic，永不让单个 bank 拖垮 `memory_overview`。
+- 工作量上限：SQL 内 `COUNT` / `LIMIT` / `OFFSET` / `GROUP BY`；列表不读全文
+  （SQL 内 `substr(content, 1, 512)` 取前缀 + `LENGTH(content)` 取字符数，
+  Rust 侧再折叠截断为 snippet）。
+- 隐私：后端日志 / 错误 / 测试输出永不含记忆正文；`memory_detail` 的 `content`
+  仅经 IPC 返回前端展示。
+- 第 1 轮不产生 `IN_USE` / `PROBE_FAILED`（无写操作，无占用门禁）。
+
+### 18.6 sessions 目录文件名匹配（近似）
+
+- 规则：sessions 目录各项目顶层 `*.jsonl` 文件名形如 `<ts>_<uuid>.jsonl`；
+  取 `_` 后、`.jsonl` 前的部分为会话 UUID；`sourceSessionId` 与之精确
+  （大小写敏感）匹配即“存在”。每命令调用至多扫描一次 sessions 目录文件名，
+  不读文件内容。
+- 近似与 caveat：只看文件名不解析内容（`header.id` 与文件名 UUID 不一致时误判）；
+  只扫顶层（嵌套子 agent jsonl 不计）；sessionsDir 不可读时一律判“不存在”
+  （`missingSourceSessions` 偏高）；子代理 / 已删除会话的记忆会显示“来源缺失”。
+
+### 18.7 LIKE-not-FTS 决策与证据
+
+- 决策：搜索用 `LIKE`（转义 `%` / `_` / `\`，配 `ESCAPE '\'`），不用 FTS5。
+- 原因：FTS5 默认 unicode61 分词把连续 CJK 切成一个 token，`MATCH` 要求 token
+  边界对齐；维护 UI 搜索框的语义是子串。
+- 证据（2026-10-20，真实库只读）：取 CJK 长串（15 / 16 / 7 字）内部 2 字为查询，
+  三 bank 均为 `MATCH`=0、`LIKE`=1。注意查询恰好与 token 边界对齐时 `MATCH`
+  也能命中（“MATCH 有时能查到”不能证伪本决策）。
+- `LIKE` 大小写不敏感仅 ASCII（CJK 无大小写），同 `history.rs`。
+
+### 18.8 写操作（§4.43–§4.49，第 2 轮）
+
+上游语义（omp v18.12.3，`packages/mnemopi/src/core/beam/store.ts`，实现逐条镜像）：
+
+- `forget`（仅 working）：`BEGIN DEFERRED` 事务内
+  `DELETE FROM working_memory WHERE id = ? AND session_id = ?`
+  （`session_id` = bank 名，上游 state.ts 注释 "each bank opens with
+  `sessionId = <bank>`"；本机 37 banks 全行一致，0 例外）→ 级联 purge：
+  `facts`（`source_msg_id`，顺带收集 `fact_id` 供边清理）、`annotations`（`memory_id`）、
+  `memory_embeddings`（`memory_id`）、5 张 `memoria_*`（`source_memory_id`，
+  上游无表存在守卫，本工具加守卫更宽容）、`gists`（`memory_id`，有守卫）、
+  `graph_edges`（`source` / `target` ∈ `{id, gist_<id>}` ∪ 关联 `fact_id`，
+  有守卫）；`fts_working` 由 `wm_ad` 触发器自清；`summary_of` 不动；
+  `memory_validations`（审计轨迹）/ `triples`（无记忆引用列）/
+  `consolidation_log`（聚合统计）/ `scratchpad`（会话暂存）不动。
+- 上游无 episodic 单行删除（仅 import 覆盖按 id 删 + best-effort 清 `vec_episodes`）；
+  本工具的 episodic 删除为自研（§18.8.1）。`invalidate` / `update` 本工具不做。
+- pragmas（上游）：`foreign_keys=ON`（schema 无 FK 约束，无实际作用）、
+  `busy_timeout=5000`、WAL。
+
+#### 18.8.1 episodic 删除决策
+
+- `vec_episodes` 是 sqlite-vec 虚表（`USING vec0`，`MATCH` / `vec_quantize_*`
+  查询；本机 37 banks 全缺席，2026-10-20 只读探查）。本工具的 SQLite 无
+  sqlite-vec 扩展，碰不得该表。
+- bank 的 `sqlite_master` 有 `vec_episodes` ⇒ episodic id 一律
+  `skipped: "unsupported"`（且 `VACUUM INTO` 备份在该 bank 上预期失败 ⇒
+  整个写操作安全中止，该 bank 实际只读；未实测，见 §18.8.7）。
+- 无 `vec_episodes` ⇒ episodic 可删，级联**与 working 共用同一 purge**
+  （仅 base 表不同）：上游 `consolidateToEpisodic` 以 episodic id 调
+  `extractAndStoreFacts` / 图谱 ingest / embedding（`consolidate.ts`），
+  实测某 bank `facts` 54/75、`memoria_facts` 112/133、`gists` 7/7、
+  `memory_embeddings` 7/43 引用 episodic id，全部 40 条 `graph_edges` 触及
+  episodic 闭包（`gist_<id>` 形态与 working 一致）。故 episodic 级联 =
+  ① `DELETE episodic_memory WHERE id + session_id`；② `facts`（`source_msg_id`，
+  收集 `fact_id`）；③ `annotations` / ④ `memory_embeddings`（`memory_id`）；
+  ⑤ 5 张 `memoria_*`（`source_memory_id`）；⑥ `gists`（`memory_id`，有守卫）；
+  ⑦ `graph_edges`（`source` / `target` ∈ `{id, gist_<id>}` ∪ 关联 `fact_id`，
+  有守卫）；FTS 由 `em_ad` 自清。
+- `memory_validations` 两种 kind 都不动（审计轨迹；与上游 `forget` 一致，
+  它也不删该表）。`triples`（无记忆引用列）/ `consolidation_log`（聚合）/
+  `scratchpad`（会话暂存）不动。
+- 删 working 行不动引用它的 episodic `summary_of`（与上游一致），
+  但 preview 必须报 `citedBySummaries`。
+
+#### 18.8.2 新命令
+
+```ts
+memory_bank_status(args: { bank: string }): MemoryBankStatus         // §4.43
+MemoryBankStatus = { bank: string; inUse: boolean; probeFailed: boolean;
+                     holders: { pid: number; command: string }[]; backups: MemoryBackup[] }
+MemoryBackup = { id: string /* `{bank}@{dirname}`，见下 */; bank: string;
+                 kind: "before-delete" | "before-restore" | "bank-removed";
+                 createdAt: string /* ISO UTC */; bytes: number;
+                 working: number | null; episodic: number | null; cwd: string | null }
+memory_backups(args?: { bank?: string | null }): MemoryBackup[]      // §4.44
+memory_delete_preview(args: { bank: string; ids: string[] }): MemoryDeletePreview  // §4.45
+MemoryDeletePreview = { requested: number; deletable: { working: number; episodic: number };
+                        unsupported: number; notFound: number;
+                        cascade: { facts: number; embeddings: number; annotations: number;
+                                   edges: number; other: number };
+                        citedBySummaries: number }
+memory_delete_items(args: { bank: string; ids: string[] }): MemoryDeleteResult     // §4.46
+MemoryDeleteResult = { deleted: string[]; skipped: { id: string;
+                        reason: "not_found" | "unsupported" }[]; backup: MemoryBackup }
+memory_delete_bank(args: { bank: string }): MemoryBackup            // §4.47
+memory_restore(args: { backupId: string }): { bank: string; restoredFrom: MemoryBackup;
+                                              safetyBackup: MemoryBackup | null }  // §4.48
+memory_delete_backup(args: { backupId: string }): null              // §4.49
+```
+
+- `memory_bank_status`：lsof 问题永不报错 ⇒ `probeFailed=true`（此时
+  `inUse=false`、`holders=[]`）；`backups` 为该 bank 的备份（§4.44 同形状）。
+- `memory_backups`：newest first；`bank` null / 缺省 = 全部 bank
+  （含 bank 已不存在、但备份仍在的）。
+- `memory_delete_preview`：纯只读，不设占用门禁；`cascade.other` =
+  `gists` + 5 张 `memoria_*` 的待删行数；`citedBySummaries` =
+  `summary_of` 引用任一选中 working id 的 episodic 行数；preview 数字必须
+  等于实际删除数字（实现共用同一级联规划）。
+- `backupId`：`{bank}@{dirname}`（按**最后**一个 `@` 切分；bank 段走 bank
+  词法校验；dirname 严格 `^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$`）；
+  canonicalize 后必须位于备份根内；形状非法 ⇒ `OUTSIDE_ROOT`，
+  不存在 ⇒ `NOT_FOUND`。
+- 通用限制：ids 去重；单次 ≤500（`MEMORY_DELETE_IDS_MAX`，超 ⇒ `INVALID_INPUT`）；
+  空 ids ⇒ `INVALID_INPUT`；id 不存在 ⇒ `skipped.not_found`（不 abort 其余）；
+  `session_id ≠ bank` 的行（实测 0 出现）⇒ `skipped.unsupported`
+  （与上游 `forget` 守卫一致）。
+- `memory_delete_items` **无任何可删 id**（全部 not_found / unsupported）⇒
+  `INVALID_INPUT`「所选记忆均不可删除（不存在或暂不支持）」，**不建备份、
+  不开写连接、不修剪**（先用只读连接规划）；至少一条可删时照常执行，
+  其余进 `skipped`。前端通常经 `memory_delete_preview` 提前避开。
+
+#### 18.8.3 占用门禁（所有破坏性操作，无例外）
+
+- `/usr/sbin/lsof -nP -F pcn -- <db> <-wal> <-shm>`，硬超时 2s
+  （复用 `occupant::LSOF` / `LSOF_TIMEOUT`）；任一持有者 ⇒ `IN_USE`
+  （message 含 pid + command 名）；lsof 缺失 / 超时 / 不可解析 ⇒ `PROBE_FAILED`。
+- preview / status 不设门（只读）；status 的 lsof 失败 ⇒ `probeFailed=true`。
+- 时序：门禁 → 备份 → 破坏性步骤前**再过一次门禁**（TOCTOU 最小）；
+  写模式持库时间最短（备份一次连接，删除一次事务连接）。
+
+#### 18.8.4 备份
+
+- 触发：任何破坏性操作前（删行 / 删 bank / 恢复覆盖目标已存在时）。
+- 方式：`VACUUM INTO`（rusqlite 未启用 `backup` feature；读源库、写目标，
+  不改源库；WAL 数据一致并入快照；输出为单文件库）。
+- 落点：`<data_dir>/memory-backups/<bank>/<yyyymmddThhmmssZ>-<kind>/mnemopi.db`
+  + `manifest.json { bank, kind, createdAt, cwd, working, episodic,
+  sourceBankDirName }`；`data_dir` 复用 `meta::data_dir`
+  （`OMP_RESUME_DATA_DIR` 覆盖，测试用）。
+- `bank-removed`：先写同级 `manifest.json`，再 move 整个 bank 目录 →
+  `…/<ts>-bank-removed/bank/`（rename；跨设备 copy + 字节校验 + 删源）。
+  顺序保证「要么原库不动，要么数据在备份区且可列出/可恢复」：manifest 写失败 ⇒
+  清掉该 `<ts>-bank-removed/` 目录后报错，原库未动；move 失败 ⇒ 同样清掉该目录
+  （含 manifest）后报错。move 成功后的失败（如权限硬化）不影响备份的可列出性。
+  代价：进程在 manifest 写完后、move 完成前崩溃，会留下一份**可列出但没有
+  `bank/`** 的条目；恢复它会报 `IO` 且目标库不动——比“数据存在但看不见”安全。
+- 权限：目录 `0700`、文件 `0600`。
+- 留存：仅在**成功**的破坏性提交 / 恢复之后修剪同 bank 同 kind ∈
+  {`before-delete`, `before-restore`}，只留最新 5（`MEMORY_BACKUP_KEEP`，
+  按目录名 UTC 前缀排序）；`bank-removed` 永不自动剪。失败 / 被拒的操作
+  （含“无可删”）绝不修剪。
+- 有效备份 = 目录名形状严格匹配 **且** `manifest.json` 可解析。无 manifest 的
+  目录（崩溃残留）不列出、不计入留存名额、不被自动删除（可手工清理），
+  对其 `memory_restore` ⇒ `IO` 失败且原库不动。
+- 备份失败 ⇒ 操作中止、原库不动（`IO`，message 注明备份失败；不新增错误码）。
+
+#### 18.8.5 删除事务与校验
+
+- 删行：门禁 → 备份 → 复检门禁 → **一个 `BEGIN IMMEDIATE` 事务**内按 §18.8
+  顺序删 working（多 id `IN`）与 episodic → **事务内 recount**：对计划内的 id
+  （base 两表 + `facts` / `annotations` / `memory_embeddings` / `gists` /
+  `memoria_*`）逐表 `COUNT(*)`，必须全为 0（与计划交叉核对，不依赖 `changes()`）→
+  不一致 ⇒ drop 事务（回滚）并报 `IO`「删除校验不一致：仍有 N 行残留」→ commit →
+  best-effort `PRAGMA wal_checkpoint(PASSIVE)`（失败不报错）。
+  结果的 `deleted` / `skipped` 仍按事务**前**的规划与请求序组装；recount 保证
+  计划内 id 确实已删，所以报告不会多报（plan→tx 窗口的并发写入由 recount 兜底：
+  计划内的 id 若已不在，仍算 deleted；新增的并发写入不在计划内，不受影响）。
+- 恢复：门禁 → 目标存在则先 `before-restore` 快照 → 删目标 `-wal` / `-shm` →
+  放置快照（`bank-removed` 则复制回目录）→ 校验（只读打开 +
+  `PRAGMA integrity_check` = ok + 行数 = manifest）→ 成功后才修剪。
+  失败（放置失败或校验不一致）⇒ 用安全快照回滚并**同样校验**：回滚通过 ⇒
+  删除已冗余的 `before-restore` 目录（与现库一致，不挤占留存名额）、
+  错误 `IO`「…已回滚」；回滚无法验证 ⇒ 保留该安全快照（此时它是改动前数据的
+  唯一副本）并在错误里点名 `{bank}@{dirname}`。失败的恢复不修剪任何备份。
+  `bank-removed` 恢复的放置会清空目标再整目录拷回，中途失败时回滚**整目录重建**
+  （只留安全快照的 db），不留失败拷贝的杂散文件。
+- 永久测试断言：`integrity_check` + FTS5 `integrity-check`
+  （`fts_working` / `fts_episodes` 存在时）+ 删后六表无孤儿
+  （`facts` / `annotations` / `memory_embeddings` / `gists` /
+  `graph_edges` / `memoria_*`）。
+
+#### 18.8.6 错误码
+
+- 复用现有：`IN_USE`（占用，message 含 pid + command）、`PROBE_FAILED`
+  （lsof 失败）、`IO`（备份 / 读写 / 校验失败）、`INVALID_INPUT`
+  （空 ids / >500 / 无任何可删 id）、`OUTSIDE_ROOT`（bank / backupId 形状非法或逃逸）、
+  `NOT_FOUND`（bank / 备份不存在；id 级走 `skipped`）。**无新增错误码。**
+
+#### 18.8.7 风险与未验证
+
+- vec bank 的 `VACUUM INTO` 失败属预期安全中止，未实测（本机无此 bank）。
+- `summary_of` 悬挂（删 working 留 episodic 引用）：与上游一致，
+  recall 仅作覆盖判断，无害；UI 通过 `citedBySummaries` 告知。
+- omp 进程内 enhanced-recall 缓存（默认关）至多 5 分钟过期；WAL 锁保证无损坏。
+- 跨设备 move 的 copy + verify + remove：verify 按字节比对后删源。
+
+#### 18.8.8 实现与实测记录（2026-10-20）
+
+- 模块：`memory/mod.rs`（浏览 + 命令）、`memory/rows.rs`（列表/详情/趋势）、
+  `memory/gate.rs`（lsof 门禁）、`memory/backup.rs`（快照/manifest/留存/`backupId`）、
+  `memory/delete.rs`（preview/删行/删库/恢复/备份管理）。
+- 测试：`tests/memory_write.rs`（20 个合成库用例 + 1 个 `#[ignore]` 真实副本 e2e）；
+  `gate.rs` / `backup.rs` 内置单测（假 lsof 矩阵、真实 `tail -f` 持有者、
+  目录名/`backupId` 形状、符号链接逃逸）。
+- 真实副本 e2e（最大 bank 37 条 working）：preview 3 条可删、级联 emb=3 / ann=6、
+  `citedBySummaries=2`；删除 3 条后 `integrity_check`=ok、FTS integrity 通过；
+  从备份恢复后 `content_snapshot`（两表 id+content + 六表计数）完全一致；
+  真实 `~/.omp` 树 111 个文件的名称 / 大小 / mtime（`-shm` 除外）全部未变。
+- `lsof` 实测：`tail -f` 按住 db 或 `-wal` 均能被识别并拒绝写
+  （`IN_USE` message 含 pid + `tail`）；测试进程自身持有连接同样被判占用。
+- 未验证：vec bank 的备份/删除路径（本机无该表）；跨设备 `EXDEV` 分支
+  （单机测试环境无法构造）；omp 在删除后的运行期行为（`omp mnemopi stats`
+  需已登录模型，本机隔离 HOME 下不可用 ⇒ 跳过）。
+
+
+### 18.9 前端（记忆库标签页）
+
+> 第 1 轮为只读视图；第 2 轮在同一组件上经 props 插槽接入维护（写操作）UI，见本节末「写操作 UI」。
+
+- 入口：`ManageView` 第五个标签页「记忆库」（`ManageTab = "memory"`），
+  不改动其余四个标签页的行为。`ManageView` 新增
+  `loadedSessionIds` / `onOpenSession` 两个 props，由 `App.tsx` 以与
+  `PromptHistoryView` 相同的方式传入（`loadedSessionIds` 来自已加载会话 id 集合，
+  `onOpenSession` 切回会话视图并选中该会话）。
+- 组件（`src/components/`）：
+  - `MemoryPanel.tsx`：总览请求、健康卡、趋势范围与项目库范围、项目库表、
+    选中库的记忆列表容器。
+  - `MemoryGrowthChart.tsx`：手写 SVG 堆叠日柱（工作记忆 / 情节摘要），
+    复用 `usageFormat.ts` 的 `barHeights` / `sparseIndexes` / `tickLabel`；
+    `role="img"` + `aria-label` 摘要，另有视觉隐藏的逐日数据表。
+  - `MemoryList.tsx`：搜索（200ms 防抖 + `seq` 守卫丢弃过期响应）、类型/条件
+    过滤、排序、50/页分页、行内详情展开、复制、来源跳转。
+  - `MemoryPanel.css`：仅用 `App.css` 既有语义变量，浅色/深色均验证；未新增变量。
+- 布局（自上而下）：
+  1. 状态头条：`记忆后端：<backend> · N 个项目库 · 共 M 条记忆 · 占用磁盘 X` +
+     「刷新」；一句只读说明。`available=false` 显示友好空状态（说明未找到本地库 /
+     其他后端不在此页），不报错；`backend` 非 `mnemopi` 时加一行弱提示。
+  2. 健康卡 5 张：记忆总数（工作/情节）、从未被召回（数量 + 占总记忆比）、尚未合并
+     （数量 + **占工作记忆比**——`unconsolidated` 只统计 working 表，§18.1）、
+     来源会话已不在（`missingSourceSessions/sourceSessions`，
+     tooltip 说明按会话 id 去重、仅按文件名近似）、磁盘占用（含事实数）。
+     占比 > 50% 用 `--warn-soft` 淡琥珀底，不做告警文案；分母为 0 时占比显示
+     「—」（不做除零）。
+  3. 新增趋势：范围「近 30 天 / 近 90 天 / 全部（365 天）」，项目库选择
+     「全部项目库 / 单库」；选中项目库时趋势范围同步到该库（仍可手动改回全部）。
+     空数据不画柱，显示「所选范围内暂无新增记忆。」
+  4. 项目库表：项目名 + 路径（`~` 缩写），`cwdExists=false` 标「目录已不存在」，
+     0 条标「空库」，`readable=false` 行置灰并显示短 `error`；列 = 工作/情节/事实/
+     最近记忆（相对时间，title 为完整时间）/大小/健康（未召回 · 未合并，窄屏移入
+     项目单元格）。行点击选中（左侧 accent 条 + `aria-pressed` 按钮），键盘可操作；
+     项目名/路径过滤。窄屏隐藏事实/大小/健康列，避免横向裁剪。
+  5. 记忆列表：标题、搜索框、类型（全部/工作记忆/情节摘要，带 tooltip 解释）、
+     chips（从未召回 / 未合并 / 来源已不在）、排序（最新/最早/召回最多）、
+     「共 N 条」；每行 = 类型 pill + 2 行截断摘要（查询子串高亮）+ 相对时间
+     （title 完整时间）+ 召回次数 + 「查看来源会话」「复制片段」。行详情 = 正文
+     折叠至约 12 行（仅确实超高时显示「展开全部」）、`truncated` 时注明仅显示前缀、
+     元数据表（重要度/可信度/类型/召回/合并/取代/关联边/创建时间）、facts、
+     `summaryOf`、复制全文、来源跳转。
+  6. 来源跳转门禁（与 `PromptHistoryView` 一致）：仅当
+     `sourceSessionId !== null && loadedSessionIds.has(id)` 时可点；
+     否则禁用并在 title 说明「该记忆未记录来源会话 / 来源会话已不在（可能已被删除）/
+     来源会话未加载到当前列表」。回调参数为会话 id，由 `App` 退出管理视图并选中。
+  7. 错误：总览失败显示行内说明 + 重试；趋势/列表/详情失败 toast + 行内提示，
+     已有内容不清空。刷新会重查总览、趋势、列表，并清空详情缓存。
+- 写操作插槽（`MemoryPanel` 可选 props，不传则使用下文「写操作 UI」的默认实现；
+  无占位按钮）：
+  - `renderMemoryActions?: (item: MemoryItem, refresh: () => void) => ReactNode`
+    → `MemoryList.renderItemActions`，渲染在每个记忆行的操作区（复制片段之后；
+    默认不提供，保持行紧凑）；
+  - `renderDetailActions?: (detail: MemoryDetail, refresh: () => void) => ReactNode`
+    → 渲染在详情操作行（展开/复制全文/来源跳转之后；默认「删除这条…」）；
+  - `renderBankActions?: (bank: MemoryBankSummary, refresh: () => void) => ReactNode`
+    → 渲染在项目库表该项目格内（默认「备份与恢复」「移除此库…」等）。
+  - `refresh()` 是写成功后的统一失效入口：重查总览、趋势、列表并清空详情缓存。
+- DEV mock（`src/dev/memoryMock.ts`，仅 dev 构建）：6 个合成 bank——大库
+  `omp-resume`（120 条，含 CJK、`%`/`_` 字面量、30KB 长文、210KB 超限文、
+  未召回/未合并/来源缺失混合）、普通库、空库、cwd 已不存在库、不可读库、
+  无 cwd 库；30KB 长文展示折叠，210KB 条目按 §18.3 的 200KB 上限截断。
+  URL 参数：`?memory=off`（`available:false`）、`?memoryBackend=<名称>`
+  （改 `backend`，默认 `mnemopi`）；`?fail=memory_list` 等既有参数同样生效。
+- 测试（vitest + testing-library）：健康卡百分比与除零 / 不可用状态 /
+  选库请求参数 / 200ms 防抖 / 慢响应不覆盖新结果 / 过滤 chips+类型+排序参数 /
+  分页 offset 与追加 / 来源跳转三态门禁与回调参数 / 详情截断标注与折叠展开 /
+  列表/详情失败 toast / 趋势图堆叠高度、稀疏刻度和空数据 / API 封装默认值 /
+  mock 的不可读、通配符字面搜索、分页排序、200KB 截断、补零与 `?memory=off` /
+  App 级「记忆库跳到来源会话后离开管理视图」。
+
+#### 18.9.1 写操作 UI（第 2 轮）
+
+> 原则：不经明确、知情的确认不做任何破坏性操作；每次破坏性操作都可从可见的备份撤销；
+> 拒绝（占用 / 探测失败）用大白话说明并给出修复办法（「先退出占用该库的 omp 会话」）。
+
+- 文件（`src/components/`）：`useMemoryMaintenance.ts`（`MEMORY_DELETE_IDS_MAX=500`、
+  备份类型中文名、`memoryWriteErrorText`、`useBankStatus`）、`MemorySelection.tsx`
+  （`useMemorySelection` + 选择条）、`MemoryDeleteDialog.tsx`（删除确认 +
+  `MemoryItemDeleteButton`）、`MemoryBankActions.tsx`（库行：备份入口 / 移除确认 /
+  使用中徽标 / 建议清理）、`MemoryBackupsDialog.tsx`（备份列表 / 恢复确认 /
+  永久删除备份确认）。`ui.tsx` 的 `Modal` 新增可选 `wide`（表格类对话框）。
+  `api.ts` / `types.ts` 镜像 §18.8.2 的 7 个命令（扁平 camelCase 参数：`bank`、
+  `ids`、`backupId`，与第 1 轮四个只读命令同一约定）。
+- 多选：列表头「选择」切换选择模式；模式下行内显示复选框并隐藏行内次要按钮；
+  选择条「已选 N 条 · 全选当前已加载 · 清除 · 选中当前筛选的全部结果 · 删除所选…」。
+  上限 500（`MEMORY_DELETE_IDS_MAX`）：达到后其余复选框禁用并带 title 说明，条下
+  提示「已达上限 500 条」。选择只在同一库、同一筛选内跨页保持；切库退出选择模式并
+  清空，改筛选 / 刷新 / 删除成功即清空。
+- 「选中当前筛选的全部结果」：后端无 id 专用命令，按当前筛选以 `limit=200` 逐页调用
+  `memory_list` 收集 id，选择条显示「正在收集…已取 N/总数 条」，收集到 500 即停并 toast
+  「筛选结果共 N 条，已选中前 500 条（一次最多删除 500 条）」；收集期间其余选择操作禁用。
+- 快捷建议「从未召回且来源已不在」= `onlyNeverRecalled` + `onlyMissingSource` 同时打开，
+  标注为「建议」，只改筛选，**从不自动选中**。
+- 删除确认框（`MemoryDeleteDialog`）：打开即并行请求 `memory_delete_preview` 与
+  `memory_bank_status`；显示将删除的工作 / 情节条数、级联清理（事实 / 向量 / 标注 /
+  关联边 / 其他）、`notFound` 与 `unsupported` 的跳过说明（unsupported 文案「该库的
+  情节摘要暂不支持删除」）、`citedBySummaries>0` 的琥珀提示「删除后摘要保留但不再对应原文」、
+  「删除前会自动备份整库，可在“备份与恢复”中还原」。确认钮「备份并删除 N 条」（danger）
+  仅在：ids 非空、预览已返回、门禁已返回且无 `inUse`/`probeFailed`、`deletable>0` 时可用；
+  提交中禁用并用 ref 同步防重入；提交中 Esc / 遮罩不关闭。`deletable===0` 时按钮禁用并写出
+  「所选记忆都无法删除（N 条已不在库中，M 条暂不支持）」。`inUse` 点名 `command (pid N)`；
+  `probeFailed` 写「无法确认是否有 omp 会话在使用该库」；两者都带「重试」。
+  **空 ids 不发任何请求。**
+- 成功：toast「已删除 N 条，已备份」（有 skipped 时「，跳过 K 条」）→ `refresh()`
+  （总览 + 趋势 + 列表 + 详情缓存）并清空选择。toast 组件不支持动作按钮，故不提供
+  toast 内「撤销」，撤销入口是「备份与恢复」。
+- 失败文案（`memoryWriteErrorText`）：`IN_USE` →「无法删除：<后端 message>。先退出占用该库的
+  omp 会话后再试。」；`PROBE_FAILED` →「无法删除：无法确认是否有 omp 会话在使用该库（<message>），
+  请稍后重试。」；其余（`IO` / `INVALID_INPUT` / `OUTSIDE_ROOT` / `NOT_FOUND`）→「删除失败：<message>」
+  （动词随动作为 删除 / 移除 / 恢复 / 删除备份）；失败留在确认框内，不关闭、不刷新。
+  按 §18.8 澄清：全不可删时 `memory_delete_items` 返回 `INVALID_INPUT` 且不建备份，UI 因此
+  在预览阶段就禁用确认。
+- 单条删除：只在详情操作行放「删除这条…」（行上不放，保持紧凑），走同一确认框。
+- 库级：项目库格内「备份与恢复」「移除此库…」；空库 / `cwdExists=false` 的库带琥珀
+  「建议清理」徽标（仅提示）。移除确认说明「omp 将不再看到这个库」，显示工作 / 情节条数与
+  大小，「移除前会保留可恢复的副本（“移除的库”）」，同样做占用门禁（可重试），确认钮
+  「移除此库」。「使用中」徽标只在**行被选中**或移除框打开时才请求一次
+  `memory_bank_status`，不随总览加载、不轮询。`readable=false` 的库不提供维护入口。
+- 备份与恢复面板（头条「备份与恢复」= 全部，库行按钮 = 预选该库；可改库范围）：
+  按时间倒序表 = 项目（现存库显示 displayName，已不存在显示 bank id + cwd）/ 类型
+  （删除前 · 恢复前 · 移除的库）/ 创建时间（相对 + title 全时间）/ 大小 / 数量（工作 · 情节，
+  未知为「—」）/ 操作。空状态「还没有备份。删除记忆或移除库时会自动创建。」；脚注「每个库
+  自动保留最近 5 份删除前/恢复前备份；移除的库备份不会被自动清理。」
+  - 「恢复…」→ 确认页：现存库 =「用该快照替换当前内容；恢复前会自动为当前内容创建安全
+    备份，恢复本身也可撤销」+ 占用门禁；已移除的库 =「该库当前已被移除，恢复将把它恢复回来」，
+    不查门禁（库已不存在）。成功 toast「已恢复 <库>；已为当前内容保留安全备份」（无安全
+    备份时省略后半句）→ 刷新备份列表与总览 / 列表 / 趋势。失败留在确认页显示错误，不刷新。
+  - 「永久删除备份…」→ 二次确认页「将永久删除……备份，无法撤销」，danger 钮「永久删除」，
+    「返回」不触发任何命令。
+- 健康卡口径修正（§18.1）：「尚未合并」占比的分母是工作记忆数（`unconsolidated` 只统计
+  working 表），文案「占工作记忆 N%」，>50% 的琥珀提示同口径。
+- DEV mock（`src/dev/memoryMock.ts`）：7 个写命令的有状态实现——预览与删除共用同一规划
+  （数字一致）、删除真实移除条目并同步总览 / 列表 / 趋势、`before-delete` / `before-restore`
+  各留最新 5 份、`bank-removed` 不剪、整库移除后总览不再列出且列表报 `NOT_FOUND`、恢复把
+  条目带回（现存库产生 `before-restore` 安全备份）、`backupId` 形状非法 `OUTSIDE_ROOT`、
+  不存在 `NOT_FOUND`、ids 去重保序 / 空 / >500 `INVALID_INPUT`、全不可删 `INVALID_INPUT` 且
+  不建备份。新增 URL 参数：`?memoryInUse=<库名>`（该库 status 报占用，持有者
+  `omp (pid 4242)`，写操作 `IN_USE`）、`?memoryProbe=fail`（`probeFailed=true`，写操作
+  `PROBE_FAILED`）、`?memoryMany=1`（大库额外 560 条，验证 500 上限）；`?fail=<命令>`
+  对 7 个写命令同样生效。
+- 测试（vitest）：`MemoryMaintenance.test.tsx`——选择跨页保持 / 切库与改筛选清空 / 全选已加载 /
+  全选筛选结果的分页参数与 500 截断提示 / 超限复选框禁用 / 快捷建议只开筛选不选中 / 确认框发送
+  的 ids 顺序 / 取消不删除 / 跳过项·引用提示·级联如实展示 / 全不可删禁用确认 / 空 ids 不请求 /
+  占用·探测失败禁用确认与重试 / 提交中防重入 / 六个错误码文案 / 单条删除路径与刷新次数 / 行上
+  无删除按钮 / 库移除与门禁重试 / 「使用中」只在选中时懒查 / 备份空状态·排序·预选范围 / 恢复
+  现存库与已移除库 / 恢复失败不刷新 / 恢复门禁 / 永久删除二次确认；`memory.test.ts`——7 个命令参数
+  形状、预览与删除一致、去重保序、整库移除 + 恢复往返、恢复安全备份、留存 5 份、newest-first、
+  非法 backupId、占用 / 探测失败 / `?fail`、全不可删不建备份。
+- 已知风险 / 与契约的不顺手之处：① 没有 id-only 命令，「选中全部结果」要翻页收集，大筛选结果
+  要多次往返；② `memory_delete_preview` 与 `memory_delete_items` 之间存在时间差（预览后他人又
+  改库），最终以删除结果的 `skipped` 为准；③ `memory_bank_status` 给出的占用状态是快照，真正
+  门禁在写命令内再次检查，所以确认后仍可能收到 `IN_USE`，UI 把它当作可重试错误处理；
+  ④ 恢复时 `restore` 的占用门禁只对现存库有意义，已移除库跳过；⑤ 备份位置在后端数据目录，
+  契约未暴露路径，UI 不展示。

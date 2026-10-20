@@ -42,6 +42,16 @@ import type {
   SkillsListResult,
   TreeData,
   SessionUsage,
+  MemoryBackup,
+  MemoryBankStatus,
+  MemoryDeletePreview,
+  MemoryDeleteResult,
+  MemoryDetail,
+  MemoryGrowthPoint,
+  MemoryListRequest,
+  MemoryOverview,
+  MemoryPage,
+  MemoryRestoreResult,
   UsageHealth,
   UsageRange,
   UsageStats,
@@ -311,4 +321,69 @@ export function updateModelConfig(req: {
     value: req.value,
     expected: req.expected,
   });
+}
+
+/** 记忆库总览（CONTRACT §18）；available:false 为正常状态（无本地库）。 */
+export function memoryOverview(): Promise<MemoryOverview> {
+  return call("memory_overview");
+}
+
+/** 记忆库分页列表；limit 默认 50、上限 200。 */
+export function memoryList(req: MemoryListRequest): Promise<MemoryPage> {
+  return call("memory_list", {
+    bank: req.bank,
+    query: req.query ?? null,
+    kind: req.kind ?? "all",
+    onlyNeverRecalled: req.onlyNeverRecalled ?? false,
+    onlyUnconsolidated: req.onlyUnconsolidated ?? false,
+    onlyMissingSource: req.onlyMissingSource ?? false,
+    sort: req.sort ?? "newest",
+    limit: req.limit ?? 50,
+    offset: req.offset ?? 0,
+  });
+}
+
+/** 单条记忆详情（含全文与 facts）。 */
+export function memoryDetail(req: { bank: string; id: string }): Promise<MemoryDetail> {
+  return call("memory_detail", { bank: req.bank, id: req.id });
+}
+
+/** 每日新增堆叠（按本地日补零）；bank 为 null 时汇总全部。 */
+export function memoryGrowth(req: { bank?: string | null; days: number }): Promise<MemoryGrowthPoint[]> {
+  return call("memory_growth", { bank: req.bank ?? null, days: req.days });
+}
+
+/** 库占用状态与该库备份（只读，无门禁；lsof 失败时 probeFailed=true）。 */
+export function memoryBankStatus(req: { bank: string }): Promise<MemoryBankStatus> {
+  return call("memory_bank_status", { bank: req.bank });
+}
+
+/** 备份列表（newest first）；bank 为 null 时返回全部。 */
+export function memoryBackups(req: { bank?: string | null } = {}): Promise<MemoryBackup[]> {
+  return call("memory_backups", { bank: req.bank ?? null });
+}
+
+/** 删除预览（纯只读）；ids 去重后不能为空且不超过 500。 */
+export function memoryDeletePreview(req: { bank: string; ids: string[] }): Promise<MemoryDeletePreview> {
+  return call("memory_delete_preview", { bank: req.bank, ids: req.ids });
+}
+
+/** 删除所选记忆（先自动备份整库）；返回已删 id 与跳过项。 */
+export function memoryDeleteItems(req: { bank: string; ids: string[] }): Promise<MemoryDeleteResult> {
+  return call("memory_delete_items", { bank: req.bank, ids: req.ids });
+}
+
+/** 移除整库（目录移入备份区，可恢复）；返回 bank-removed 备份。 */
+export function memoryDeleteBank(req: { bank: string }): Promise<MemoryBackup> {
+  return call("memory_delete_bank", { bank: req.bank });
+}
+
+/** 从备份恢复；目标库存在时先自动创建恢复前安全备份。 */
+export function memoryRestore(req: { backupId: string }): Promise<MemoryRestoreResult> {
+  return call("memory_restore", { backupId: req.backupId });
+}
+
+/** 永久删除一份备份（不可撤销）。 */
+export function memoryDeleteBackup(req: { backupId: string }): Promise<null> {
+  return call("memory_delete_backup", { backupId: req.backupId });
 }

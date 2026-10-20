@@ -1,0 +1,114 @@
+/* 记忆库标签页：状态头条 / 健康卡 / 趋势图 / 项目库表 / 记忆列表。 */
+.mem-panel { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; padding: 16px; overflow-y: auto; }
+.mem-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.mem-intro { margin: 0; font-size: 12px; }
+.mem-panel > p.muted { margin: 0; font-size: 12px; }
+.mem-empty { max-width: 560px; padding: 32px 8px; }
+.mem-empty h3 { margin: 0 0 8px; font-size: 16px; }
+.mem-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.7; }
+
+/* ---- 健康卡 ---- */
+.mem-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.mem-card { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.mem-card-warn { background: var(--warn-soft); }
+.mem-card-label { font-size: 12px; color: var(--text-muted); }
+.mem-card-value { font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.mem-card-dim { font-size: 14px; color: var(--text-muted); }
+.mem-card-sub { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.mem-card-hint { font-size: 11px; color: var(--text-muted); }
+
+/* ---- 分区头 ---- */
+.mem-section { display: flex; flex-direction: column; gap: 8px; }
+.mem-section .chart, .mem-section .chart-legend { max-width: 640px; }
+.mem-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.mem-section-head h3 { margin: 0; font-size: 14px; }
+.mem-section-head .filter-input { max-width: 240px; }
+.mem-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.mem-kind select { font-size: 12px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+
+/* ---- 项目库表 ---- */
+.mem-banks tbody tr { cursor: pointer; }
+.mem-banks tbody tr:hover { background: var(--bg-hover); }
+.mem-banks tr.mem-bank-active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.mem-banks tr.mem-bank-unreadable { color: var(--text-muted); cursor: default; }
+.mem-banks th, .mem-banks td { white-space: nowrap; }
+.mem-banks thead th:first-child { width: 34%; }
+.mem-banks tbody th { padding-right: 16px; }
+.mem-health { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 11px; line-height: 1.5; }
+.mem-bank-health { display: none; font-size: 11px; white-space: nowrap; }
+@media (max-width: 1050px) {
+  .mem-banks .mem-col-facts, .mem-banks .mem-col-bytes, .mem-banks .mem-col-health { display: none; }
+  .mem-banks thead th:first-child { width: 38%; }
+  .mem-bank-health { display: block; }
+}
+.mem-list-anchor { scroll-margin-top: 12px; }
+.mem-bank-name { padding: 0; border: none; background: none; color: var(--accent); font-size: 12px; cursor: pointer; }
+.mem-bank-name:disabled { color: var(--text-muted); cursor: default; }
+.mem-bank-name:hover:not(:disabled) { text-decoration: underline; }
+.mem-bank-active .mem-bank-name { font-weight: 600; }
+
+/* ---- 图表附色：情节摘要柱 ---- */
+.chart-bar-episodic { fill: var(--badge-label-bg); }
+.legend-working { background: var(--accent); }
+.legend-episodic { background: var(--badge-label-bg); }
+.mem-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---- 记忆列表 ---- */
+.mem-list { display: flex; flex-direction: column; gap: 8px; }
+.mem-list-title { margin: 0; font-size: 14px; }
+.mem-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mem-list-head [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.mem-list-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mem-list-toolbar .filter-input { min-width: 200px; max-width: 320px; }
+@media (max-width: 1050px) {
+  .mem-list-toolbar .filter-input { flex: 1 1 100%; max-width: none; }
+}
+.mem-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.mem-chips [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.mem-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mem-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg-card); }
+.mem-row { display: flex; }
+.mem-open { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; padding: 0; border: none; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.mem-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.mem-pill { flex: none; padding: 0 8px; border-radius: 999px; font-size: 11px; line-height: 20px; white-space: nowrap; }
+.mem-pill-working { background: var(--accent-soft); color: var(--accent); }
+.mem-pill-episodic { background: var(--badge-label-bg); color: var(--badge-label-text); }
+.mem-snippet { flex: 1; min-width: 0; font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mem-snippet mark { background: var(--badge-label-bg); color: var(--badge-label-text); border-radius: 2px; }
+.mem-row-meta { flex: none; display: inline-flex; gap: 10px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.mem-row-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.mem-more { display: flex; align-items: center; gap: 12px; }
+
+/* ---- 详情展开 ---- */
+.mem-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.mem-content { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 8px 10px; max-height: 60vh; overflow: auto; }
+.mem-content-collapsed { max-height: 230px; overflow: hidden; }
+.mem-content pre { font-size: 12px; line-height: 1.6; }
+.mem-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.mem-meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px; margin: 0; font-size: 12px; }
+.mem-meta > div { display: flex; gap: 6px; }
+.mem-meta dt { flex: none; color: var(--text-muted); }
+.mem-meta dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .mem-meta { grid-template-columns: repeat(2, 1fr); } }
+.mem-facts h4 { margin: 0 0 4px; font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.mem-facts ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.8; }
+/* ---- 维护：选择条 / 库操作 / 备份表 / 对话框提示 ---- */
+.mem-head-actions { display: inline-flex; gap: 6px; }
+.mem-preset { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.mem-selectbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.mem-check { flex: none; align-self: center; width: 14px; height: 14px; margin: 0 2px 0 0; accent-color: var(--accent-fill); cursor: pointer; }
+.mem-check:disabled { cursor: default; }
+.mem-bank-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.mem-backups-toolbar { display: flex; align-items: center; gap: 12px; }
+.mem-backups-wrap { overflow-x: auto; }
+.mem-backups { font-size: 12px; table-layout: auto; }
+.mem-backups thead th:first-child { width: auto; }
+.mem-backups tbody th:first-child { width: 99%; }
+.mem-backups td, .mem-backups th { white-space: nowrap; }
+.mem-backup-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.mem-footnote { font-size: 11px; }
+.mem-note-amber { color: var(--badge-inuse-ink); background: var(--warn-soft); border-radius: 8px; padding: 8px 10px; }
+.mem-note-amber .btn { margin-left: 8px; }
+.mem-note-danger { color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 8px 10px; }
+.mem-note-danger .btn { margin-left: 8px; }
+.modal-wide { width: 760px; }

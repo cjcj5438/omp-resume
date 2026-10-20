@@ -889,6 +889,93 @@ mod tests {
     }
 
     #[test]
+    fn memory_contract_shapes_match_typescript() {
+        assert_eq!(
+            serde_json::to_value(MemoryKind::Working).unwrap(),
+            "working"
+        );
+        assert_eq!(
+            serde_json::to_value(MemoryKind::Episodic).unwrap(),
+            "episodic"
+        );
+        assert_eq!(serde_json::to_value(MemoryKindFilter::All).unwrap(), "all");
+        assert_eq!(
+            serde_json::to_value(MemorySort::MostRecalled).unwrap(),
+            "mostRecalled"
+        );
+        assert_eq!(
+            serde_json::from_str::<MemorySort>("\"mostRecalled\"").unwrap(),
+            MemorySort::MostRecalled
+        );
+        let item = MemoryItem {
+            id: "m1".into(),
+            kind: MemoryKind::Working,
+            snippet: "hi".into(),
+            content_chars: 2,
+            created_at: None,
+            source_session_id: None,
+            source_session_exists: None,
+            recall_count: 0,
+            last_recalled_at: None,
+            importance: None,
+            veracity: None,
+            memory_type: None,
+            consolidated: false,
+            superseded: false,
+        };
+        let detail = MemoryDetail {
+            item,
+            content: "hi".into(),
+            truncated: false,
+            embed_text: None,
+            metadata: None,
+            facts: vec![],
+            summary_of: vec![],
+            related_edges: 0,
+        };
+        let v = serde_json::to_value(&detail).unwrap();
+        // `flatten` 让详情与列表行同属一层（TS `extends` 对应扁平 JSON）。
+        assert_eq!(v["id"], "m1");
+        assert_eq!(v["kind"], "working");
+        assert_eq!(v["contentChars"], 2);
+        assert_eq!(v["sourceSessionExists"], serde_json::Value::Null);
+        assert_eq!(v["memoryType"], serde_json::Value::Null);
+        assert_eq!(v["embedText"], serde_json::Value::Null);
+        assert!(v.get("item").is_none());
+        // 写路径枚举：备份 kind 为 kebab-case，跳过原因为 snake_case。
+        assert_eq!(
+            serde_json::to_value(MemoryBackupKind::BeforeDelete).unwrap(),
+            "before-delete"
+        );
+        assert_eq!(
+            serde_json::to_value(MemoryBackupKind::BankRemoved).unwrap(),
+            "bank-removed"
+        );
+        assert_eq!(
+            serde_json::to_value(MemorySkipReason::NotFound).unwrap(),
+            "not_found"
+        );
+        assert_eq!(
+            serde_json::from_str::<MemoryBackupKind>("\"before-restore\"").unwrap(),
+            MemoryBackupKind::BeforeRestore
+        );
+        let status = MemoryBankStatus {
+            bank: "b".into(),
+            in_use: true,
+            probe_failed: false,
+            holders: vec![MemoryHolder {
+                pid: 1,
+                command: "omp".into(),
+            }],
+            backups: vec![],
+        };
+        let s = serde_json::to_value(&status).unwrap();
+        assert_eq!(s["inUse"], true);
+        assert_eq!(s["probeFailed"], false);
+        assert_eq!(s["holders"][0]["pid"], 1);
+    }
+
+    #[test]
     fn secret_configs_are_redacted_in_debug() {
         let raw = McpServerRaw {
             config: serde_json::json!({"env": {"TOKEN": "super-secret-aaa"}}),
@@ -1223,4 +1310,257 @@ pub struct UsageHealth {
     pub fallbacks: UsageFallbacks,
     pub cache: UsageCacheStats,
     pub timeline: UsageTimeline,
+}
+// ---------------------------------------------------------------------------
+// 记忆库（CONTRACT §18：浏览 + 写操作）
+// ---------------------------------------------------------------------------
+
+/// 记忆行种类（JSON：`"working"` | `"episodic"`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryKind {
+    Working,
+    Episodic,
+}
+
+/// `memory_list` 的 kind 过滤（JSON：`"all"` | `"working"` | `"episodic"`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryKindFilter {
+    #[default]
+    All,
+    Working,
+    Episodic,
+}
+
+/// `memory_list` 排序（JSON：`"newest"` | `"oldest"` | `"mostRecalled"`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MemorySort {
+    #[default]
+    Newest,
+    Oldest,
+    MostRecalled,
+}
+
+/// `memory_overview` 全局合计。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryTotals {
+    pub banks: u64,
+    pub working: u64,
+    pub episodic: u64,
+    pub facts: u64,
+    pub bytes: u64,
+    pub never_recalled: u64,
+    pub unconsolidated: u64,
+    pub missing_source_sessions: u64,
+    pub source_sessions: u64,
+}
+
+/// 单个 bank 的概览行。`readable=false` 时计数按 0，UI 置灰并显示 `error`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBankSummary {
+    pub bank: String,
+    pub display_name: String,
+    pub cwd: Option<String>,
+    pub cwd_exists: Option<bool>,
+    pub working: u64,
+    pub episodic: u64,
+    pub facts: u64,
+    pub bytes: u64,
+    pub first_memory_at: Option<String>,
+    pub last_memory_at: Option<String>,
+    pub never_recalled: u64,
+    pub unconsolidated: u64,
+    pub source_sessions: u64,
+    pub missing_source_sessions: u64,
+    pub readable: bool,
+    pub error: Option<String>,
+}
+
+/// `memory_overview` 返回。`available=false` 是正常状态（无本地库），不是错误。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryOverview {
+    pub available: bool,
+    pub backend: Option<String>,
+    pub root: String,
+    pub banks: Vec<MemoryBankSummary>,
+    pub totals: MemoryTotals,
+}
+
+/// 记忆列表行（`memory_list` / `memory_detail` 共用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryItem {
+    pub id: String,
+    pub kind: MemoryKind,
+    pub snippet: String,
+    pub content_chars: u64,
+    pub created_at: Option<String>,
+    pub source_session_id: Option<String>,
+    pub source_session_exists: Option<bool>,
+    pub recall_count: i64,
+    pub last_recalled_at: Option<String>,
+    pub importance: Option<f64>,
+    pub veracity: Option<String>,
+    pub memory_type: Option<String>,
+    pub consolidated: bool,
+    pub superseded: bool,
+}
+
+/// `memory_list` 返回：`total` 为过滤后总数（与分页无关）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryPage {
+    pub total: u64,
+    pub items: Vec<MemoryItem>,
+}
+
+/// 指向一条记忆的 fact 行。`facts` 表的行 `key` 为 null；
+/// `memoria_facts` 表的行 `subject` 为 null（见 CONTRACT §18.3）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryFact {
+    pub subject: Option<String>,
+    pub predicate: Option<String>,
+    pub object: Option<String>,
+    pub key: Option<String>,
+}
+
+/// `memory_detail` 返回：列表行 + 全文与关联。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDetail {
+    #[serde(flatten)]
+    pub item: MemoryItem,
+    pub content: String,
+    pub truncated: bool,
+    pub embed_text: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub facts: Vec<MemoryFact>,
+    pub summary_of: Vec<String>,
+    pub related_edges: u64,
+}
+
+/// `memory_growth` 返回点：`date` 为本地时区 `YYYY-MM-DD`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGrowthPoint {
+    pub date: String,
+    pub working: u64,
+    pub episodic: u64,
+}
+
+// ---------------------------------------------------------------------------
+// 记忆库写操作（CONTRACT §18.8）
+// ---------------------------------------------------------------------------
+
+/// 备份种类（JSON：`"before-delete"` | `"before-restore"` | `"bank-removed"`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoryBackupKind {
+    BeforeDelete,
+    BeforeRestore,
+    BankRemoved,
+}
+
+/// 单个备份条目（`id` 为 `{bank}@{dirname}` 不透明 token，见 §18.8.2）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBackup {
+    pub id: String,
+    pub bank: String,
+    pub kind: MemoryBackupKind,
+    pub created_at: String,
+    pub bytes: u64,
+    pub working: Option<u64>,
+    pub episodic: Option<u64>,
+    pub cwd: Option<String>,
+}
+
+/// bank 占用者（lsof 持有者 pid + 命令名）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryHolder {
+    pub pid: u32,
+    pub command: String,
+}
+
+/// `memory_bank_status` 返回：lsof 问题 ⇒ `probe_failed=true`（非错误）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBankStatus {
+    pub bank: String,
+    pub in_use: bool,
+    pub probe_failed: bool,
+    pub holders: Vec<MemoryHolder>,
+    pub backups: Vec<MemoryBackup>,
+}
+
+/// preview 可删计数。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeleteDeletable {
+    pub working: u64,
+    pub episodic: u64,
+}
+
+/// preview 级联计数（`other` = gists + 5 张 memoria_*）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeleteCascade {
+    pub facts: u64,
+    pub embeddings: u64,
+    pub annotations: u64,
+    pub edges: u64,
+    pub other: u64,
+}
+
+/// `memory_delete_preview` 返回（纯只读）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeletePreview {
+    pub requested: u64,
+    pub deletable: MemoryDeleteDeletable,
+    pub unsupported: u64,
+    pub not_found: u64,
+    pub cascade: MemoryDeleteCascade,
+    pub cited_by_summaries: u64,
+}
+
+/// 跳过原因（JSON：`"not_found"` | `"unsupported"`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySkipReason {
+    NotFound,
+    Unsupported,
+}
+
+/// 被跳过的 id 及其原因。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySkipped {
+    pub id: String,
+    pub reason: MemorySkipReason,
+}
+
+/// `memory_delete_items` 返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeleteResult {
+    pub deleted: Vec<String>,
+    pub skipped: Vec<MemorySkipped>,
+    pub backup: MemoryBackup,
+}
+
+/// `memory_restore` 返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryRestoreResult {
+    pub bank: String,
+    pub restored_from: MemoryBackup,
+    pub safety_backup: Option<MemoryBackup>,
 }
