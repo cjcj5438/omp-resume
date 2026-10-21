@@ -9,6 +9,7 @@ import {
   memoryDeleteItems,
   memoryDeletePreview,
   memoryDetail,
+  memoryGraph,
   memoryList,
   memoryOverview,
   memoryRestore,
@@ -174,5 +175,27 @@ describe("写操作（有状态）", () => {
     await mockWith("/?mock=1&memoryProbe=fail");
     expect((await memoryBankStatus({ bank: "notes-app" })).probeFailed).toBe(true);
     await expect(memoryDeleteBank({ bank: "notes-app" })).rejects.toMatchObject({ code: "PROBE_FAILED" });
+  });
+});
+
+describe("关系图 mock", () => {
+  it("大库返回三边种类的富图；空库返回空图；未知库报 NOT_FOUND", async () => {
+    await mockWith("/?mock=1");
+    const g = await memoryGraph({ bank: "omp-resume" });
+    expect(g.totalNodes).toBe(120);
+    expect(g.truncated).toBe(false);
+    expect(g.nodes.length).toBeGreaterThan(50);
+    const kinds = new Set(g.edges.map((e) => e.kind));
+    expect(kinds).toEqual(new Set(["summary", "related", "context"]));
+    expect(g.nodes.every((n) => n.degree > 0 && n.snippet.length <= 80)).toBe(true);
+    expect(g.unlinkedCount).toBe(g.totalNodes - new Set(g.edges.flatMap((e) => [e.source, e.target])).size);
+    const kept = new Set(g.nodes.map((n) => n.id));
+    expect(g.edges.every((e) => kept.has(e.source) && kept.has(e.target))).toBe(true);
+
+    const empty = await memoryGraph({ bank: "empty-proj" });
+    expect(empty).toMatchObject({ totalNodes: 0, totalEdges: 0, unlinkedCount: 0, truncated: false });
+    expect(empty.nodes).toEqual([]);
+    await expect(memoryGraph({ bank: "locked-proj" })).rejects.toMatchObject({ code: "IO" });
+    await expect(memoryGraph({ bank: "no-such-bank" })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

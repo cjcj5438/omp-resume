@@ -946,6 +946,11 @@ bashExecution（无 content 数组）与 developer：
   并注明「该上游未返回缓存数据」）；请求趋势（错误/兜底叠加）、缓存命中率趋势、
   错误类型分布（中文：额度用尽 / 触发限流 / 鉴权失败 / 响应超时 / 网络异常 / 服务端错误 / 其他）、
   兜底去向（含最近切换）、最近错误、按模型缓存命中。
+- 图表悬停（`UsageCharts.tsx` 的 `ChartBucket` 统一包装）：每桶 = 可见图形 + 竖向虚线
+  `line.chart-guide`（默认 `opacity: 0`，仅悬停该桶时 0.55）+ 透明全高热区 `rect.chart-hit`
+  （承 `data-tip`，`pointer-events: all`；图形本身 `pointer-events: none`，避免细柱/圆点抢命中）。
+  悬停反馈：热区填 `--accent-soft` 并描 `--accent` 边框、柱 `filter: brightness(1.15)`、
+  折线圆点 `r` 2.5→5、兜底圆点 `r` 3→4，全部 `var(--motion)` 过渡；提示浮层由全局 `ChartTip` 渲染。
 - 每个标签页各自记住范围；两个面板数据独立请求（范围/刷新按钮各自一套），
   迟到响应不覆盖当前结果；已加载过的「范围」再切回时命中缓存不再请求（必须同时
   复位加载态，否则刷新按钮会永久禁用）；加载 / 空数据 / 错误与重试状态与既有视图同风格。
@@ -1706,7 +1711,7 @@ classify:
   额外生成的 `android/`、`ios/`、`64x64.png`）；macOS 可能缓存旧图标，
   必要时 `killall Dock`。
 
-## 18. 记忆库（§4.39–§4.49，Mnemopi 维护：只读 + 写操作）
+## 18. 记忆库（§4.39–§4.50，Mnemopi 维护：只读 + 写操作 + 关系图）
 
 > 维护 omp 长期记忆库（每项目一个 bank）。§18.1–§18.3、§18.5–§18.7 只读，§18.8 写操作。
 > （`memory_growth` 已移除，§18.4 号段留空，其余编号不变以免交叉引用失效。）
@@ -1896,13 +1901,19 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
 - 入口：`ManageView` 第五个标签页「记忆库」；`loadedSessionIds` / `onOpenSession` 由 `App.tsx`
   传入（来源跳转回会话视图并选中）。
 - 组件（`src/components/`）：`MemoryPanel.tsx`（总览、健康卡、图表与列表容器）、
-  `MemoryBanks.tsx`（排名条形图 + 选中库操作条 + 无效库清理对话框）、`MemoryList.tsx`
+  `MemoryBanks.tsx`（排名条形图 + 选中库操作条 + 无效库清理对话框）、`Drawer.tsx`（右侧抽屉容器）、`MemoryList.tsx`
   （搜索 / 过滤 / 分页 / 详情 / 多选）、`MemoryDeleteDialog.tsx`、`MemoryBackupsDialog.tsx`、
   `useMemoryMaintenance.tsx`（上限、错误文案、`useBankStatus`、门禁提示，单文件导出）。
   无 props 插槽；`MemoryPanel.css` 只用既有语义变量（浅/深色均验证）。
-- 布局：① 头条（后端 / 库数 / 记忆数 / 磁盘 + 备份与恢复、刷新）→ ② 健康卡 4 张（总数、
+- 布局：左列 = ① 头条（后端 / 库数 / 记忆数 / 磁盘 + 备份与恢复、刷新）→ ② 健康卡 4 张（总数、
   未召回占比（占总条数）、未合并占比（**占工作记忆**，§18.1）、磁盘；占比 > 50% `--warn-soft`，
-  分母 0 显示「—」）→ ③ 项目库图表 → ④ 选中库操作条 → ⑤ 记忆列表。
+  分母 0 显示「—」）→ ③ 项目库图表；右列 = 选中库抽屉（`Drawer` 内联形态，`role="complementary"`，
+  面板宽度 ≤800px 时按容器查询改为覆盖层，另以窗口 ≤720px 兜底）。未选中时右列不渲染，左列下方显示「点上面的项目库，在右侧查看其中的记忆」。
+  抽屉：`Drawer.tsx` + `Drawer.css`（`inline` 时作为父级 flex 右列，`width: clamp(360px, 44%, 620px)`）；
+  标题 = 库名 + 路径，右上「关闭」；Esc 分三级消费：页面有 `.modal-overlay` 时让模态框先关 → 关系图有选中卡时
+  由 `MemoryGraph` 的 svg `onKeyDown` `stopPropagation` 只清选中（无选中则不拦，让 Esc 继续上浮）→ 最后才关抽屉；
+  打开时 140ms 右滑淡入（`prefers-reduced-motion: reduce` 禁用）。抽屉内顺序：④ 选中库操作条
+  → 列表/关系图切换 → ⑤ 记忆列表或关系图；关系图在抽屉内改上下布局（画布整宽 + 选中卡在下）。
 - 项目库图表（替代原表格）：每行一个 `<button>`（`aria-pressed`，键盘可选中，无行内按钮），
   **单一 grid**（名称/条形/条数）对齐；条形 = 工作（accent）+ 情节（`--badge-label-bg`）按比例
   堆叠，宽度按最大库归一、非零至少 4px；下方 3px 细条 = 未召回（占总数）与未合并（占工作记忆）。
@@ -1937,3 +1948,67 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
   无效库清理（禁用原因、失败继续、结果与汇总）、备份恢复与永久删除；`memory.test.ts` 覆盖
   mock 的数据集（含 `?memoryBanks=37`）、不可读、通配符、分页排序、200KB 截断与写操作语义。
 - 取舍：图表用 grid 而非 table（避开 `td` 内 `display:flex` 的错列/溢出）。
+
+### 18.10 `memory_graph { bank } -> MemoryGraph`（§4.50，只读关系图）
+
+```ts
+memory_graph(args: { bank: string }): MemoryGraph
+MemoryGraph = { nodes: MemoryGraphNode[]; edges: MemoryGraphEdge[]; truncated: boolean;
+                totalNodes: number; totalEdges: number; unlinkedCount: number }
+MemoryGraphNode = { id: string; kind: "working" | "episodic"; snippet: string /* ≤80 字 */;
+                    createdAt: string | null; recallCount: number; importance: number | null;
+                    degree: number /* 保留边中的关联数，节点大小据此 */ }
+MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" | "context" }
+```
+
+- 边只取真实有行的数据（实测 2026-10-20，多 bank 只读）：① `summary`——
+  `episodic_memory.summary_of` 按 `,` 切分（`working ⇒ []`，悬挂 id 丢弃）；
+  ② `related`——`graph_edges` 中 `edge_type` 为 `related_to`/`references`/`rel` 及其他未知类型；
+  ③ `context`——`graph_edges` 中 `edge_type = 'ctx'`。两端点必须都是记忆 id，
+  `gist_*`/`fact_*` 等伪节点与库外 id 自动排除（实测主库 `ctx` 13、`related_to` 8、
+  `references` 6、`rel` 2，另有 `gist_*`/`fact_*` 端点若干，均已排除）。
+- 刻意不建的边：`superseded_by`（全库无行）、`session_id` 相同（单库常唯一，稍多即成毛球）、
+  facts 共享主体（`fact`/`version` 等泛词连接 up to 8 条记忆，成团无意义）。
+- 节点上限 200：按关联度降序、再新近（解析失败恒最后）、再 id 排序取前 200，
+  只保留存活端点间的边；`truncated=true` 时 UI 显示「显示 N / 共 M」。
+  无关联的记忆默认不渲染为孤点，只计入 `unlinkedCount`（图为空时才明示）。
+  空库返回空图（总数为 0），不是错误。
+- 降级与只读语义同 §18.2/§18.5：只读打开 + `spawn_blocking`；缺表/缺列降级
+  （`summary_of` 缺失则无摘要边，`graph_edges` 缺失则只有摘要边）；两表皆无 ⇒ `IO`；
+  `bank` 校验语义同 §18.2；日志/错误永不含记忆正文。
+- 前端（`MemoryGraph.tsx` + `graphLayout.ts`，合计 ≈550 行）：选中库操作条下的
+  「列表 | 关系图」切换（默认列表，`aria-pressed` chips）；SVG 直绘无依赖；
+  确定性力导向布局（固定种子 + 固定 tick，单测锁定）同步跑完；悬停高亮邻域、
+  点击选卡（类型/时间/片段/召回/关联/重要度/相邻跳转）、滚轮围绕光标缩放、背景拖拽平移、
+  节点拖拽移点、「重置视图」；图例含节点色（复用库条形色）与边种类
+  过滤 chips；节点提示走全局 `data-tip`。Esc 清选择，且**只在有选中卡时** `stopPropagation`
+  ——否则抽屉（§18.9 的 `Drawer` 在 document 上监听 Esc）会连带关闭；无选中时不拦截，
+  Esc 正常关抽屉。选中卡「在列表中打开」切回列表并经
+  `focusId`（`memoryDetail` 直取，跨分页）置顶展示该记忆。
+
+## 19. 悬浮反馈与动效约定（全应用统一）
+
+只做视觉反馈，不改交互语义、不引入依赖。目的：鼠标扫过任何可点/可聚焦的表面都能看出
+「这里能点」，且变化是渐变的而不是硬切。
+
+- **动效令牌**：`App.css` `:root` 的 `--motion: 120ms`，所有过渡只写
+  `transition: <prop> var(--motion) ease`。缺省值写法（`var(--motion, 120ms)`）只用于
+  独立组件 CSS，避免被别的样式表单独引入时变量缺失。
+- **减少动态**：`@media (prefers-reduced-motion: reduce)` 在 `App.css` 里全局
+  `*, *::before, *::after { transition-duration: 0ms !important }`；组件自带的入场动画
+  （抽屉）同样在该媒体查询下置 `animation: none`。
+- **颜色只用语义变量**：hover 底色 `--bg-hover`，选中/强调 `--accent-soft` / `--accent`，
+  危险 `--danger-soft`，边框 `--border`。禁止字面色值。深色 / 浅色 × 6 强调色组合必须都可读。
+- **交互面必须有 hover**：行（`.row` / `.tree-row` / `.mem-bank-row` / `.mem-item` /
+  `.mcp-row` / `.manage-table tbody tr` / `.err-row` / `.cheatsheet-row`）、按钮
+  （`.btn` 家族、`.tab`、`.view-nav-btn`、分段控件、图标按钮）、输入（`.filter-input`、
+  `.mcp-input`、meta 编辑器输入框）、卡片（`.kpi-card` / `.health-card` / `.mem-card`）。
+- **激活态也要有 hover 反应**：`aria-pressed="true"` / `.row-selected` / `.tree-row-active` /
+  `.tag-chip-on` / `.tab-active` / `.segment-item-active` 的 hover 规则必须写在 active 规则
+  **之后**，用内圈 `box-shadow: inset 0 0 0 1px var(--accent)` 或保留原底色，不能塌回
+  `--bg-hover` 而看不出「已选中」。
+- **禁用不发反馈**：所有新 hover 规则带 `:not(:disabled)`（或对应禁用态）。
+- **图表悬停**（`UsageCharts.tsx` 的 `ChartBucket`）：见 §12.4——虚线参考线 + 热区高亮
+  + 柱/圆点放大，全部 `--motion` 过渡，提示文字走全局 `ChartTip`。
+- **抽屉**（`Drawer.tsx`）：见 §18.9——140ms 右滑淡入，`prefers-reduced-motion` 关闭。
+- **鼠标指针**：桌面应用惯例，交互元素保持 `cursor: default`，不引入手指指针。

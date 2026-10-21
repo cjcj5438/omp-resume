@@ -96,17 +96,21 @@ it("花费趋势按范围切换小时/天分桶，all 不补零", async () => {
   render(<StatsView onBack={() => {}} />);
   const chart = await screen.findByRole("img", { name: /花费趋势/ });
   expect(chart.getAttribute("aria-label")).toContain("30 天");
-  expect(chart.querySelectorAll("rect").length).toBe(30);
+  expect(chart.querySelectorAll("rect.chart-bar").length).toBe(30);
+  expect(chart.querySelectorAll("rect.chart-hit").length).toBe(30);
+  expect(chart.querySelector("rect.chart-hit")?.getAttribute("data-tip")).toContain("花费");
+  expect(chart.querySelector("rect.chart-bar title")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "近 24 小时" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /花费趋势/ });
     expect(next.getAttribute("aria-label")).toContain("24 小时");
-    expect(next.querySelectorAll("rect").length).toBe(24);
+    expect(next.querySelectorAll("rect.chart-bar").length).toBe(24);
+    expect(next.querySelectorAll("rect.chart-hit").length).toBe(24);
   });
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /花费趋势/ });
-    expect(next.querySelectorAll("rect").length).toBe(7);
+    expect(next.querySelectorAll("rect.chart-bar").length).toBe(7);
   });
 });
 
@@ -176,6 +180,16 @@ it("错误类型与兜底去向按契约中文映射展示", async () => {
   expect(fallbacks.textContent).toContain("未知来源 →");
   expect(fallbacks.textContent).toContain("anthropic / claude-sonnet-4-5 →");
   expect(within(screen.getByLabelText("最近错误")).getAllByText("触发限流").length).toBeGreaterThan(0);
+});
+
+it("分布条与错误行用 data-tip 代替原生 title", () => {
+  render(<HealthBoard data={mockUsageHealth("30d")} />);
+  const sections = ["错误类型分布", "兜底去向", "最近错误", "按模型缓存命中"].map((n) => screen.getByLabelText(n));
+  expect(sections[0].querySelector("li")?.getAttribute("data-tip")).toContain("次（占 ");
+  expect(sections[1].querySelector("li")?.getAttribute("data-tip")).toContain("次（占 ");
+  expect(sections[2].querySelector(".err-row")?.getAttribute("data-tip")).toContain("·");
+  expect(sections[3].querySelector("tbody tr")?.getAttribute("data-tip")).toContain("命中率");
+  for (const s of sections) expect(s.querySelector("[title]")).toBeNull();
 });
 
 it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲突警告", () => {

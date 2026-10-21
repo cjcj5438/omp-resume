@@ -1,0 +1,23 @@
+.chart-tip {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  max-width: 280px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  opacity: 1;
+  transition: opacity 80ms ease-in;
+}
+
+.chart-tip strong {
+  display: block;
+  font-weight: 600;
+}

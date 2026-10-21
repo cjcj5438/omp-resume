@@ -12,6 +12,7 @@
 .usage-table-section h2 { margin: 0 0 10px; font-size: 15px; }
 .usage-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 .usage-table th, .usage-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; }
+.usage-table tbody tr { transition: background-color var(--motion, 120ms) ease; }
 .usage-table th:first-child { text-align: left; width: 42%; }
 .usage-table tbody th { font-weight: 400; }
 .usage-row-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -26,27 +27,38 @@
 .usage-trend { margin-top: 16px; }
 /* ---- 运行看板 ---- */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
-.kpi-card { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.kpi-card { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); transition: border-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease; }
+.kpi-card:hover { border-color: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent-soft); }
 .kpi-label { font-size: 12px; color: var(--text-muted); }
 .kpi-value { font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .kpi-value-danger { color: var(--danger); }
 .kpi-sub { font-size: 12px; color: var(--text-muted); }
 .health-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px; }
-.health-card { padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; }
+.health-card { padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; transition: border-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease; }
+.health-card:hover { border-color: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent-soft); }
 .health-card > h2 { margin: 0 0 10px; font-size: 14px; }
 .health-card .pane-note { margin: 8px 0; }
 section.health-card[aria-label="最近错误"] { margin-top: 12px; }
 @media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } .health-grid { grid-template-columns: 1fr; } }
 /* ---- 手写 SVG 图表 ---- */
 .chart { display: block; width: 100%; height: auto; }
-.chart-bar { fill: var(--accent); }
-.chart-bar-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.chart-bar { fill: var(--accent); transition: fill var(--motion, 120ms) ease, opacity var(--motion, 120ms) ease; }
+.chart-bar-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; transition: fill var(--motion, 120ms) ease; }
 .chart-bar-error { fill: var(--danger); }
-.chart-fb { fill: var(--badge-inuse-bg); }
-.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
-.chart-dot { fill: var(--accent); }
+.chart-fb { fill: var(--badge-inuse-bg); transition: r var(--motion, 120ms) ease; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; transition: stroke-width var(--motion, 120ms) ease; }
+.chart-dot { fill: var(--accent); transition: r var(--motion, 120ms) ease, stroke-width var(--motion, 120ms) ease; }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
 .chart-tick { fill: var(--text-muted); font-size: 11px; }
+/* 竖向参考线：只在悬停该列时露出，给细柱一个明确的定位反馈。 */
+.chart-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; pointer-events: none; transition: opacity var(--motion, 120ms) ease; }
+.chart-bucket :is(.chart-bar, .chart-bar-soft, .chart-bar-error, .chart-dot, .chart-fb, .chart-line) { pointer-events: none; }
+.chart-bucket .chart-hit { fill: transparent; pointer-events: all; transition: fill var(--motion, 120ms) ease, stroke var(--motion, 120ms) ease; }
+.chart-bucket:hover .chart-guide { opacity: 0.55; }
+.chart-bucket:hover .chart-hit { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.chart-bucket:hover .chart-bar { fill: var(--accent); filter: brightness(1.15); }
+.chart-bucket:hover .chart-dot { r: 5; stroke: var(--accent); stroke-width: 1.5; }
+.chart-bucket:hover .chart-fb { r: 4; }
 .chart-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
 .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
@@ -55,13 +67,17 @@ section.health-card[aria-label="最近错误"] { margin-top: 12px; }
 .legend-fb { background: var(--badge-inuse-bg); border-radius: 50%; }
 /* ---- 分布条 / 兜底 / 错误列表 ---- */
 .kind-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
-.kind-list li { display: grid; grid-template-columns: minmax(0, auto) minmax(48px, 1fr) auto; align-items: center; gap: 10px; }
+.kind-list li { display: grid; grid-template-columns: minmax(0, auto) minmax(48px, 1fr) auto; align-items: center; gap: 10px; transition: background-color var(--motion, 120ms) ease; }
 .kind-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kind-bar { margin-top: 0; }
 .kind-count { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .fb-recent { margin: 12px 0 0; padding: 12px 0 0 20px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.9; overflow-wrap: anywhere; }
+.kind-list li[data-tip] { border-radius: 4px; }
+.kind-list li:hover { background: var(--bg-hover); }
+.usage-table tbody tr:hover { background: var(--bg-hover); }
 .err-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; font-size: 12px; }
-.err-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.err-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); transition: background-color var(--motion, 120ms) ease; }
+.err-row:hover { background: var(--bg-hover); }
 .err-row:last-child { border-bottom: none; }
 .err-time { flex: none; }
 .err-model { flex: none; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

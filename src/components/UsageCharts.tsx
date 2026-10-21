@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import type { UsageHealthTimelinePoint, UsageTrendPoint, UsageTrendUnit } from "../types";
 import { usageMoney, usageNumber } from "./UsageSummary";
-import { barHeights, cacheHitSeries, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
+import { barHeights, cacheHitSeries, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
 import "./Usage.css";
 
 const W = 600;
@@ -33,6 +34,22 @@ function barStep(count: number): { x: (i: number) => number; w: number; centers:
   return { x: (i: number) => PLOT_X + i * step + (step - w) / 2, w, centers };
 }
 
+/**
+ * 单桶包装：可见图形 + 竖向参考线 + 盖在上层的透明全高热区。
+ * 热区承 data-tip（细柱/小圆点也好悬停），整列 :hover 高亮（底色 + 描边 + 参考线）；
+ * 折线图圆点由组 hover 放大。
+ */
+function ChartBucket({ i, count, tip, children }: { i: number; count: number; tip: string; children: ReactNode }) {
+  const step = PLOT_W / Math.max(1, count);
+  return (
+    <g className="chart-bucket">
+      {children}
+      <line className="chart-guide" x1={PLOT_X + i * step + step / 2} y1={PLOT_TOP} x2={PLOT_X + i * step + step / 2} y2={PLOT_TOP + PLOT_H} />
+      <rect className="chart-hit" data-tip={tip} x={PLOT_X + i * step} y={PLOT_TOP} width={step} height={PLOT_H} />
+    </g>
+  );
+}
+
 /** 花费趋势柱状图（hour/day 自适应）。 */
 export function CostTrendChart({ unit, points }: { unit: UsageTrendUnit; points: UsageTrendPoint[] }) {
   const heights = barHeights(points.map((p) => p.cost), PLOT_H);
@@ -48,9 +65,14 @@ export function CostTrendChart({ unit, points }: { unit: UsageTrendUnit; points:
     >
       <line x1={PLOT_X} y1={BASE_Y} x2={PLOT_X + PLOT_W} y2={BASE_Y} className="chart-grid" />
       {points.map((p, i) => (
-        <rect key={p.key} x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar">
-          <title>{`${p.key}：${usageMoney(p.cost)}`}</title>
-        </rect>
+        <ChartBucket
+          key={p.key}
+          i={i}
+          count={points.length}
+          tip={`${p.key}\n花费 ${usageMoney(p.cost)}（占 ${total > 0 ? `${((p.cost / total) * 100).toFixed(1)}%` : "—"}）`}
+        >
+          <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar" />
+        </ChartBucket>
       ))}
       <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
     </svg>
@@ -75,17 +97,18 @@ export function RequestsChart({ unit, points }: { unit: UsageTrendUnit; points: 
       {points.map((p, i) => {
         const errH = p.requests > 0 && p.errors > 0 ? Math.max(2, Math.round((p.errors / p.requests) * heights[i])) : 0;
         return (
-          <g key={p.key}>
-            <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar-soft">
-              <title>{`${p.key}：请求 ${usageNumber(p.requests)} 次 · 错误 ${usageNumber(p.errors)} 次 · 兜底 ${usageNumber(p.fallbacks)} 次`}</title>
-            </rect>
+          <ChartBucket
+            key={p.key}
+            i={i}
+            count={points.length}
+            tip={`${p.key}\n请求 ${usageNumber(p.requests)} 次\n错误 ${usageNumber(p.errors)} 次（错误率 ${formatErrorRate(p.errors, p.requests)}）\n兜底 ${usageNumber(p.fallbacks)} 次`}
+          >
+            <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar-soft" />
             {errH > 0 ? <rect x={x(i)} y={BASE_Y - errH} width={w} height={errH} className="chart-bar-error" /> : null}
             {p.fallbacks > 0 ? (
-              <circle cx={x(i) + w / 2} cy={Math.max(PLOT_TOP - 2, BASE_Y - heights[i] - 6)} r={3} className="chart-fb">
-                <title>{`${p.key}：兜底 ${usageNumber(p.fallbacks)} 次`}</title>
-              </circle>
+              <circle cx={x(i) + w / 2} cy={Math.max(PLOT_TOP - 2, BASE_Y - heights[i] - 6)} r={3} className="chart-fb" />
             ) : null}
-          </g>
+          </ChartBucket>
         );
       })}
       <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
@@ -129,13 +152,17 @@ export function CacheHitChart({ unit, points }: { unit: UsageTrendUnit; points: 
           className="chart-line"
         />
       ))}
-      {series.map((v, i) =>
-        v === null ? null : (
-          <circle key={points[i].key} cx={centers[i]} cy={y(v)} r={2.5} className="chart-dot">
-            <title>{`${points[i].key}：命中率 ${formatHitRate(v)}`}</title>
-          </circle>
-        ),
-      )}
+      {points.map((p, i) => {
+        const v = series[i];
+        const tip = v === null
+          ? `${p.key}\n无请求`
+          : `${p.key}\n命中率 ${formatHitRate(v)}\n缓存读 ${usageNumber(p.cacheRead)} · 输入 ${usageNumber(p.promptTokens)}`;
+        return (
+          <ChartBucket key={p.key} i={i} count={points.length} tip={tip}>
+            {v === null ? null : <circle cx={centers[i]} cy={y(v)} r={2.5} className="chart-dot" />}
+          </ChartBucket>
+        );
+      })}
       <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
     </svg>
   );

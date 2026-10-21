@@ -6,6 +6,7 @@
 pub mod backup;
 pub mod delete;
 pub mod gate;
+pub mod graph;
 pub mod rows;
 
 use std::collections::HashSet;
@@ -18,7 +19,7 @@ use rusqlite::{Connection, OpenFlags};
 use crate::config::Config;
 use crate::model::{
     AppError, ErrorCode, MemoryBackup, MemoryBankStatus, MemoryBankSummary, MemoryDeletePreview,
-    MemoryDeleteResult, MemoryDetail, MemoryKindFilter, MemoryOverview, MemoryPage,
+    MemoryDeleteResult, MemoryDetail, MemoryGraph, MemoryKindFilter, MemoryOverview, MemoryPage,
     MemoryRestoreResult, MemorySort, MemoryTotals,
 };
 
@@ -33,6 +34,8 @@ pub const CONTENT_CAP_BYTES: usize = 204_800;
 pub const LIST_LIMIT_DEFAULT: i64 = 50;
 pub const LIST_LIMIT_MAX: i64 = 200;
 pub const DETAIL_FACTS_LIMIT: i64 = 50;
+pub const GRAPH_NODE_CAP: usize = 200;
+pub const GRAPH_SNIPPET_CHARS: usize = 80;
 
 /// 解析 bank 根目录：`OMP_RESUME_MEMORY_DIR` > `$HOME/.omp/agent/memories/mnemopi/banks`。
 pub fn resolve_bank_root_with(env: impl Fn(&str) -> Option<String>, home: &Path) -> PathBuf {
@@ -283,9 +286,13 @@ pub(crate) fn escape_like(raw: &str) -> String {
 pub(crate) fn like_pattern(query: &str) -> String {
     format!("%{}%", escape_like(query))
 }
-
 /// 列表 snippet：空白折叠后取前 [`SNIPPET_CHARS`] 字符，超长尾加 `…`。
 pub fn make_snippet(prefix: &str, total_chars: u64) -> String {
+    make_snippet_with(prefix, total_chars, SNIPPET_CHARS)
+}
+
+/// `make_snippet` 的长度参数版（关系图节点用 80 字短版）。
+pub fn make_snippet_with(prefix: &str, total_chars: u64, limit: usize) -> String {
     let mut folded = String::with_capacity(prefix.len().min(512));
     for word in prefix.split_whitespace() {
         if !folded.is_empty() {
@@ -294,10 +301,10 @@ pub fn make_snippet(prefix: &str, total_chars: u64) -> String {
         folded.push_str(word);
     }
     let prefix_chars = prefix.chars().count() as u64;
-    if folded.chars().count() <= SNIPPET_CHARS && total_chars <= prefix_chars {
+    if folded.chars().count() <= limit && total_chars <= prefix_chars {
         return folded;
     }
-    let mut out: String = folded.chars().take(SNIPPET_CHARS).collect();
+    let mut out: String = folded.chars().take(limit).collect();
     out.push('…');
     out
 }
@@ -440,6 +447,12 @@ pub async fn memory_detail(
 ) -> Result<MemoryDetail, AppError> {
     let sessions_dir = cfg.sessions_dir.clone();
     blocking(move || rows::detail_impl(&resolve_bank_root(), &sessions_dir, &bank, &id)).await
+}
+
+/// CONTRACT §18.10：选中 bank 的引用关系图（只读）。
+#[tauri::command]
+pub async fn memory_graph(bank: String) -> Result<MemoryGraph, AppError> {
+    blocking(move || graph::graph_impl(&resolve_bank_root(), &bank)).await
 }
 
 /// CONTRACT §4.43：bank 状态（lsof 失败 ⇒ probe_failed，非错误）。

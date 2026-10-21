@@ -1,15 +1,20 @@
 /* 记忆库标签页：状态头条 / 健康卡 / 项目库图表 / 操作条 / 记忆列表。 */
-.mem-panel { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
+/* 面板 = 左列（概览/健康卡/项目库）+ 右抽屉；两列各自滚动。 */
+.mem-panel { display: flex; flex: 1; min-height: 0; gap: 0; container-type: inline-size; }
+/* 左列保底 420px：再窄就把抽屉切成覆盖层（见文件末尾容器查询）。 */
+.mem-main { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 420px; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
 .mem-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .mem-intro { margin: 0; font-size: 12px; }
-.mem-panel > p.muted { margin: 0; font-size: 12px; }
+.mem-main > p.muted { margin: 0; font-size: 12px; }
 .mem-empty { max-width: 560px; padding: 32px 8px; }
 .mem-empty h3 { margin: 0 0 8px; font-size: 16px; }
 .mem-empty p { margin: 0 0 12px; font-size: 13px; line-height: 1.7; }
 
 /* ---- 健康卡 ---- */
 .mem-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-.mem-card { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.mem-card { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); transition: border-color var(--motion, 120ms) ease, background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease; }
+/* 健康卡是只读看板，但悬停给一点边界反馈，扫视时能定位到当前卡。 */
+.mem-card:hover { border-color: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent-soft); }
 .mem-card-warn { background: var(--warn-soft); }
 .mem-card-label { font-size: 12px; color: var(--text-muted); }
 .mem-card-value { font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.3; }
@@ -39,10 +44,13 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
 }
-.mem-bank-row:hover { background: var(--bg-hover); }
+.mem-bank-row:hover { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--border); }
 .mem-bank-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mem-bank-active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+/* 已选中的库再悬停：加深底色与左侧强调条，提示「再点一次仍是这个库」。 */
+.mem-bank-active:hover { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--accent-soft); }
 .mem-bank-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 /* 两行都固定高度：不受字形（如下行字母）影响，每行严格等高。 */
 .mem-bank-title { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; height: 18px; overflow: hidden; }
@@ -73,6 +81,11 @@
 @media (max-width: 900px) {
   .mem-bank-row { grid-template-columns: minmax(120px, 1fr) minmax(60px, 1fr) 3em; }
 }
+/* 面板自身宽度不够容纳两列（左列 480 + 抽屉）时，抽屉改覆盖层，避免项目库行被压成两字。 */
+@container (max-width: 800px) {
+  .mem-main { min-width: 0; }
+  .drawer-inline { position: fixed; inset: 0 0 0 auto; width: min(100%, 560px); box-shadow: var(--shadow); border-left: 1px solid var(--border); }
+}
 
 /* ---- 选中库的操作条 ---- */
 .mem-bank-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
@@ -81,6 +94,10 @@
 .mem-bank-header-stats { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mem-bank-header-actions { display: inline-flex; gap: 6px; }
 .mem-list-anchor { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 12px; }
+/* 抽屉标题：库名 + 路径同行，路径可省略。 */
+.mem-drawer-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.mem-drawer-title > span:first-child { flex: none; font-weight: 600; }
+.mem-drawer-title > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 400; }
 
 /* ---- 无效库清理对话框 ---- */
 .mem-cleanup-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 46vh; overflow-y: auto; }
@@ -108,9 +125,13 @@
 .mem-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .mem-chips [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .mem-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.mem-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg-card); }
+.mem-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--bg-card); transition: border-color var(--motion, 120ms) ease, background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease; }
+.mem-item:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
 .mem-row { display: flex; }
 .mem-open { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; padding: 0; border: none; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+/* 片段本身是「展开详情」的点击目标：悬停时强调片段的文字，代替整卡变色。 */
+.mem-open:hover .mem-snippet { color: var(--accent); }
+.mem-snippet { transition: color var(--motion, 120ms) ease; }
 .mem-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .mem-pill { flex: none; padding: 0 8px; border-radius: 999px; font-size: 11px; line-height: 20px; white-space: nowrap; }
 .mem-pill-working { background: var(--accent-soft); color: var(--accent); }
@@ -152,3 +173,32 @@
 .mem-note-danger { color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 8px 10px; }
 .mem-note-danger .btn { margin-left: 8px; }
 .modal-wide { width: 760px; }
+
+/* ---- 引用关系图（列表 | 关系图切换 + SVG 图谱 + 选中卡） ---- */
+.mem-view-switch { margin: 0; }
+.mem-graph { display: flex; flex-direction: column; gap: 8px; }
+.mem-graph-count { margin: 0; font-size: 12px; }
+.mem-graph-wrap { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+/* 抽屉内宽度有限：选中卡放到画布下方，画布占满整宽。 */
+.drawer .mem-graph-wrap { flex-direction: column; }
+.drawer .mem-graph-side { width: 100%; }
+.mem-graph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mem-graph-canvas { width: 100%; height: 420px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); touch-action: none; }
+.mem-graph-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mem-graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 12px; color: var(--text-muted); }
+.mem-graph-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.mem-graph-dot { width: 10px; height: 10px; border-radius: 50%; }
+.mem-graph-edgekey { display: inline-block; width: 16px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.mem-graph-side { width: 260px; flex: none; min-width: 0; overflow: hidden; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.mem-graph-snippet { margin: 0; font-size: 12px; line-height: 1.6; }
+.mem-graph-meta { grid-template-columns: repeat(3, 1fr); }
+.mem-graph .mem-facts ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; flex-wrap: nowrap; gap: 4px; max-height: 180px; overflow-y: auto; min-width: 0; }
+.mem-graph .mem-facts ul li { min-width: 0; }
+.mem-graph-nblink { display: block; width: 100%; max-width: 100%; min-width: 0; font-size: 11px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color var(--motion, 120ms) ease; }
+.mem-graph-nblink:hover { color: var(--accent); }
+.mem-focus-item { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+@media (max-width: 900px) {
+  .mem-graph-wrap { flex-direction: column; }
+  .mem-graph-side { width: auto; }
+  .mem-graph-canvas { height: 320px; }
+}

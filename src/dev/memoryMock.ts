@@ -8,6 +8,9 @@ import type {
   MemoryDeleteResult,
   MemoryDeleteSkipped,
   MemoryDetail,
+  MemoryGraph,
+  MemoryGraphEdge,
+  MemoryGraphNode,
   MemoryItem,
   MemoryKind,
   MemoryOverview,
@@ -334,6 +337,57 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     return { ...rest, content: truncated ? content.slice(0, MEMORY_TRUNCATE_AT) : content, truncated };
   }
 
+  /** 关系图 mock：摘要边沿用 summaryOf 真实字段；另合成 related/context 演示边。 */
+  function graph(args: Record<string, unknown>): MemoryGraph {
+    const store = requireStore(args["bank"]);
+    const byId = new Map(store.items.map((m) => [m.id, m]));
+    const edges: MemoryGraphEdge[] = [];
+    const seen = new Set<string>();
+    const push = (source: string, target: string, kind: MemoryGraphEdge["kind"]): void => {
+      if (source === target || !byId.has(source) || !byId.has(target)) return;
+      const key = `${source}|${target}|${kind}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push({ source, target, kind });
+    };
+    for (const m of store.items) {
+      if (m.kind === "episodic") for (const t of m.summaryOf) push(m.id, t, "summary");
+    }
+    const working = store.items.filter((m) => m.kind === "working");
+    const episodic = store.items.filter((m) => m.kind === "episodic");
+    working.forEach((m, i) => {
+      if (i % 3 === 0 && i + 1 < working.length) push(m.id, working[i + 1].id, "related");
+    });
+    episodic.forEach((m, i) => {
+      if (working.length > 0) push(m.id, working[(i * 5) % working.length].id, "context");
+    });
+    const degree = new Map<string, number>();
+    for (const e of edges) {
+      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+    }
+    const nodes: MemoryGraphNode[] = store.items
+      .filter((m) => (degree.get(m.id) ?? 0) > 0)
+      .map((m) => ({
+        id: m.id,
+        kind: m.kind,
+        snippet: [...m.snippet].slice(0, 80).join(""),
+        createdAt: m.createdAt,
+        recallCount: m.recallCount,
+        importance: m.importance,
+        degree: degree.get(m.id) ?? 0,
+      }))
+      .sort((a, b) => b.degree - a.degree || a.id.localeCompare(b.id));
+    return {
+      nodes,
+      edges,
+      truncated: false,
+      totalNodes: store.items.length,
+      totalEdges: edges.length,
+      unlinkedCount: store.items.length - degree.size,
+    };
+  }
+
   /** ids 去重（保序）；非字符串元素视为非法。 */
   function uniqueIds(raw: unknown): string[] {
     if (!Array.isArray(raw)) throw err("INVALID_INPUT", "ids 须为 id 数组");
@@ -500,6 +554,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
       case "memory_overview": return structuredClone(overview());
       case "memory_list": return structuredClone(list(args));
       case "memory_detail": return structuredClone(detail(args));
+      case "memory_graph": return structuredClone(graph(args));
       case "memory_bank_status": return structuredClone(bankStatus(args["bank"]));
       case "memory_backups":
         return structuredClone(

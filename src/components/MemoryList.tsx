@@ -59,8 +59,11 @@ export function MemoryList(props: {
   refreshToken?: number;
   /** 写操作成功后的统一失效入口（总览 + 列表 + 详情缓存）。 */
   onRefresh: () => void;
+  /** 从关系图跳过来的定位 id：走 memoryDetail 直取，可跨分页，置顶展示。 */
+  focusId?: string | null;
+  onClearFocus?: () => void;
 }): ReactNode {
-  const { bank, displayName, loadedSessionIds, onOpenSession, onToast, refreshToken = 0, onRefresh } = props;
+  const { bank, displayName, loadedSessionIds, onOpenSession, onToast, refreshToken = 0, onRefresh, focusId = null, onClearFocus } = props;
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [kind, setKind] = useState<MemoryKindFilter>("all");
@@ -80,6 +83,49 @@ export function MemoryList(props: {
   const detailSeq = useRef(0);
   const collectSeq = useRef(0);
   const detailCache = useRef(new Map<string, MemoryDetail>());
+  /** 关系图定位：走 memoryDetail 直取（可跨分页），置顶展示，与列表筛选无关。 */
+  const [focus, setFocus] = useState<{ detail: MemoryDetail; open: boolean } | null>(null);
+  const [focusLoading, setFocusLoading] = useState(false);
+  const [focusError, setFocusError] = useState<string | null>(null);
+  const focusSeq = useRef(0);
+  const focusRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (focusId === null) {
+      focusSeq.current += 1;
+      setFocus(null);
+      setFocusError(null);
+      setFocusLoading(false);
+      return;
+    }
+    const cached = detailCache.current.get(focusId);
+    if (cached !== undefined) {
+      focusSeq.current += 1;
+      setFocus({ detail: cached, open: false });
+      setFocusError(null);
+      setFocusLoading(false);
+      return;
+    }
+    const run = ++focusSeq.current;
+    setFocus(null);
+    setFocusError(null);
+    setFocusLoading(true);
+    memoryDetail({ bank, id: focusId })
+      .then((d) => {
+        if (focusSeq.current !== run) return;
+        detailCache.current.set(focusId, d);
+        setFocus({ detail: d, open: false });
+      })
+      .catch((e: unknown) => {
+        if (focusSeq.current !== run) return;
+        setFocusError(errorText(normalizeError(e)));
+      })
+      .finally(() => focusSeq.current === run && setFocusLoading(false));
+  }, [bank, focusId]);
+
+  useEffect(() => {
+    if (focus !== null) focusRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [focus]);
   const filter = {
     query: debounced.trim() === "" ? null : debounced.trim(),
     kind,
@@ -276,6 +322,47 @@ export function MemoryList(props: {
       {listError !== null ? <div className="pane-note">加载失败：{listError}</div> : null}
       {items.length === 0 && !loading && listError === null ? (
         <div className="pane-note">{filtering ? "没有匹配的记忆" : "该项目库暂无记忆"}</div>
+      ) : null}
+      {focusId !== null ? (
+        <ul className="mem-items" aria-label="定位的记忆">
+          <li ref={focusRef} className="mem-item mem-focus-item">
+            {focusLoading ? <div className="pane-note">定位记忆加载中…</div> : null}
+            {focusError !== null ? <div className="pane-note">定位记忆加载失败：{focusError}</div> : null}
+            {focus !== null ? (
+              <>
+                <div className="mem-row">
+                  <span className={`mem-pill mem-pill-${focus.detail.kind}`}>{KIND_LABEL[focus.detail.kind]}</span>
+                  <span className="mem-snippet">{focus.detail.snippet}</span>
+                  <span className="mem-row-meta">
+                    <span title={focus.detail.createdAt === null ? undefined : formatFullTime(focus.detail.createdAt)}>
+                      {focus.detail.createdAt === null ? "时间未知" : formatRelativeTime(focus.detail.createdAt)}
+                    </span>
+                    <span>召回 {focus.detail.recallCount} 次</span>
+                  </span>
+                </div>
+                <div className="mem-row-actions">
+                  <span className="muted">从关系图定位</span>
+                  <button type="button" className="btn btn-small" onClick={() => onClearFocus?.()}>
+                    取消定位
+                  </button>
+                </div>
+                <div className="mem-detail">
+                  <DetailBody
+                    detail={focus.detail}
+                    jump={sourceJumpOf(focus.detail, loadedSessionIds)}
+                    open={focus.open}
+                    onToggle={() => setFocus((f) => (f === null ? f : { ...f, open: !f.open }))}
+                    onOpenSession={onOpenSession}
+                    onToast={onToast}
+                    actions={
+                      <MemoryItemDeleteButton bank={bank} displayName={displayName} ids={[focus.detail.id]} onToast={onToast} onDone={() => { detailCache.current.delete(focus.detail.id); onClearFocus?.(); onRefresh(); }} />
+                    }
+                  />
+                </div>
+              </>
+            ) : null}
+          </li>
+        </ul>
       ) : null}
       <ul className="mem-items">
         {items.map((item) => {

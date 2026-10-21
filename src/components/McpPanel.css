@@ -128,3 +128,22 @@
   min-width: min(420px, 100%);
   resize: vertical;
 }
+
+/* ---- 悬浮反馈：行/输入 hover 高亮，过渡统一用 --motion ---- */
+.mcp-row {
+  transition: border-color var(--motion, 120ms) ease;
+}
+
+.mcp-input,
+.mcp-textarea {
+  transition: border-color var(--motion, 120ms) ease;
+}
+
+.mcp-row:hover {
+  border-color: var(--accent);
+}
+
+.mcp-input:hover:not(:disabled),
+.mcp-textarea:hover:not(:disabled) {
+  border-color: var(--accent);
+}

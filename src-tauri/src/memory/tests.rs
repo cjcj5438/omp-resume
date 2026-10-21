@@ -25,6 +25,16 @@ fn snippet_folds_truncates_and_stays_char_safe() {
 }
 
 #[test]
+fn snippet_with_limit_caps_at_given_width() {
+    let long: String = "字".repeat(200);
+    let out = make_snippet_with(&long, 200, 80);
+    assert_eq!(out.chars().count(), 81);
+    assert!(out.ends_with('…'));
+    assert_eq!(make_snippet_with("a  b", 3, 80), "a b");
+    assert_eq!(make_snippet_with("hi", 600, 80), "hi…");
+}
+
+#[test]
 fn parse_memory_ts_accepts_real_shapes() {
     for (raw, want) in [
         ("2026-10-12T15:49:48.332Z", "2026-10-12T15:49:48.332Z"),

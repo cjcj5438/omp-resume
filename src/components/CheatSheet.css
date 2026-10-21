@@ -114,7 +114,7 @@
   display: flex;
   gap: 4px;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--motion, 120ms) ease;
 }
 
 .cheatsheet-row:hover .cheatsheet-actions,
@@ -215,4 +215,34 @@
 .cheatsheet-foot {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* ---- 悬浮反馈：过渡统一用 --motion，高亮只用语义变量 ---- */
+.cheatsheet-tab {
+  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
+}
+
+.cheatsheet-copy {
+  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
+}
+
+.cheatsheet-row {
+  transition: background-color var(--motion, 120ms) ease;
+}
+
+.cheatsheet-combo {
+  transition: border-color var(--motion, 120ms) ease;
+}
+
+.cheatsheet-row:hover {
+  background: var(--bg-hover);
+}
+
+.cheatsheet-combo:hover {
+  border-color: var(--accent);
+}
+
+.cheatsheet-tab.is-active:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }

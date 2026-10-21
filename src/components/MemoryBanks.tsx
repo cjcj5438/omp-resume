@@ -77,6 +77,10 @@ export function MemoryBanks(props: {
           {rows.map((b) => {
             const total = bankMemories(b);
             const kinds = bankInvalidKinds(b);
+            const pct = (a: number, d: number): string => (d > 0 ? `${((a / d) * 100).toFixed(1)}%` : "—");
+            const tip = b.readable
+              ? `${b.displayName}\n${b.cwd ?? "—"}\n工作 ${b.working} · 情节 ${b.episodic}\n未召回 ${b.neverRecalled}/${total} (${pct(b.neverRecalled, total)})\n未合并 ${b.unconsolidated}/${b.working} (${pct(b.unconsolidated, b.working)})\n${formatSize(b.bytes)} · ${b.lastMemoryAt === null ? "无记忆" : formatRelativeTime(b.lastMemoryAt)}`
+              : `${b.displayName}\n${b.cwd ?? "—"}\n${b.error ?? "项目库不可读"}`;
             return (
               <li key={b.bank}>
                 <button
@@ -84,7 +88,7 @@ export function MemoryBanks(props: {
                   className={`mem-bank-row${kinds.length > 0 ? " mem-bank-invalid" : ""}${b.bank === selected?.bank ? " mem-bank-active" : ""}`}
                   aria-pressed={b.bank === selected?.bank}
                   aria-label={b.displayName}
-                  title={b.readable ? (b.cwd ?? undefined) : (b.error ?? "项目库不可读")}
+                  data-tip={tip}
                   onClick={() => onSelect(b.bank)}
                 >
                   <span className="mem-bank-main">
@@ -92,7 +96,7 @@ export function MemoryBanks(props: {
                       <span className="mem-bank-name">{b.displayName}</span>
                       <BankBadges b={b} />
                     </span>
-                    <span className="mem-bank-sub" title={b.lastMemoryAt === null ? undefined : formatFullTime(b.lastMemoryAt)}>
+                    <span className="mem-bank-sub">
                       <span className="mono">{b.cwd === null ? "—" : displayCwd(b.cwd)}</span>
                       <span>{b.readable ? `${b.working} 工作 · ${b.episodic} 情节` : "—"}</span>
                       <span>{formatSize(b.bytes)}</span>
@@ -109,7 +113,7 @@ export function MemoryBanks(props: {
                       ) : null}
                     </span>
                     {b.readable ? (
-                      <span className="mem-bank-health" title={`未召回 ${b.neverRecalled}/${total} · 未合并 ${b.unconsolidated}/${b.working}`}>
+                      <span className="mem-bank-health">
                         <span className="mem-meter"><i className="mem-meter-never" style={{ width: `${(b.neverRecalled / Math.max(1, total)) * 100}%` }} /></span>
                         <span className="mem-meter"><i className="mem-meter-uncons" style={{ width: `${(b.unconsolidated / Math.max(1, b.working)) * 100}%` }} /></span>
                       </span>

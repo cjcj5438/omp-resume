@@ -1448,6 +1448,50 @@ pub struct MemoryDetail {
     pub related_edges: u64,
 }
 
+/// 引用关系边种类（JSON：`"summary"` | `"related"` | `"context"`，见 CONTRACT §18.10）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryGraphEdgeKind {
+    Summary,
+    Related,
+    Context,
+}
+
+/// 关系图节点：列表行的轻量子集 + 关联度（边数）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGraphNode {
+    pub id: String,
+    pub kind: MemoryKind,
+    pub snippet: String,
+    pub created_at: Option<String>,
+    pub recall_count: i64,
+    pub importance: Option<f64>,
+    pub degree: u64,
+}
+
+/// 引用关系边（两端点恒为已返回节点的 id）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGraphEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: MemoryGraphEdgeKind,
+}
+
+/// `memory_graph` 返回：`nodes` 只含有关联的记忆（`degree > 0`），按关联度/新近截断；
+/// `unlinked_count` 为无任何引用关系的记忆数（默认不渲染，只展示数字）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryGraph {
+    pub nodes: Vec<MemoryGraphNode>,
+    pub edges: Vec<MemoryGraphEdge>,
+    pub truncated: bool,
+    pub total_nodes: u64,
+    pub total_edges: u64,
+    pub unlinked_count: u64,
+}
+
 // ---------------------------------------------------------------------------
 // 记忆库写操作（CONTRACT §18.8）
 // ---------------------------------------------------------------------------

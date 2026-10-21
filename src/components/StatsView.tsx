@@ -119,8 +119,8 @@ function StatsTable({ name, rows, total }: { name: string; rows: StatsRow[]; tot
     <h2>{name}</h2>
     <table className="usage-table">
       <thead><tr><th scope="col">{name.slice(1)}</th><th scope="col">花费（USD）</th><th scope="col">Token</th><th scope="col">数量</th></tr></thead>
-      <tbody>{rows.map((row) => <tr key={row.key}>
-        <th scope="row" title={row.title ?? row.name}><span className="usage-row-name">{row.name}</span><span className="usage-bar" aria-hidden="true"><span style={{ width: `${total > 0 ? Math.min(100, row.cost / total * 100) : 0}%` }} /></span></th>
+      <tbody>{rows.map((row) => <tr key={row.key} data-tip={`${row.title ?? row.name}\n花费 ${usageMoney(row.cost)}（占 ${total > 0 ? `${((row.cost / total) * 100).toFixed(1)}%` : "—"}） · Token ${usageNumber(row.tokens)}${row.detail ? `\n${row.detail}` : ""}`}>
+        <th scope="row"><span className="usage-row-name">{row.name}</span><span className="usage-bar" aria-hidden="true"><span style={{ width: `${total > 0 ? Math.min(100, row.cost / total * 100) : 0}%` }} /></span></th>
         <td>{usageMoney(row.cost)}</td><td>{usageNumber(row.tokens)}</td><td>{row.detail ?? "—"}</td>
       </tr>)}</tbody>
     </table>

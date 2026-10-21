@@ -734,6 +734,7 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "memory_overview":
       case "memory_list":
       case "memory_detail":
+      case "memory_graph":
       case "memory_bank_status":
       case "memory_backups":
       case "memory_delete_preview":

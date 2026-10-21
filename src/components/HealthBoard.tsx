@@ -72,15 +72,18 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
           <h2>错误类型分布</h2>
           {data.errors.byKind.length > 0 ? (
             <ul className="kind-list">
-              {data.errors.byKind.map((k) => (
-                <li key={k.kind}>
-                  <span className="kind-name">{ERROR_KIND_NAME[k.kind] ?? "其他"}</span>
-                  <span className="usage-bar kind-bar" aria-hidden="true">
-                    <span style={{ width: `${maxKind > 0 ? (k.count / maxKind) * 100 : 0}%` }} />
-                  </span>
-                  <span className="kind-count">{usageNumber(k.count)} 次</span>
-                </li>
-              ))}
+              {data.errors.byKind.map((k) => {
+                const pct = data.errors.total > 0 ? `${((k.count / data.errors.total) * 100).toFixed(1)}%` : "—";
+                return (
+                  <li key={k.kind} data-tip={`${ERROR_KIND_NAME[k.kind] ?? "其他"}\n${usageNumber(k.count)} 次（占 ${pct}）`}>
+                    <span className="kind-name">{ERROR_KIND_NAME[k.kind] ?? "其他"}</span>
+                    <span className="usage-bar kind-bar" aria-hidden="true">
+                      <span style={{ width: `${maxKind > 0 ? (k.count / maxKind) * 100 : 0}%` }} />
+                    </span>
+                    <span className="kind-count">{usageNumber(k.count)} 次</span>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <div className="pane-note">此范围内还没有错误</div>
@@ -92,15 +95,19 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
           {data.fallbacks.byTarget.length > 0 ? (
             <>
               <ul className="kind-list">
-                {data.fallbacks.byTarget.map((t) => (
-                  <li key={JSON.stringify([t.provider, t.model])}>
-                    <span className="kind-name" title={modelName(t.provider, t.model)}>{modelName(t.provider, t.model)}</span>
-                    <span className="usage-bar kind-bar" aria-hidden="true">
-                      <span style={{ width: `${maxTarget > 0 ? (t.count / maxTarget) * 100 : 0}%` }} />
-                    </span>
-                    <span className="kind-count">{usageNumber(t.count)} 次</span>
-                  </li>
-                ))}
+                {data.fallbacks.byTarget.map((t) => {
+                  const name = modelName(t.provider, t.model);
+                  const pct = data.fallbacks.total > 0 ? `${((t.count / data.fallbacks.total) * 100).toFixed(1)}%` : "—";
+                  return (
+                    <li key={JSON.stringify([t.provider, t.model])} data-tip={`${name}\n${usageNumber(t.count)} 次（占 ${pct}）`}>
+                      <span className="kind-name">{name}</span>
+                      <span className="usage-bar kind-bar" aria-hidden="true">
+                        <span style={{ width: `${maxTarget > 0 ? (t.count / maxTarget) * 100 : 0}%` }} />
+                      </span>
+                      <span className="kind-count">{usageNumber(t.count)} 次</span>
+                    </li>
+                  );
+                })}
               </ul>
               {data.fallbacks.recent.length > 0 ? (
                 <ol className="fb-recent" aria-label="最近兜底切换">
@@ -124,11 +131,11 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
         {data.errors.recent.length > 0 ? (
           <ol className="err-list">
             {data.errors.recent.map((e, i) => (
-              <li key={`${e.time}-${e.provider}-${e.model}-${e.message}-${i}`} className="err-row">
+              <li key={`${e.time}-${e.provider}-${e.model}-${e.message}-${i}`} className="err-row" data-tip={`${ERROR_KIND_NAME[e.kind] ?? "其他"} · ${modelName(e.provider, e.model)}\n${formatClock(e.time)} ${e.message}`}>
                 <span className="usage-muted err-time">{formatClock(e.time)}</span>
-                <span className="err-model" title={modelName(e.provider, e.model)}>{modelName(e.provider, e.model)}</span>
+                <span className="err-model">{modelName(e.provider, e.model)}</span>
                 <span className="badge badge-danger">{ERROR_KIND_NAME[e.kind] ?? "其他"}</span>
-                <span className="err-msg" title={e.message}>{e.message}</span>
+                <span className="err-msg">{e.message}</span>
               </li>
             ))}
           </ol>
@@ -143,15 +150,19 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
           <table className="usage-table">
             <thead><tr><th scope="col">模型</th><th scope="col">请求数</th><th scope="col">命中率</th></tr></thead>
             <tbody>
-              {data.cache.byModel.map((m) => (
-                <tr key={JSON.stringify([m.provider, m.model])}>
-                  <th scope="row" title={modelName(m.provider, m.model)}>
-                    <span className="usage-row-name">{modelName(m.provider, m.model)}</span>
-                  </th>
-                  <td>{usageNumber(m.requests)}</td>
-                  <td>{formatHitRate(m.hitRate)}</td>
-                </tr>
-              ))}
+              {data.cache.byModel.map((m) => {
+                const name = modelName(m.provider, m.model);
+                const pct = data.requests > 0 ? `${((m.requests / data.requests) * 100).toFixed(1)}%` : "—";
+                return (
+                  <tr key={JSON.stringify([m.provider, m.model])} data-tip={`${name}\n请求 ${usageNumber(m.requests)} 次（占 ${pct}） · 命中率 ${formatHitRate(m.hitRate)}`}>
+                    <th scope="row">
+                      <span className="usage-row-name">{name}</span>
+                    </th>
+                    <td>{usageNumber(m.requests)}</td>
+                    <td>{formatHitRate(m.hitRate)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : (

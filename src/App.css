@@ -37,6 +37,7 @@
   --badge-label-bg: #e8c34a;
   --badge-label-text: #4a3800;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --motion: 120ms;
 }
 
 :root[data-theme="dark"] {
@@ -448,6 +449,12 @@ body {
 .ph-item {
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
+  transition: background-color var(--motion) ease;
+}
+
+/* 提示词条目本身不可点，行内按钮才是目标；悬停整行淡淡提亮便于逐条扫读。 */
+.ph-item:hover {
+  background: var(--bg-hover);
 }
 
 .ph-prompt {
@@ -1544,4 +1551,110 @@ pre.mono {
 .accent-swatch:focus-visible {
   outline-color: var(--accent);
   outline-offset: 2px;
+}
+
+/* ---- 悬浮反馈：统一过渡（只用 --motion），高亮只用语义变量 ---- */
+.group-header,
+.row,
+.tag-chip,
+.disclosure-toggle,
+.tree-row,
+.fold-toggle,
+.pin-toggle,
+.btn {
+  transition: background-color var(--motion) ease;
+}
+
+.changelog-link,
+.id-copy,
+.md-link {
+  transition: color var(--motion) ease;
+}
+
+.group-new,
+.tab {
+  transition: background-color var(--motion) ease, color var(--motion) ease;
+}
+
+.btn-accent,
+.btn-danger,
+.pin-toggle-on {
+  transition: filter var(--motion) ease;
+}
+
+.filter-input {
+  transition: border-color var(--motion) ease;
+}
+
+.manage-table tbody tr,
+.manage-mkt {
+  transition: background-color var(--motion) ease;
+}
+
+.row-selected,
+.tree-row-selected,
+.tree-row-active,
+.tag-chip-on,
+.appearance-seg .btn,
+.accent-swatch {
+  transition: background-color var(--motion) ease, box-shadow var(--motion) ease;
+}
+
+/* ---- 缺失的 hover：页签 / 输入 / 表格行 / 插件行 ---- */
+.tab:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tab-active:hover:not(:disabled) {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.filter-input:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.manage-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.manage-mkt:hover {
+  background: var(--bg-hover);
+  border-radius: 6px;
+}
+
+/* ---- 激活态 hover：保留底色并加内圈提示，盖过 active 规则 ---- */
+.row-selected:hover {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tree-row-selected:hover {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tree-row-active:hover {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tag-chip-on:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.appearance-seg .btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.accent-swatch:hover {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* ---- 减少动态：全局停掉过渡 ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0ms !important; }
 }

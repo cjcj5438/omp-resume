@@ -633,3 +633,43 @@
   fill: var(--text-muted);
   font-size: 11px;
 }
+
+/* ---- 悬浮反馈：分段/选择器/图标按钮 hover 高亮，激活态 hover 仍有内圈提示 ---- */
+.models-agents .model-picker-btn,
+.models-agents .model-picker-item,
+.models-agents .segment-item {
+  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
+}
+
+.models-agents .btn-quiet-danger,
+.models-agents .icon-btn {
+  transition: background-color var(--motion, 120ms) ease, border-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
+}
+
+.models-agents .link-btn,
+.models-agents .chain-manual summary,
+.models-agents .others-details summary,
+.models-agents .more-roles summary {
+  transition: color var(--motion, 120ms) ease;
+}
+
+.models-agents .segment-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.models-agents .segment-item-active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.models-agents .model-picker-item-active:hover {
+  background: var(--bg-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.models-agents .chain-manual summary:hover,
+.models-agents .others-details summary:hover,
+.models-agents .more-roles summary:hover {
+  color: var(--accent);
+}

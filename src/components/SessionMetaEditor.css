@@ -58,6 +58,7 @@
 
 .meta-tag-x:hover:not(:disabled) {
   color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .meta-tag-x:disabled {
@@ -85,4 +86,16 @@
 
 .meta-hint {
   font-size: 11px;
+}
+
+/* ---- 悬浮反馈：过渡统一用 --motion（输入框沿用全局 .filter-input 规则） ---- */
+.meta-tag-x {
+  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
+}
+
+/* ---- 悬浮反馈：输入框 hover 高亮（与全局 .filter-input 规则同色，作用域限定本编辑器） ---- */
+.meta-alias:hover:not(:disabled),
+.meta-tag-input:hover:not(:disabled),
+.meta-note:hover:not(:disabled) {
+  border-color: var(--accent);
 }

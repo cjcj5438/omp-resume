@@ -2,9 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import type { MemoryBackup, MemoryBankStatus, MemoryDeletePreview, MemoryDeleteResult, MemoryDetail, MemoryOverview, MemoryPage } from "../types";
+import type { MemoryBackup, MemoryBankStatus, MemoryDeletePreview, MemoryDeleteResult, MemoryDetail, MemoryGraph, MemoryOverview, MemoryPage } from "../types";
 import { MemoryPanel } from "./MemoryPanel";
 import { MemoryDeleteDialog } from "./MemoryDeleteDialog";
+import { MemoryList } from "./MemoryList";
 import { BANKS, TOTALS, backupOf, bankOf, itemOf as item, overviewOf, pageOf, statusOf } from "./memoryFixtures";
 
 const ITEMS = [item({ id: "m1" }), item({ id: "m2" }), item({ id: "m3" })];
@@ -31,7 +32,21 @@ interface Behavior {
   restore: (args: Args) => unknown;
   deleteBackup: (args: Args) => null | Promise<null>;
   deleteBank: (args: Args) => unknown;
+  graph: (args: Args) => MemoryGraph;
 }
+
+/** 关系图夹具：两条记忆一条摘要边，够点选与 Esc 验证。 */
+const GRAPH: MemoryGraph = {
+  nodes: [
+    { id: "m1", kind: "working", snippet: "片段 m1", createdAt: "2026-10-18T10:00:00.000Z", recallCount: 1, importance: null, degree: 1 },
+    { id: "m2", kind: "episodic", snippet: "片段 m2", createdAt: "2026-10-18T09:00:00.000Z", recallCount: 0, importance: null, degree: 1 },
+  ],
+  edges: [{ source: "m2", target: "m1", kind: "summary" }],
+  truncated: false,
+  totalNodes: 2,
+  totalEdges: 1,
+  unlinkedCount: 0,
+};
 
 function renderPanel(over: Partial<Behavior> = {}) {
   const calls = {
@@ -58,6 +73,7 @@ function renderPanel(over: Partial<Behavior> = {}) {
     restore: (args) => ({ bank: "alpha", restoredFrom: backupOf({ id: args["backupId"] as string, bank: "alpha" }), safetyBackup: null }),
     deleteBackup: () => null,
     deleteBank: (args) => backupOf({ id: `${args["bank"]}@x-bank-removed`, bank: args["bank"] as string, kind: "bank-removed" }),
+    graph: () => GRAPH,
     ...over,
   };
   mockIPC((cmd, rawArgs) => {
@@ -93,6 +109,8 @@ function renderPanel(over: Partial<Behavior> = {}) {
       case "memory_delete_bank":
         calls.deleteBank.push(args);
         return behavior.deleteBank(args);
+      case "memory_graph":
+        return behavior.graph(args);
       default:
         return null;
     }
@@ -542,11 +560,63 @@ describe("项目库图表", () => {
     });
   });
 
+  it("行悬浮用 data-tip 显示多行摘要，无效库显示错误且无原生 title", async () => {
+    renderPanel();
+    await screen.findByRole("button", { name: "alpha" });
+    const tipOf = (name: string): string | null =>
+      document.querySelector(`.mem-bank-row[aria-label="${name}"]`)?.getAttribute("data-tip") ?? null;
+    expect(tipOf("alpha")).toContain("工作");
+    expect(tipOf("alpha")).toContain("未召回");
+    expect(tipOf("locked")).toContain("目录无读取权限");
+    expect(document.querySelector(".mem-bank-row[title]")).toBeNull();
+  });
+
   it("不可读库被选中时不发列表请求并说明原因", async () => {
     const { calls } = renderPanel();
     await openBank("locked");
     expect(await screen.findByText(/该库不可读：目录无读取权限/)).toBeInTheDocument();
     expect(calls.list).toEqual([]);
+  });
+
+  it("选中库在右侧抽屉里展开：不占列表流、可切换库、Esc 与关闭按钮都能收起", async () => {
+    renderPanel();
+    await screen.findByRole("button", { name: "alpha" });
+    // 未选中：无抽屉，左列给出提示。
+    expect(document.querySelector(".drawer")).toBeNull();
+    expect(screen.getByText(/点上面的项目库，在右侧查看其中的记忆/)).toBeInTheDocument();
+
+    await selectBank("alpha");
+    const drawer = await screen.findByRole("complementary", { name: "项目库 alpha" });
+    expect(drawer).toHaveClass("drawer", "drawer-inline");
+    expect(drawer.querySelector(".drawer-title")?.textContent).toContain("alpha");
+    // 抽屉在左列之外（兄弟节点），不是列表末尾的一段。
+    expect(drawer.closest(".mem-main")).toBeNull();
+    expect(screen.queryByText(/点上面的项目库/)).toBeNull();
+
+    // 抽屉开着时点另一个库：只换内容，不关抽屉。
+    fireEvent.click(screen.getByRole("button", { name: "beta" }));
+    const swapped = await screen.findByRole("complementary", { name: "项目库 beta" });
+    expect(swapped.querySelector(".drawer-title")?.textContent).toContain("beta");
+    expect(document.querySelectorAll(".drawer")).toHaveLength(1);
+
+    // 关闭按钮收起；再开一次，Esc 也能收起。
+    fireEvent.click(within(swapped).getByRole("button", { name: "关闭项目库 beta" }));
+    expect(document.querySelector(".drawer")).toBeNull();
+    await selectBank("alpha");
+    await screen.findByRole("complementary", { name: "项目库 alpha" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.querySelector(".drawer")).toBeNull();
+  });
+
+  it("抽屉里的模态框先关自己：Esc 只关闭确认框，抽屉保留", async () => {
+    renderPanel();
+    await selectBank("empty");
+    const drawer = await screen.findByRole("complementary", { name: "项目库 empty" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "移除此库…" }));
+    const dialog = await screen.findByRole("dialog", { name: "移除项目库（empty）" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("complementary", { name: "项目库 empty" })).toBeInTheDocument();
   });
 });
 
@@ -667,5 +737,79 @@ describe("记忆列表与详情", () => {
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("加载记忆列表失败：模拟读取失败", "error"));
     expect(await screen.findByText("加载失败：模拟读取失败")).toBeInTheDocument();
     expect(screen.getByText(/记忆后端：mnemopi/)).toBeInTheDocument();
+  });
+});
+
+describe("关系图在抽屉内的 Esc 处理", () => {
+  it("选中节点时 Esc 只清选中，抽屉保留；再按一次才关抽屉", async () => {
+    renderPanel();
+    await selectBank("alpha");
+    const drawer = await screen.findByRole("complementary", { name: "项目库 alpha" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "关系图" }));
+    const svg = await waitFor(() => {
+      const el = document.querySelector<SVGSVGElement>(".mem-graph-canvas");
+      if (el === null) throw new Error("关系图未挂载");
+      return el;
+    });
+
+    // 点节点选中（拖拽未发生 ⇒ 视为点选）。节点坐标由布局 effect 写入，
+    // svg 挂载与节点出现之间有一帧，必须等 circle 真正渲染。
+    const node = await waitFor(() => {
+      const circle = svg.querySelector("circle");
+      if (circle === null) throw new Error("节点尚未就绪");
+      return circle.closest("g") as SVGGElement;
+    });
+    fireEvent.pointerDown(node, { pointerId: 1, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(svg, { pointerId: 1, clientX: 0, clientY: 0 });
+    const card = await screen.findByRole("complementary", { name: "选中记忆" });
+    expect(card).toBeInTheDocument();
+    expect(within(card).getByText("重要度")).toBeInTheDocument();
+
+    // 第一下 Esc：清选中，抽屉还在（离开局面的方式不能是「关抽屉」）。
+    fireEvent.keyDown(svg, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "选中记忆" })).toBeNull());
+    expect(screen.getByRole("complementary", { name: "项目库 alpha" })).toBeInTheDocument();
+
+    // 无选中时 Esc 冒泡到抽屉：关闭。
+    fireEvent.keyDown(svg, { key: "Escape" });
+    await waitFor(() => expect(document.querySelector(".drawer")).toBeNull());
+  });
+});
+
+describe("关系图定位卡", () => {
+  it("删除定位记忆后清除定位并刷新，不再展示已删卡片", async () => {
+    const focusItem = item({ id: "m1" });
+    const calls = { deleteItems: [] as Args[] };
+    mockIPC((cmd, rawArgs) => {
+      const args = (rawArgs ?? {}) as Args;
+      switch (cmd) {
+        case "memory_list":
+          return pageOf([item({ id: "m2" }), item({ id: "m3" })]);
+        case "memory_detail":
+          if (args["id"] !== "m1") throw { code: "NOT_FOUND", message: "记忆不存在" };
+          return { ...focusItem, content: "正文 m1", truncated: false, embedText: null, metadata: null, facts: [], summaryOf: [], relatedEdges: 0 };
+        case "memory_delete_preview":
+          return previewOf(args["ids"] as string[]);
+        case "memory_bank_status":
+          return statusOf("alpha");
+        case "memory_delete_items":
+          calls.deleteItems.push(args);
+          return { deleted: args["ids"] as string[], skipped: [], backup: backupOf({ id: "alpha@20250101T000000Z-before-delete", bank: "alpha" }) };
+        default:
+          return null;
+      }
+    });
+    const onClearFocus = vi.fn();
+    const onRefresh = vi.fn();
+    render(
+      <MemoryList bank="alpha" displayName="alpha" loadedSessionIds={new Set()} onOpenSession={() => {}} onToast={() => {}} onRefresh={onRefresh} focusId="m1" onClearFocus={onClearFocus} />,
+    );
+    const focusList = await screen.findByRole("list", { name: "定位的记忆" });
+    fireEvent.click(within(focusList).getByRole("button", { name: "删除这条…" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除记忆（alpha）" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "备份并删除 1 条" }));
+    await waitFor(() => expect(calls.deleteItems).toEqual([{ bank: "alpha", ids: ["m1"] }]));
+    await waitFor(() => expect(onClearFocus).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
   });
 });

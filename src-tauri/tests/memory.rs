@@ -6,6 +6,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::{add_session_file, dir_snapshot, meta, Bank};
+use omp_resume_lib::memory::graph::graph_impl;
 use omp_resume_lib::memory::rows::{detail_impl, list_impl, ListParams};
 use omp_resume_lib::memory::{overview_impl, CONTENT_CAP_BYTES};
 use omp_resume_lib::model::{
@@ -496,5 +497,137 @@ fn real_data_readonly() {
         before,
         dir_snapshot(&root),
         "只读调用不得新增文件或改变文件大小"
+    );
+}
+
+/// 关系图：三边种类、伪节点排除、悬挂引用丢弃、关联度排序、空库空图。
+#[test]
+fn graph_kinds_and_ordering() {
+    let f = Fx::new();
+    let b = f.bank("b-graph");
+    b.exec(
+        "INSERT INTO working_memory (id, content, timestamp, recall_count, importance) VALUES
+         ('w1', '第一条工作记忆内容', '2026-10-01T10:00:00.000Z', 3, 0.9),
+         ('w2', '第二条工作记忆内容', '2026-10-02T10:00:00.000Z', 0, 0.5),
+         ('w3', '第三条工作记忆内容', '2026-10-03T10:00:00.000Z', 1, NULL),
+         ('w-alone', '没有引用的记忆', '2026-10-04T10:00:00.000Z', 0, 0.1);
+         INSERT INTO episodic_memory (id, content, timestamp, summary_of) VALUES
+         ('e1', '情节摘要一', '2026-10-05T10:00:00.000Z', 'w1, w2, ghost'),
+         ('e2', '情节摘要二', '2026-10-06T10:00:00.000Z', '');
+         INSERT INTO graph_edges (source, target, edge_type) VALUES
+         ('e1', 'w3', 'ctx'),
+         ('w1', 'w2', 'related_to'),
+         ('e1', 'e2', 'references'),
+         ('e1', 'gist_e1', 'ctx'),
+         ('gist_e1', 'w1', 'ctx'),
+         ('w1', 'fact_x', 'rel'),
+         ('w2', 'w3', 'mystery');",
+    );
+    let g = graph_impl(&f.root, "b-graph").unwrap();
+    assert!(!g.truncated);
+    assert_eq!(g.total_nodes, 6);
+    assert_eq!(g.total_edges, 6);
+    assert_eq!(g.unlinked_count, 1);
+    assert_eq!(g.edges.len(), 6);
+    // 悬挂（ghost）与伪节点（gist_/fact_）端点一律丢弃。
+    assert!(g.edges.iter().all(|e| !e.source.starts_with("gist_") && !e.target.starts_with("gist_")));
+    assert!(g.edges.iter().all(|e| e.source != "ghost" && e.target != "ghost"));
+    assert!(g.edges.iter().all(|e| !e.target.starts_with("fact_")));
+    let kinds: Vec<(&str, &str, &str)> = g
+        .edges
+        .iter()
+        .map(|e| (e.source.as_str(), e.target.as_str(), match e.kind {
+            omp_resume_lib::model::MemoryGraphEdgeKind::Summary => "summary",
+            omp_resume_lib::model::MemoryGraphEdgeKind::Related => "related",
+            omp_resume_lib::model::MemoryGraphEdgeKind::Context => "context",
+        }))
+        .collect();
+    assert!(kinds.contains(&("e1", "w1", "summary")));
+    assert!(kinds.contains(&("e1", "w2", "summary")));
+    assert!(kinds.contains(&("e1", "w3", "context")));
+    assert!(kinds.contains(&("w1", "w2", "related")));
+    assert!(kinds.contains(&("e1", "e2", "related")));
+    assert!(kinds.contains(&("w2", "w3", "related")));
+    // 关联度降序：e1(4) > w2(3) > w3(2, 较新) > w1(2) > e2(1)；无关联的不渲染。
+    let ids: Vec<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, vec!["e1", "w2", "w3", "w1", "e2"]);
+    assert_eq!(g.nodes[0].degree, 4);
+    assert!(g.nodes.iter().all(|n| n.snippet.chars().count() <= 80));
+    assert_eq!(g.nodes[0].created_at.as_deref(), Some("2026-10-05T10:00:00.000Z"));
+    assert_eq!(g.nodes[3].recall_count, 3);
+    // 空库：空图而非报错。
+    let empty = f.bank("b-empty-graph");
+    let _ = empty;
+    let g2 = graph_impl(&f.root, "b-empty-graph").unwrap();
+    assert_eq!(g2.total_nodes, 0);
+    assert!(g2.nodes.is_empty() && g2.edges.is_empty() && !g2.truncated);
+}
+
+/// 关系图截断：206 个关联点 → 只留 200，边只保留存活端点。
+#[test]
+fn graph_truncation_caps_nodes() {
+    let f = Fx::new();
+    let b = f.bank("b-big-graph");
+    let mut sql = String::from(
+        "INSERT INTO episodic_memory (id, content, timestamp, summary_of) \
+         VALUES ('e0', 'hub', '2026-10-01T10:00:00.000Z', '');",
+    );
+    for i in 0..205 {
+        let id = format!("w{i:03}");
+        sql.push_str(&format!(
+            "INSERT INTO working_memory (id, content, timestamp) VALUES ('{id}', '内容{id}', '2026-10-02T10:00:00.000Z');
+             INSERT INTO graph_edges (source, target, edge_type) VALUES ('e0', '{id}', 'related_to');"
+        ));
+    }
+    sql.push_str("INSERT INTO working_memory (id, content) VALUES ('w-alone', '孤岛');");
+    b.exec(&sql);
+    let g = graph_impl(&f.root, "b-big-graph").unwrap();
+    assert!(g.truncated);
+    assert_eq!(g.total_nodes, 207);
+    assert_eq!(g.total_edges, 205);
+    assert_eq!(g.unlinked_count, 1);
+    assert_eq!(g.nodes.len(), 200);
+    // hub 关联度最高必留；边两端恒为已留节点；孤岛不渲染。
+    assert!(g.nodes.iter().any(|n| n.id == "e0"));
+    assert!(g.nodes.iter().all(|n| n.id != "w-alone"));
+    let kept: std::collections::HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert!(g.edges.iter().all(|e| kept.contains(e.source.as_str()) && kept.contains(e.target.as_str())));
+    assert_eq!(g.edges.len(), 199);
+}
+
+/// 关系图降级：缺 `graph_edges` 表只有摘要边；两表皆无 → IO；库不存在 → NOT_FOUND。
+#[test]
+fn graph_degrades_on_missing_tables() {
+    use rusqlite::Connection;
+    let f = Fx::new();
+    // 只有 working 表（含 id/content/timestamp），无 episodic、无 graph_edges。
+    let dir = f.root.join("b-partial");
+    std::fs::create_dir_all(&dir).unwrap();
+    Connection::open(dir.join("mnemopi.db"))
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE working_memory (id TEXT PRIMARY KEY, content TEXT NOT NULL, timestamp TEXT);
+             INSERT INTO working_memory (id, content, timestamp) VALUES
+             ('a', '甲', '2026-10-01T10:00:00.000Z'), ('c', '丙', NULL);",
+        )
+        .unwrap();
+    let g = graph_impl(&f.root, "b-partial").unwrap();
+    assert_eq!(g.total_nodes, 2);
+    assert!(g.edges.is_empty() && g.nodes.is_empty());
+    assert_eq!(g.unlinked_count, 2);
+    // 空 db 文件（两表皆无）→ IO。
+    let dir2 = f.root.join("b-notable");
+    std::fs::create_dir_all(&dir2).unwrap();
+    Connection::open(dir2.join("mnemopi.db"))
+        .unwrap()
+        .execute_batch("CREATE TABLE scratchpad (id INTEGER PRIMARY KEY);")
+        .unwrap();
+    assert_eq!(
+        graph_impl(&f.root, "b-notable").unwrap_err().code,
+        ErrorCode::Io
+    );
+    assert_eq!(
+        graph_impl(&f.root, "no-such-bank").unwrap_err().code,
+        ErrorCode::NotFound
     );
 }

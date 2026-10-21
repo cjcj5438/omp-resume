@@ -47,6 +47,7 @@ import type {
   MemoryDeletePreview,
   MemoryDeleteResult,
   MemoryDetail,
+  MemoryGraph,
   MemoryListRequest,
   MemoryOverview,
   MemoryPage,
@@ -345,6 +346,11 @@ export function memoryList(req: MemoryListRequest): Promise<MemoryPage> {
 /** 单条记忆详情（含全文与 facts）。 */
 export function memoryDetail(req: { bank: string; id: string }): Promise<MemoryDetail> {
   return call("memory_detail", { bank: req.bank, id: req.id });
+}
+
+/** 引用关系图（CONTRACT §18.10）；空库返回空图而非报错。 */
+export function memoryGraph(req: { bank: string }): Promise<MemoryGraph> {
+  return call("memory_graph", { bank: req.bank });
 }
 
 /** 库占用状态与该库备份（只读，无门禁；lsof 失败时 probeFailed=true）。 */

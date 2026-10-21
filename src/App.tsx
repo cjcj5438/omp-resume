@@ -31,6 +31,7 @@ import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
 import { StatsView } from "./components/StatsView";
 import { CleanupView } from "./components/CleanupView";
+import { ChartTip } from "./components/ChartTip";
 import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetDialog } from "./components/CheatSheetDialog";
@@ -471,6 +472,7 @@ function App() {
           </div>
         ))}
       </div>
+      <ChartTip />
     </div>
   );
 }

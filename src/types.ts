@@ -642,6 +642,37 @@ export interface MemoryDetail extends MemoryItem {
   relatedEdges: number;
 }
 
+// 引用关系图（CONTRACT §18.10）：选中 bank 内记忆的引用边。
+
+/** 边种类：摘要（情节→原记忆）/ 关联（图谱边）/ 上下文（ctx 边）。 */
+export type MemoryGraphEdgeKind = "summary" | "related" | "context";
+
+export interface MemoryGraphNode {
+  id: string;
+  kind: MemoryKind;
+  snippet: string;
+  createdAt: string | null;
+  recallCount: number;
+  importance: number | null;
+  /** 关联边数；节点越大表示关联越多（图例注明）。 */
+  degree: number;
+}
+
+export interface MemoryGraphEdge {
+  source: string;
+  target: string;
+  kind: MemoryGraphEdgeKind;
+}
+
+export interface MemoryGraph {
+  nodes: MemoryGraphNode[];
+  edges: MemoryGraphEdge[];
+  truncated: boolean;
+  totalNodes: number;
+  totalEdges: number;
+  unlinkedCount: number;
+}
+
 // 记忆库写操作（CONTRACT §18.8）：备份/删除/恢复，JSON camelCase。
 
 export type MemoryBackupKind = "before-delete" | "before-restore" | "bank-removed";

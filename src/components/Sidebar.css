@@ -269,3 +269,23 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* ---- 悬浮反馈：分段条/图标按钮 hover 高亮，激活态 hover 仍有内圈提示 ---- */
+.view-nav-btn,
+.btn.icon-btn-quiet {
+  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
+}
+
+.view-nav-btn[aria-pressed="true"]:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.btn.icon-btn-multi[aria-pressed="true"]:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---- 悬浮反馈：文字链接过渡统一用 --motion ---- */
+.select-link {
+  transition: color var(--motion, 120ms) ease;
+}
