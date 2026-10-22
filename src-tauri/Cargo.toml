@@ -1,6 +1,6 @@
 [package]
 name = "omp-resume"
-version = "0.2.1"
+version = "0.2.2"
 description = "omp 会话管理桌面应用"
 authors = ["chenjing"]
 edition = "2021"
