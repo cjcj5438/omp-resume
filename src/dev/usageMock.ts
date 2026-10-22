@@ -107,6 +107,19 @@ function dayActivity(i: number, sparse: boolean): number {
   return v;
 }
 
+/** 近 182 天（26 周）稠密日点：与真后端一致，所有范围共用，不受范围影响。 */
+export function mockActivity(): UsageTrendPoint[] {
+  const now = new Date();
+  const points: UsageTrendPoint[] = [];
+  for (let i = 181; i >= 0; i -= 1) {
+    const d = new Date(now.getTime() - i * 86400000);
+    const idx = 181 - i;
+    const cost = weight(idx, 17) < 0.3 ? 0 : Math.round(dayActivity(idx, false) * 4 * 10000 + Number.EPSILON) / 10000;
+    points.push({ key: dayKey(d), cost, tokens: tokensForCost(cost) });
+  }
+  return points;
+}
+
 /** 按权重把 total 切成整数份，和严格等于 total（最大余数法）。 */
 function splitTotal(total: number, weights: number[]): number[] {
   const sum = weights.reduce((a, b) => a + b, 0);
@@ -172,12 +185,17 @@ export function mockUsageStats(range: UsageRange): UsageStats {
     models: [],
   };
   const byModel: SessionUsage["models"] = [
-    { provider: "anthropic", model: "claude-sonnet-4-5", messages: Math.max(1, Math.round(total.messages.assistant * 0.8)), cost: Math.round(totalCost * 0.813 * 10000) / 10000, tokens: tokensForCost(totalCost * 0.813) },
-    { provider: "openai", model: "gpt-5", messages: Math.max(1, Math.round(total.messages.assistant * 0.2)), cost: 0, tokens: zeroTokens() },
+    { provider: "anthropic", model: "claude-sonnet-4-5", messages: Math.max(1, Math.round(total.messages.assistant * 0.8)), cost: Math.round(totalCost * 0.813 * 10000) / 10000, tokens: tokensForCost(totalCost * 0.813), tps: 118.4, ttftMs: 7400 },
+    { provider: "openai", model: "gpt-5", messages: Math.max(1, Math.round(total.messages.assistant * 0.2)), cost: 0, tokens: zeroTokens(), tps: 64.2, ttftMs: 5100 },
   ];
   byModel[1].cost = Math.round((totalCost - byModel[0].cost) * 10000) / 10000;
   byModel[1].tokens = tokensForCost(byModel[1].cost);
   total.models = structuredClone(byModel);
+  const cwds = ["/Users/demo/my/omp-resume", "/Users/demo/my/api-service"];
+  const topSessions = [0.34, 0.22, 0.15, 0.1, 0.06].map((share, n) => {
+    const cost = Math.round(totalCost * share * 10000) / 10000;
+    return { id: `mock-s${n}`, path: `/mock/s${n}.jsonl`, cwd: cwds[n % cwds.length], cost, tokens: tokensForCost(cost).total, calls: 20 + n * 7, lastMs: Date.now() - n * 3600000 };
+  });
   return {
     total,
     byProject: [
@@ -186,11 +204,16 @@ export function mockUsageStats(range: UsageRange): UsageStats {
     ],
     byModel,
     trend: { unit: window.unit, points },
+    sessions: 8,
+    timing: { waitMs: Math.round(totalCost * 60000), genMs: Math.round(totalCost * 90000), toolMs: Math.round(totalCost * 50000), toolCalls: Math.round(totalCost * 12), calls: Math.round(totalCost * 9), tps: 142.6 },
+    topSessions,
+    activity: mockActivity(),
   };
 }
 
 export function mockEmptyUsageStats(range: UsageRange): UsageStats {
   const window = trendWindow(range, new Date());
+  const now = new Date();
   return {
     total: { messages: { user: 0, assistant: 0 }, tokens: zeroTokens(), cost: { total: 0, main: 0, background: 0, subagent: 0 }, models: [] },
     byProject: [],
@@ -200,6 +223,10 @@ export function mockEmptyUsageStats(range: UsageRange): UsageStats {
       // 固定窗口补零；all 无数据日期则为空。
       points: range === "all" ? [] : window.keys.map((key) => ({ key, cost: 0, tokens: zeroTokens() })),
     },
+    sessions: 0,
+    timing: { waitMs: 0, genMs: 0, toolMs: 0, toolCalls: 0, calls: 0, tps: null },
+    topSessions: [],
+    activity: Array.from({ length: 182 }, (_, idx) => ({ key: dayKey(new Date(now.getTime() - (181 - idx) * 86400000)), cost: 0, tokens: zeroTokens() })),
   };
 }
 

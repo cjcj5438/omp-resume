@@ -1,4 +1,4 @@
-import type { ErrorKind, UsageTrendUnit } from "../types";
+import type { ErrorKind, UsageTokens, UsageTrendUnit } from "../types";
 
 /** ErrorKind 中文映射（契约固定 7 种）。 */
 export const ERROR_KIND_NAME: Record<ErrorKind, string> = {
@@ -69,4 +69,66 @@ export function cacheHitSeries(points: { cacheRead: number; promptTokens: number
 export function formatClock(time: number): string {
   const d = new Date(time);
   return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** 紧凑数字：<1000 原样，k/M/B 保留一位小数。 */
+export function compactNumber(n: number): string {
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1e6) return `${(n / 1e3).toFixed(1)}k`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(1)}M`;
+  return `${(n / 1e9).toFixed(1)}B`;
+}
+
+/** 时长：59s / 15m31s / 1h1m（分钟取余，无补零）。 */
+export function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** 缓存命中率（与后端 hit_rate 同口径）：无缓存数据时 null。 */
+export function cacheHitRate(t: UsageTokens): number | null {
+  const denom = t.input + t.cacheRead + t.cacheWrite;
+  if (denom === 0 || (t.cacheRead === 0 && t.cacheWrite === 0)) return null;
+  return t.cacheRead / denom;
+}
+
+/** 热力等级：0 → 0；非零按秩分 1–4（排名四分位）。 */
+export function heatLevels(values: number[]): number[] {
+  const nonzero = values.filter((v) => v > 0);
+  if (nonzero.length === 0) return values.map(() => 0);
+  return values.map((v) => {
+    if (v <= 0) return 0;
+    const rank = nonzero.filter((u) => u < v).length + 1;
+    return Math.max(1, Math.ceil((4 * rank) / nonzero.length));
+  });
+}
+
+export interface HeatCell { key: string; cost: number; tokens: number; level: number }
+
+/** 热力列：周一为行 0，首尾补 null 至整列，每列 7 项。 */
+export function heatGrid(cells: HeatCell[]): (HeatCell | null)[][] {
+  const weekday = (key: string): number => {
+    const [y, m, day] = key.slice(0, 10).split("-").map(Number);
+    return (new Date(y, m - 1, day).getDay() + 6) % 7;
+  };
+  const cols: (HeatCell | null)[][] = [];
+  if (cells.length === 0) return cols;
+  let col: (HeatCell | null)[] = [];
+  const pushCol = () => {
+    while (col.length < 7) col.push(null);
+    cols.push(col);
+    col = [];
+  };
+  for (const cell of cells) {
+    if (col.length === 0) {
+      const w = weekday(cell.key);
+      for (let i = 0; i < w; i += 1) col.push(null);
+    }
+    col.push(cell);
+    if (col.length === 7) pushCol();
+  }
+  if (col.length > 0) pushCol();
+  return cols;
 }

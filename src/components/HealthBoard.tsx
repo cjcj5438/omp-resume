@@ -1,4 +1,5 @@
 import type { UsageHealth } from "../types";
+import { Kpi } from "./UsageCards";
 import { usageNumber } from "./UsageSummary";
 import { CacheHitChart, RequestsChart } from "./UsageCharts";
 import { ERROR_KIND_NAME, cacheHitSeries, formatClock, formatErrorRate, formatHitRate } from "./usageFormat";
@@ -15,31 +16,14 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
   return (
     <>
       <section className="kpi-grid" aria-label="关键指标">
-        <div className="kpi-card">
-          <span className="kpi-label">请求数</span>
-          <strong className="kpi-value">{usageNumber(data.requests)}</strong>
-          <span className="kpi-sub">含失败与用户中断</span>
-        </div>
-        <div className="kpi-card">
-          <span className="kpi-label">错误数</span>
-          <strong className="kpi-value kpi-value-danger">{usageNumber(data.errors.total)}</strong>
-          <span className="kpi-sub">错误率 {formatErrorRate(data.errors.total, data.requests)}</span>
-          {data.errors.aborted > 0 ? <span className="kpi-sub">另有 {usageNumber(data.errors.aborted)} 次用户中断</span> : null}
-        </div>
-        <div className="kpi-card">
-          <span className="kpi-label">兜底切换</span>
-          <strong className="kpi-value">{usageNumber(data.fallbacks.total)}</strong>
-          <span className="kpi-sub">占请求 {formatErrorRate(data.fallbacks.total, data.requests)}</span>
-        </div>
-        <div className="kpi-card">
-          <span className="kpi-label">缓存命中率</span>
-          <strong className="kpi-value">{formatHitRate(data.cache.hitRate)}</strong>
-          {data.cache.hitRate === null ? (
-            <span className="kpi-sub">该上游未返回缓存数据</span>
-          ) : (
-            <span className="kpi-sub">缓存读 {usageNumber(data.cache.read)} · 写 {usageNumber(data.cache.write)}</span>
-          )}
-        </div>
+        <Kpi label="请求数" value={usageNumber(data.requests)} subs={["含失败与用户中断"]} />
+        <Kpi label="错误数" value={usageNumber(data.errors.total)} danger subs={[`错误率 ${formatErrorRate(data.errors.total, data.requests)}`, data.errors.aborted > 0 && `另有 ${usageNumber(data.errors.aborted)} 次用户中断`]} />
+        <Kpi label="兜底切换" value={usageNumber(data.fallbacks.total)} subs={[`占请求 ${formatErrorRate(data.fallbacks.total, data.requests)}`]} />
+        <Kpi
+          label="缓存命中率"
+          value={formatHitRate(data.cache.hitRate)}
+          subs={data.cache.hitRate === null ? ["该上游未返回缓存数据"] : [`缓存读 ${usageNumber(data.cache.read)} · 写 ${usageNumber(data.cache.write)}`]}
+        />
       </section>
 
       <div className="health-grid">

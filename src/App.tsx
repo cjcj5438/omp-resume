@@ -388,7 +388,7 @@ function App() {
           loadedSessionIds={loadedSessionIds}
           onOpenSession={handleOpenSession}
         />
-      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} /> : view === "cleanup" ? (
+      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} sessionTitle={(path) => { const s = byPath.get(path); return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null; }} onOpenSession={(path) => { setView("sessions"); setSelectedPath(path); }} /> : view === "cleanup" ? (
         <CleanupView
           onBack={() => setView("sessions")}
           canView={(path) => byPath.has(path)}

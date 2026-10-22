@@ -698,12 +698,25 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (!s.summary.formatSupported) throw err("UNSUPPORTED_FORMAT", "该会话格式暂不支持用量统计");
         return structuredClone(mockSessionUsage);
       }
-      case "get_usage_stats":
+      case "get_usage_stats": {
+        const range = (args["range"] as UsageRange | undefined) ?? "30d";
+        const empty = params.get("usage") === "empty";
+        const stats = (empty ? mockEmptyUsageStats : mockUsageStats)(range);
+        if (!empty) {
+          stats.topSessions.forEach((s, i) => {
+            const fixture = sessions[i]?.summary;
+            if (!fixture) return;
+            s.id = fixture.id;
+            s.path = fixture.path;
+            s.cwd = fixture.cwd;
+          });
+        }
+        return stats;
+      }
       case "get_usage_health": {
         const range = (args["range"] as UsageRange | undefined) ?? "30d";
         const empty = params.get("usage") === "empty";
-        if (cmd === "get_usage_health") return (empty ? mockEmptyUsageHealth : mockUsageHealth)(range);
-        return (empty ? mockEmptyUsageStats : mockUsageStats)(range);
+        return (empty ? mockEmptyUsageHealth : mockUsageHealth)(range);
       }
       case "check_session": {
         const s = find(args["path"] as string);

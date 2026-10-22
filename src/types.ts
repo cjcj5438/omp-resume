@@ -392,6 +392,8 @@ export interface UsageModel {
   messages: number;
   cost: number;
   tokens: UsageTokens;
+  tps?: number | null;
+  ttftMs?: number | null;
 }
 
 export interface SessionUsage {
@@ -418,11 +420,34 @@ export interface UsageTrend {
   points: UsageTrendPoint[];
 }
 
+export interface UsageTiming {
+  waitMs: number;
+  genMs: number;
+  toolMs: number;
+  toolCalls: number;
+  calls: number;
+  tps: number | null;
+}
+
+export interface UsageSession {
+  id: string;
+  path: string;
+  cwd: string;
+  cost: number;
+  tokens: number;
+  calls: number;
+  lastMs: number;
+}
+
 export interface UsageStats {
   total: SessionUsage;
   byProject: { cwd: string; cost: number; tokens: UsageTokens; sessions: number }[];
   byModel: UsageModel[];
   trend: UsageTrend;
+  sessions: number;
+  timing: UsageTiming;
+  topSessions: UsageSession[];
+  activity: UsageTrendPoint[];
 }
 
 /** 运行看板错误类型。 */

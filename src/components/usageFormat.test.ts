@@ -2,10 +2,15 @@ import { expect, it } from "vitest";
 import {
   ERROR_KIND_NAME,
   barHeights,
+  cacheHitRate,
   cacheHitSeries,
+  compactNumber,
   formatClock,
+  formatDuration,
   formatErrorRate,
   formatHitRate,
+  heatGrid,
+  heatLevels,
   sparseIndexes,
   tickLabel,
 } from "./usageFormat";
@@ -78,4 +83,47 @@ it("缓存命中序列：无 token 的桶为 null，比例钳制 0..1", () => {
 it("时钟用本地 M月D日 HH:MM", () => {
   expect(formatClock(new Date(2026, 9, 19, 8, 5).getTime())).toBe("10月19日 08:05");
   expect(formatClock(new Date(2026, 0, 3, 23, 59).getTime())).toBe("1月3日 23:59");
+});
+
+it("时长：59s / 15m31s / 1h1m", () => {
+  expect(formatDuration(0)).toBe("0s");
+  expect(formatDuration(59400)).toBe("59s");
+  expect(formatDuration(931000)).toBe("15m31s");
+  expect(formatDuration(3660000)).toBe("1h1m");
+});
+
+it("紧凑数字：k/M/B 一位小数", () => {
+  expect(compactNumber(999)).toBe("999");
+  expect(compactNumber(1234)).toBe("1.2k");
+  expect(compactNumber(5400000)).toBe("5.4M");
+  expect(compactNumber(2.5e9)).toBe("2.5B");
+});
+
+it("缓存命中率：无缓存数据时 null", () => {
+  expect(cacheHitRate({ input: 50, output: 0, cacheRead: 40, cacheWrite: 10, total: 100 })).toBe(0.4);
+  expect(cacheHitRate({ input: 50, output: 10, cacheRead: 0, cacheWrite: 0, total: 60 })).toBeNull();
+  expect(cacheHitRate({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 })).toBeNull();
+});
+
+it("热力等级按非零秩分四档", () => {
+  expect(heatLevels([0, 5, 1, 3, 9])).toEqual([0, 3, 1, 2, 4]);
+  expect(heatLevels([0, 0])).toEqual([0, 0]);
+  expect(heatLevels([7])).toEqual([4]);
+});
+
+it("热力列：周一为行 0，首尾补 null 至整列", () => {
+  const days = Array.from({ length: 8 }, (_, i) => {
+    const d = new Date(2026, 9, 14 + i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return { key, cost: 1, tokens: 10, level: 1 };
+  });
+  const cols = heatGrid(days);
+  expect(cols).toHaveLength(2);
+  expect(cols[0][0]).toBeNull();
+  expect(cols[0][1]).toBeNull();
+  expect(cols[0][2]?.key).toBe("2026-10-14");
+  expect(cols[1][0]?.key).toBe("2026-10-19");
+  expect(cols[1][1]?.key).toBe("2026-10-20");
+  expect(cols[1][2]?.key).toBe("2026-10-21");
+  expect(cols[1].slice(3)).toEqual([null, null, null, null]);
 });
