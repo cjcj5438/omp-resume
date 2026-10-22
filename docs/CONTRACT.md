@@ -8,7 +8,7 @@
 管理 `omp`（oh-my-pi）的会话、CLI 版本、用户级插件与技能。功能包括：
 会话浏览（按项目分组）、只读会话预览、树视图、iTerm 一键续聊、
 永久删除、从树节点续聊、omp 版本查询与更新、插件/marketplace 管理、技能查询/更新、
-MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）浏览与维护。无会话重命名、无 fork 建文件、无导出、
+MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）浏览与维护、模型测速。无会话重命名、无 fork 建文件、无导出、
 无全文搜索、无多 profile、无回收站。
 
 ## 0. 一致性规则（给后续 worker）
@@ -22,6 +22,9 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
 - 所有命令返回 `Result<T, AppError>`，`AppError { code, message }`。
 - 时间一律 ISO-8601 UTC 毫秒字符串（如 `2026-10-14T02:18:47.387Z`），
   不使用 unix 时间戳。
+- 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
+  4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、
+  4.54–4.55 模型规格（§21）。
 
 ## 1. 配置解析
 
@@ -1206,10 +1209,10 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ## 16. 模型与 Agent 配置（§4.36–§4.38，追加章节）
 
-> 管理视图「模型与 Agent」标签页的后端契约。三块 UI：模型角色
+> 管理视图「模型」「Agent」两个标签页的后端契约。三块 UI：模型角色
 > （`modelRoles`）、Agent 表（`task.agentModelOverrides` / `task.disabledAgents` /
 > `task.agentAdvisor` 三个键）、回退链（`retry.fallbackChains`）。
-> 应用内不聊天、不调用任何 LLM；配置写入全部经 `omp config set`。
+> 本章命令不聊天、不调用任何 LLM（唯一例外是 §20 的 `omp bench` 测速）；配置写入全部经 `omp config set`。
 
 ### 16.1 白名单与安全规则
 
@@ -1229,7 +1232,10 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 绝不读取凭据文件（`~/.omp/agent/models.yml` / `models.json` 等，含明文 apiKey），
   绝不运行 `omp config list`（会输出 token 类设置）；`omp models --json` 本身
   不含凭据。任何 omp 输出都不写日志、测试输出不打印配置值。
-- 不触碰 omp 自己的库（`~/.omp/agent/*.db`）；不读项目级 `.omp/agents`（仅 user scope）。
+  **唯一例外**：§21 模型规格编辑是经评审的刻意例外——只读写 models.yml 的
+  非凭据规格字段（行级手术、不整体重排），凭据永不经 IPC/日志/错误文本。
+- 不触碰 omp 自己的库（`~/.omp/agent/*.db`；唯一例外：§20.3 只读 `agent.db` 的 `model_perf` 表）；
+  不读项目级 `.omp/agents`（仅 user scope）。
 - record 整体读-改-写（omp 的 `config set` 不支持点号子键，实测
   `modelRoles.plan` → Unknown setting），**未被用户触碰的键与值原样保留**
   （包括不认识的角色 / agent / 回退链键、别名 `@smol`、已下线 selector）；
@@ -1251,8 +1257,9 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 运行 `omp models --json`（60 秒超时，只读，不占写门禁；**绝不运行
   `omp models refresh`**）。每条取精简字段：
   `ModelInfo { selector, provider, id, name, thinkingLevels: string[],
-  contextWindow: number|null, reasoning: boolean,
-  costInput: number|null, costOutput: number|null }`（camelCase）。
+  contextWindow: number|null, maxTokens: number|null, reasoning: boolean,
+  input: string[], costInput: number|null, costOutput: number|null,
+  costCacheRead: number|null, costCacheWrite: number|null }`（camelCase）。
   无 selector 的条目跳过；缺字段容忍为 null/空。坏 JSON → `OMP_FAILED`。
 - 可能较慢（耗时数秒到十几秒不等，随机器/网络波动）：前端异步加载 + 进程内缓存
   （模块级，跨挂载复用），「刷新模型列表」按钮只重跑本命令。
@@ -1302,17 +1309,26 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
      不一致 → `CONFLICT`「配置已被外部修改，请刷新后重试」，不写入；
   4. `omp config set <key> <紧凑 JSON>`（60 秒超时；`require_success` 错误语义）；
   5. 写后再读校验并返回新值。
-- 前端每块独立「保存 / 还原」+ dirty 状态；保存只写值有变化的 key，
+- 前端每块独立「保存 / 还原」+ dirty 状态（「还原」只还原本区块，见 §16.6）；保存只写值有变化的 key，
   逐 key 串行（Agent 表一次保存最多写 3 个 key，中途失败即停止并整体重载，
   已写入的 key 不回滚）；`CONFLICT` 提示「配置已被外部修改，请刷新」并重新载入。
 - 错误码：`INVALID_KEY`（新）、`INVALID_INPUT`、`CONFLICT`、`BUSY`、`OMP_FAILED`、
   `TIMEOUT`、`OMP_NOT_FOUND`、`IO`（语义同 §7）。`INVALID_KEY` 仅本命令产生。
 
-### 16.6 前端形态（无新命令；2026-10-16 重设计）
+### 16.6 前端形态（无新命令；2026-10-16 重设计，2026-10-21 拆分为「模型」「Agent」两页）
 
-- 管理视图「模型与 Agent」标签页为**默认页**。自上而下：
-  顶栏（一句话说明 + 模型列表状态/刷新 + 全局兜底状态只读一行）→
-  「主要模型」（角色卡）→「Agent」→「其他模型的兜底」（折叠）。
+- 「模型」标签页为**默认页**（`ModelsTab`），自上而下：页头（一句话说明 + 状态 chips +
+  「刷新模型」）→「模型库」（`ModelLibrary`，只读一览表：搜索 + 上下文/最大输出/
+  目录价/思考/用途列（名下 muted selector 次行、紧凑数字 `1M` / `393,216` / `$0.3 / $1.2`、
+  思考档位以 `·` 连接）+ 「加入测试」/「测试 ▶」/「规格」入口）→「测试」（内嵌 bench，
+  见 §20.4）→「角色分配」（`ModelsSection`：下述「主要模型」+「其他模型的兜底」，
+  bench 推荐回填到这里的角色草稿）。「Agent」标签页（`AgentsTab`）自上而下：导语 +
+  状态 chips（编排器 / 子代理数 / 停用 / 顾问 / Vibe 两档）+ 模型列表/兜底状态条
+  （`ModelDraftStatus`，两页共用）→ 可交互编排流程图 → 下述「Agent」区块。
+  两页各持一份 `useModelDraft` 草稿（含自己页的刷新与保存条），互不干扰；
+  旧 `ModelsAgentsPanel.tsx`  wrapper 已删除，拆分为 `ModelsSection` / `AgentsSection`，
+  其测试现为 `ModelSections.test.tsx`。
+- 「主要模型」（`ModelsSection` 上半）：下述角色卡 / 紧凑行 / 更多角色。
 - **角色卡**（每角色一张卡）：角色中文名 + 一句话用途 + 主模型选择
   （provider 分组、可搜索、友好名 + provider 徽章 + 上下文/价格提示；
   另有「未设置」= 保存时删除该键）+ thinking 分段控件（取所选模型的
@@ -1342,22 +1358,27 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   §16.8 的角色回退链（advisor→slow、memory→tiny→smol→default），
   解析不到显示「omp 内置默认」。能力类角色（image/web/speech/dictation/
   vision/judge）默认折叠在「更多角色」里（已配置的成卡、未配置的紧凑行）。
-- **Vibe 工作会话卡**（Agent 区块顶部，`VibeCard`）：omp 的 `/vibe` 模式中档位
+- **Vibe 工作会话卡**（「Agent」页 Agent 区块顶部，`VibeCard`）：omp 的 `/vibe` 模式中档位
   `fast` → 内置 agent `sonic`，`good` → `task`；两行各自可改模型（ModelPicker，
   含「不改用」）与 thinking 分段，写入的仍是既有键
   `task.agentModelOverrides.sonic` / `.task`，**不新增任何配置键**；与同名 Agent 行
   **共享同一份草稿与吸底保存条**，天然同步。`@角色` 别名解析到底层模型后展示
   （保存时不被展开改写）；未知值原样保留。卡片另只读展示指挥者模型
-  （「主对话」角色 `default`，与角色卡草稿同步），并注明这两档与
-  「机械处理（sonic）」「通用执行（task）」普通子代理**共用模型**，修改会同时
-  影响普通子代理；指挥者不属于 worker。
-- **Agent 编排流程图**（只读，纯前端；不写配置、不加后端命令）：Vibe 卡下方
-  一张手绘 SVG 流程图（`AgentFlow.tsx`，不引图表库，viewBox 宽度固定、高度随
-  agent 数；配色走主题变量）——左「主代理（编排器）」显示 default 角色的当前
+  （「主对话」角色 `default`，按本页草稿重算；主对话模型去「模型」页改）与三行各自的兜底（只读 chip，
+  编辑仍去「模型」页角色卡/「其他模型的兜底」）：指挥者 = `default` 角色链 +
+  吸附到主对话主模型的链（条目与主对话角色卡一致，空链不展示）；good = `task` 角色链
+  （「子任务」是模型角色）+ 吸附到该行生效模型的链；fast 只看吸附到生效模型的链
+  （agent 名 `sonic` 不是模型角色，按 §16.8 匹配代码不会命中以 agent 名为键的链（未验证），不展示），
+  并注明这两档与「机械处理（sonic）」「通用执行（task）」普通子代理**共用模型**，
+  修改会同时影响普通子代理；指挥者不属于 worker。
+- **Agent 编排流程图**（纯前端；不写配置、不加后端命令）：「Agent」页状态条下方、
+  Vibe 卡上方，一张手绘 SVG 流程图（`AgentFlow.tsx`，不引图表库，viewBox 宽度固定、
+  高度随 agent 数；配色走主题变量）——左「主代理（编排器）」显示 default 角色的当前
   模型（未配置显示「omp 内置默认」），派发总线指向右侧每个 agent 节点；节点 =
   中文标签 +「当前使用：<模型> · <档位>」+ 状态 pill（已停用 = 虚线描边 /
   顾问开 / 顾问关 / 自定义）；底部虚线「结果回传」回到主代理；节点 `<title>`
-  悬停给完整职责与来源。**中文职责表 `AGENT_INFO`**（roleCards.ts）：内置
+  悬停给完整职责与来源。**可交互**：点节点滚动到对应的 Agent 行并短暂高亮
+  （1.6 秒后自动清除）。**中文职责表 `AGENT_INFO`**（roleCards.ts）：内置
   6 个（task/sonic/scout/reviewer/security-reviewer/seance）是 omp 英文
   description 的意译；自定义 agent 用 frontmatter 的 description 原文
   （标签回退「自定义」/「内置」）。不解析 `spawns`/`tools`（语义未验证，
@@ -1374,11 +1395,18 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   总开关关闭时显示醒目提示「兜底已关闭，下面的兜底配置不会生效」。
 - 值格式 `provider/model[:thinking]`：仅末段为 `[A-Za-z0-9_-]+` 才拆为
   thinking 后缀，否则 selector 原样保留。手动输入支持通配 key（如 `p1/*`）。
+- **草稿视角**：Agent 页的「当前使用」/ Vibe 指挥者与两档模型 / 兜底吸附展示，
+  都按 `configFromDraft` 由未保存草稿重算（picker 一改就更新，不必等保存）；
+  未配置角色紧凑行的回退解析仍读已保存配置。
 - 保存：**分区吸底保存条**（区块内有未保存修改时出现
   「N 处未保存修改 ｜ 还原 ｜ 保存…」，无修改时不占位；主要模型区块一次可写
   `modelRoles` 与 `retry.fallbackChains` 两个 key；Agent 区块最多写 3 个 key；
   其他兜底写 `retry.fallbackChains`），
   逐 key CONFLICT 复读比对 + 写后复读校验 + `OmpBusy` 单写门禁；
+  **「还原」只还原本区块**（`revertBlock`）：角色块还原角色行（含展示顺序）+
+  全部 chain 草稿（两者一起保存）；Agent 块还原覆盖 + 停用 + 顾问；
+  其他块只还原当前在 others 列表里的 chain；其他区块的草稿原样保留。
+  新增的 key（草稿有、配置无）还原即删除，删掉的 key 还原即恢复。
   **前一个 key 已写、后一个失败**时提示「「<已保存键>」已保存，但「<失败键>」
   保存失败：<原因>（已重新载入最新配置，请检查后重试）」并重新载入，
   不假装成功也不回滚。CONFLICT 提示「配置已被外部修改，请刷新」并重新载入。
@@ -1898,7 +1926,7 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
 
 ### 18.9 前端（记忆库标签页）
 
-- 入口：`ManageView` 第五个标签页「记忆库」；`loadedSessionIds` / `onOpenSession` 由 `App.tsx`
+- 入口：`ManageView` 第六个标签页「记忆库」；`loadedSessionIds` / `onOpenSession` 由 `App.tsx`
   传入（来源跳转回会话视图并选中）。
 - 组件（`src/components/`）：`MemoryPanel.tsx`（总览、健康卡、图表与列表容器）、
   `MemoryBanks.tsx`（排名条形图 + 选中库操作条 + 无效库清理对话框）、`Drawer.tsx`（右侧抽屉容器）、`MemoryList.tsx`
@@ -2012,3 +2040,282 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   + 柱/圆点放大，全部 `--motion` 过渡，提示文字走全局 `ChartTip`。
 - **抽屉**（`Drawer.tsx`）：见 §18.9——140ms 右滑淡入，`prefers-reduced-motion` 关闭。
 - **鼠标指针**：桌面应用惯例，交互元素保持 `cursor: default`，不引入手指指针。
+
+## 20. 模型测试器（§4.51–§4.53，管理视图「模型」标签页的「测试」区）
+
+> 测速度、测稳定性，结果可写回 `modelRoles`。测速走 omp 自带的 `omp bench`（直连模型，
+> 不带 agent 前缀），是本应用唯一会调用 LLM 的路径。写配置仍然只走 §16.5
+> `update_model_config`，本章不新增写配置的命令。实现：`src-tauri/src/model_bench.rs`、
+> `src/modelBench.ts`、`src/components/ModelTesterPanel.tsx`（及 `BenchToolbar` /
+> `BenchTagFilter` / `BenchSparkline` / `BenchDrawer` / `BenchSavebar` /
+> `ModelEntryModal` 拆出件）。
+
+### 20.1 / 4.51 `model_bench_run { selector } -> BenchRound`
+
+- `selector`：`provider/model[:thinking]`，≤200 字符，首字符为字母或数字（防参数注入），
+  无空白，含 `/`；否则 `INVALID_INPUT`，不调用 omp。
+- 依次跑两次探针（不经 shell，selector 整串作为一个 argv；**不占 `OmpBusy`**：只读，
+  且不能把配置保存卡几分钟）：
+  1. 短探针：`omp bench <selector> --json --par 1 --profile chat --runs 5 --max-tokens 100`
+  2. 长探针：`omp bench <selector> --json --par 1 --profile generation --runs 3 --max-tokens 600`
+  每次超时 6 分钟。`--par 1` 必须写：omp 默认 4 并发，会让延迟数据失真。
+  bench 只测指定模型，失败不会走 `retry.fallbackChains`（实测）。
+- **不看退出码**（有请求失败时 bench 返回 1，但照样输出 JSON）：从合并输出中第一个以 `{`
+  开头的行起流式解析第一个 JSON 值，取 `models[0].results[]`
+  （`{ ok, error?, ttftMs?, generationTps?, cost?, challenge }`）。
+  - 找不到或解析失败 → `OMP_FAILED`（带输出尾部），不写历史。
+  - 某次探针超时 → 按计划请求数（5 或 3）记失败，错误文本「超时（6 分钟）」，另一次照常跑；
+    两次都超时仍记一轮（ok=0）。`OMP_NOT_FOUND` / `IO` 原样返回，不写历史。
+- 合成一轮：
+
+  ```jsonc
+  BenchRound {
+    at,                    // ISO-8601 UTC 毫秒，本轮开始时间
+    selector,              // 原样（含 :thinking）
+    total, ok,             // 请求总数 / 成功数（正常 8）
+    ttftP50Ms, ttftP95Ms,  // 全部成功请求 ttftMs 的分位数（最近秩法）；无样本 null
+    tpsP50, tpsCv,         // 长探针成功请求 generationTps 的 p50 / 变异系数（总体标准差÷均值，
+                           // 样本 <2 为 null）；长探针无样本时退回短探针，仍无则 null
+    cost,                  // 成功请求 cost 之和（美元），缺失按 0
+    errors                 // 失败请求错误文本：去重，每条 ≤200 字符，最多 5 条
+  }
+  ```
+  tok/s 只取长探针的理由（实测）：100 token 的短探针 tok/s 在 34–168 之间抖动，
+  600 token 的长探针稳定在 163–168，混在一起算会把稳定的模型误判成不稳定。
+- 结果追加一行到数据目录（同 `meta.json`，`OMP_RESUME_DATA_DIR` 可覆盖）的
+  `model-bench.jsonl`，进程内互斥锁保护追加与裁剪。bench 原始输出与错误全文不写日志。
+
+### 20.2 / 4.52 `model_bench_history() -> BenchRound[]`
+
+- 读 `model-bench.jsonl`，只保留最近 30 天，按 `at` 从早到晚。文件不存在 → `[]`，坏行静默跳过；
+  有裁剪或坏行时「临时文件 + rename」原子重写，失败不报错。
+
+### 20.3 / 4.53 `model_perf_list() -> ModelPerf[]`
+
+- 数据源 omp 的 `agent.db`（`OMP_RESUME_AGENT_DB` 可覆盖，默认 `~/.omp/agent/agent.db`）。
+  **该库含凭据表**：只用 `SQLITE_OPEN_READ_ONLY` 打开（复用 `memory::open_readonly`），
+  SQL 写死为一条 `SELECT model_key, samples, output_tokens, gen_ms, ttft_samples, ttft_ms,
+  updated_at FROM model_perf`，不提供通用查询，代码不出现其他表名。
+- 列为 omp 累计值：`ModelPerf { selector: model_key, samples: round(samples),
+  ttftMs: ttft_ms/ttft_samples（>0 时，否则 null）, tps: output_tokens/(gen_ms/1000)（>0 时，否则 null）,
+  updatedAt: ISO(updated_at 秒) }`，按 samples 降序。
+- 库不存在、表/列不匹配、任何 SQL 错误 → `[]`（前端隐藏「日常实测」列）。
+
+### 20.4 前端（纯前端状态，不新增配置键）
+
+- 「模型」标签页的「测试」区（`ModelsTab` 中段，`ModelTesterPanel embedded`）：
+  隐藏独立导语、紧凑布局，bench 配置仍存 localStorage `omp-resume:model-tester:v1` 并由
+  `ModelsTab` 受控持有（`{ entries: [{ selector, tags, monitor }], customTags,
+  intervalMin: 0|30|60|360 }`，默认 `{ entries: [], customTags: ["test"], intervalMin: 0 }`，
+  损坏回默认；dev 与 .app 不互通，同 pins）。页头「刷新模型」同时刷新模型列表、
+  规格快照与测试器（`refreshKey`）。
+- **列表** = `entries` ∪ 当前 `modelRoles` 里对话类角色的普通 selector（`@别名`、逗号列表跳过；
+  `judge` / `image` 等非对话角色不纳入）。被角色占用的模型自动带该角色标签且不能删除。
+  selector（含 `:thinking`）即身份，同模型不同思考强度算两条。添加/编辑走宽对话框
+  `ModelEntryModal`（`ModelPicker` + 思考强度分段 + 标签多选 + 实时规格预览，
+  有 yml 规格时可跳「编辑规格…」；编辑时沿用条目已有标签；「已加入」徽章按 base 归一）。
+- **标签 = omp 角色名**（候选池）：内置对话角色（default/task/plan/slow/smol/commit/advisor/memory/tiny，
+  中文名取 `roleCards`）∪ `modelRoles` 中其他对话类键 ∪ `customTags`（`^[a-z][a-z0-9_-]{0,23}$`，
+  chip 行 ✕ 可删除；删除时从 `customTags` 移除并剥掉所有 `entries[].tags` 里的该标签）。
+  非内置标签若没有任何 `agentOverrides` 值或 agent `defaultModel` 以 `@名` 引用，标「未使用」，
+  提示在「Agent」页把 agent 设为 `@名` 后生效。模型好坏由用户打标签决定，测试器只在候选里比速度与稳定性。
+- **主模型** = `modelRoles.default`，置顶标「基线」；其余行显示 `tpsP50 / 主模型 tpsP50` 倍率
+  （≥1.1× 成功色、≤0.9× 警示色），只展示，不做推荐门槛。
+- **统计窗口**：最近 24h 全部轮次的成功率 Σok/Σtotal 与样本数；TTFT / tok/s / CV 取最近一轮；
+  24h 内无轮次用最近一轮；从未测试显示「未测试」沉底。
+- **综合分**（0–100，仅排序与推荐）：`round(100 × (0.5·成功率 + 0.3·tps/全表最大tps
+  + 0.2·全表最小ttftP50/ttftP50))`，缺项按 0。
+- **运行器**（模块单例，手动与监控共用）：同 provider 串行，跨 provider 并行最多 3 个，
+  已排队/运行中的 selector 不重复入队；`OMP_FAILED` 等错误记在行上，不写历史。
+- **定时监控**：`intervalMin > 0` 时在 `App` 级把 `monitor=true` 的模型按间隔入队，应用开着才跑。
+- **省钱护栏**：探针输出上限固定 100 / 600 token；「测试全部」显示本轮预估
+  （每模型 800 输入 + 2300 输出 token × `ModelInfo` 单价），监控旁显示每日预估；单价未知不计入。
+- **错误分类**（展示）：超时 / 限流（429、rate limit）/ 鉴权（401、403、auth、forbidden、
+  unauthorized）/ 空响应 / 其他。
+- **保存闭环**（只改 `modelRoles`，不写回退链）：嵌入模式下测试区**没有自己的保存条**——
+  抽屉「设为 <标签>」与「一键推荐」都经 `onApplyRoles` 回填进下方「角色分配」的角色草稿，
+  在 §16.6 角色块的吸底保存条里统一保存（`update_model_config { key: "modelRoles",
+  value: {...当前, ...改动}, expected: 当前 }`；`CONFLICT` 提示并重载）。
+  一键推荐：每个标签在候选（带该标签的模型 + 当前分配给该角色的模型）中，
+  取 24h 样本 ≥5 且成功率 ≥95% 的最高综合分者，与当前值不同才加入；无候选时提示门槛。
+  已开的 omp 窗口不切换，新会话生效。（`BenchSavebar` 本地「待保存」底栏只在非嵌入用法下渲染。）
+- **抽屉**（复用 `Drawer`）：标签开关、监控开关、「设为 <标签>」、编辑（被角色占用时禁用并说明）、
+  删除（被角色占用时禁用并说明）、24h / 7d 切换、4 个 KPI（成功率 / TTFT p50 / tok/s / 花费）、
+  成功率柱状图 + tok/s 折线（复用 `UsageCharts` 的 `ChartBucket` 与 `ChartTip`）、最近错误。
+  动效与悬浮遵守 §19。
+
+### 20.5 实测记录（omp 18.12.3，2026-10-20）
+
+- `amr-link/deepseek-v4.1-flash:max` 按 §20.1 两次探针实跑：短探针 32.5s、长探针 11.5s，
+  共 $0.0022；短探针 tok/s 34–168，长探针 163–168（据此定 tok/s 只取长探针）。
+- 免费档 `opencode-zen/*-free` 实跑：`{"ok":false,"error":"403 … FreeTierError"}`、退出码 1、
+  JSON 照常输出、无回退替换。
+- 对真实 `agent.db` 执行 `model_perf_list`：读前读后 `agent.db` / `-wal` / `-shm` 的大小与 mtime 均不变。
+
+## 21. 模型规格编辑（§4.54–§4.55，models.yml 行级编辑）
+
+> 改 omp 实时模型注册表 `models.yml` 里单个模型的非凭据规格字段
+> （名称 / 上下文窗口 / 最大输出 / 推理开关 / 输入类型 / 费用）。
+> §16.1「绝不读取凭据文件」的**刻意例外**（见该节）：只做行级外科手术替换，
+> 绝不 YAML 解析再整体重排（锚点文件重排会复制/换行凭据）。
+> 实现：`src-tauri/src/model_specs.rs`、类型在 `model.rs`。
+>
+> 背景（本机验证）：`models.yml` 是 omp 启动读取、mtime 热重载的实时源；
+> `models.json` 在 yml 存在时是遗留死文件；`models.db` 是缓存，永不触碰。
+> 文件锚点密集（`&u5438` / `*u5438`）且含明文 apiKey。omp 校验严格且
+> fail-closed：任一 schema 错误禁用**全部**自定义 provider；`cost` 出现时
+> 四个数必须齐全；`contextWindow` / `maxTokens` 必须 > 0。
+
+### 21.1 路径与文件规则
+
+- 路径：`OMP_RESUME_MODELS_YML`（存在且非空）> `PI_CODING_AGENT_DIR` +
+  `/models.yml` > `$HOME/.omp/agent/models.yml`。
+- 大小上限 2 MiB，超限 `INVALID_INPUT` 并提示手动编辑。
+- `revision` = 文件字节 SHA256 十六进制；文件缺失时读侧 revision 为
+  `"absent"`，不可读时为 `"unreadable"`（只读展示，不可写）。
+- 读侧文件权限忽略；一切写盘（备份/临时/目标）均为 0600。
+
+### 21.2 / 4.54 `get_model_specs() -> ModelSpecsResult`
+
+- 只读，不占 `OmpBusy`。返回（camelCase）：
+
+  ```jsonc
+  ModelSpecsResult = { path: string; available: boolean; revision: string;
+                       specs: ModelSpec[]; error: string | null }
+  ModelSpec = { provider, id, selector /* provider/id */, name: string | null,
+                contextWindow: number | null, maxTokens: number | null,
+                reasoning: boolean | null, input: string[] | null,
+                costInput: number | null, costOutput: number | null,
+                costCacheRead: number | null, costCacheWrite: number | null,
+                costTiered: boolean /* cost 含分层价（longContext 等）时 true，四费用为 null */ }
+  ```
+
+- 文件缺失 → `available=false` 正常空状态（`specs=[]`、`error=null`）；
+  超大/非 UTF-8/形状异常 → `available=true` + 中文 `error`（`specs=[]`），
+  错误文本永不含文件内容。
+- 只返回非凭据字段；`apiKey` / `baseUrl` 等永不经 IPC。
+
+### 21.3 / 4.55 `update_model_spec { provider, id, patch, expectedRevision } -> ModelSpecUpdateResult`
+
+- 类型（camelCase）：
+
+  ```jsonc
+  ModelSpecPatch = { name?: string; contextWindow?: number; maxTokens?: number;
+                     reasoning?: boolean; input?: string[];
+                     cost?: { input, output, cacheRead, cacheWrite: number } }
+  ModelSpecPatchRequest = { provider: string; id: string; patch: ModelSpecPatch;
+                            expectedRevision: string }
+  ModelSpecUpdateResult = { revision: string; spec: ModelSpec; backupPath: string }
+  ```
+
+- 缺席字段不触碰；`cost` 必须四个数字整体替换（omp fail-closed 要求四键齐全）。
+- 分层价（`cost:` 含嵌套映射如 `longContext`）整模型拒改：读侧四费用为
+  `None` + `costTiered=true`，写侧任何补丁（含非 cost）均 `INVALID_INPUT`
+  「该模型的 cost 含分层价格，暂不支持自动编辑，请手动编辑 models.yml」。
+- 流程（整体持有 `OmpBusy`，多余报 `BUSY`）：
+  1. 校验 `provider` / `id`（非空、≤200 字符、无换行、不含 `/`）与补丁值
+     （name 非空 ≤200 字符无换行无控制字符；窗口/输出 > 0 且 ≤ 2^53-1；
+     input 非空 ≤8 个、仅 `text` / `image`、不重复；费用四数非负有限
+     ≤ 1e9 且精度 ≥ 1e-6）→ 不符 `INVALID_INPUT`；
+  2. `expectedRevision` 与文件字节 SHA256 比对，不一致 → `CONFLICT`
+     「模型规格文件已被外部修改，请刷新后重试」，不写入；
+     哨兵串 `absent` / `unreadable` 直接 `INVALID_INPUT`（须先刷新）；
+  3. 行级生成新文本（§21.4）；与原文一致 → 直接返回现规格，不写盘
+     （`backupPath=""`）；
+  4. 沙箱校验（§21.5）→ 不通过 `INVALID_INPUT`（固定文案，不回显 omp 输出）；
+  5. 复检 revision（校验耗时，防并发外部改）→ 不一致 `CONFLICT`；
+     复检与 rename 之间有毫秒级 last-writer-wins 窗口（已知接受）；
+  6. 备份原文到同目录 `models.yml.omp-resume.<UTC紧凑>.bak`（0600，
+     只留最新 10 份，按名倒序删旧）；
+  7. 同目录临时文件（0600）+ fsync + rename（目标 chmod 尽力而为）；
+     符号链接目标与只读目标拒绝写入（`IO` 中文说明）；
+  8. 重读返回新 revision 与规格。rename 前任何失败原文不动。
+- omp 缺失 → `OMP_NOT_FOUND` 并拒绝写入（无法校验就不写）。
+
+### 21.4 行级编辑器规则（纯函数 + 单测）
+
+- 定位：顶层 `providers:` → 同级 provider 键（引号键允许）→ 其块内 `models:` →
+  缩进大于 `models:` 的 `- ` 项中 `id:` 等于目标的条目（单/双引号允许；
+  `models:` 后横线同列的零额外缩进序列亦可（首项确立条目缩进，同列后项同属该列表）。
+  支持 `- id: x`、续行 `id: x`、`- &anchor` 锚条目头三种条目形；
+  纯别名条目（`- *name`）无本地字段，读侧跳过、写侧不可定位（`INVALID_INPUT`）。
+- 作用域：只认条目直接子字段（首行内联键列确立的缩进）；
+  嵌套映射键、块标量体一律不透明；`id` 同理（锚值剥 `&name` 后比对，
+  同条目两不同顶层 `id` → 手动改）；直接子 `cost:` 之外的嵌套 `cost:` 忽略。
+- 拒绝（`INVALID_INPUT` + 中文「请手动编辑 models.yml」）：流式条目（`- {…}`）、
+  首行非 `key: value` 写法、provider/id 重复、条目内同键重复、
+  `cost` 行内写法（`cost: {...}`，锚头 `cost: &x` 是合法块头）、`cost` 缺子键、
+  分层价 cost（含嵌套映射，整模型拒改）、块标量值字段、
+  目标条目定义的锚（`- &name` / `cost: &name`）被正文他处 `*name` 引用
+  （改锚会静默波及引用者；别名比对按完整名，字符集含 `._:%`）。
+- 替换：只改已存在标量行的值段，保留缩进/键原文/行尾注释/换行（CRLF 保留）。
+  `input` 块序列形（`input:` + `- text` 子行）改头为流式并删子行；
+  读侧块序列与流式均解析。
+- 插入：缺失的简单字段紧随 `- ` 行之后；缺失的 `cost` 插完整四键块
+  （与字段同级缩进，子键深两格，顺序 input/output/cacheRead/cacheWrite）；
+  EOF 无尾换行先补换行再插入。
+- 格式：name 双引号转义（`\\` `\"`）；数字不加引号；布尔 `true`/`false`；
+  input 行内 `[text, image]`；费用最多 6 位小数去尾零。
+- 其余字节（注释、锚点、凭据行、其他 provider/模型）逐字节不动。
+
+### 21.5 沙箱校验（真实 omp，fail-closed）
+
+- 新文本写入 `<tmp>/agent/models.yml`（沙箱目录 0700，文件 0600，
+  Drop 守卫保证 panic 亦清理），跑解析到的 omp 二进制
+  （`resolve_omp` 约定）`models --json`，环境 `PI_CODING_AGENT_DIR=<tmp>/agent`
+  （不继承用户值），60 秒超时 + 退出后 ≤2 秒收输出
+  （`OmpBusy` 最坏持有 62 秒），退出码忽略，用后删除沙箱；
+  每路输出上限 8 MiB（超限判失败）。
+- 拒绝（`INVALID_INPUT`，固定中文文案）条件任一：
+  合并输出含 `validation failed` 或 `Failed to load config file models`；
+  输出首个 JSON 的 `models[]` 里没有 `provider/id`；补丁字段
+  （name 精确、reasoning 布尔、input 无序集合、窗口/输出、
+  费用四数容差 1e-9）与 omp 读回不一致或缺字段。
+- omp 输出永不写日志、永不进错误文本（可能含配置警告）。
+
+### 21.6 安全
+
+- 凭据（apiKey 等）永不经 IPC 返回、永不写日志、永不进错误文本；
+  前后端类型里没有凭据字段。
+- 不整体重排 YAML；不读 `models.json` / `models.db`；测试永不碰真实
+  `~/.omp/agent/models.yml`（单测用内存样例 + tempfile，假 omp 脚本覆盖
+  沙箱路径；`specs_sandbox.rs` 手动回归只读复制真实文件到 /tmp 写副本）。
+- 备份与目标文件均为 0600；备份保留 10 份供手动恢复；
+  符号链接与只读目标拒绝写入（不断 dotfiles 布局）。
+
+### 21.7 错误码
+
+- `INVALID_INPUT`（值非法/形状需手动改/沙箱未通过/`revision` 缺失）、
+  `CONFLICT`（revision 不一致）、`BUSY`（写门禁被占）、`TIMEOUT`（校验超时）、
+  `OMP_NOT_FOUND`（无 omp 可校验，拒绝写入）、`IO`（读/备份/写盘失败）。
+
+### 21.8 前端与 mock
+
+- `src/types.ts` 镜像 §21.2–§21.3 类型；`src/api.ts` 封装 `getModelSpecs()` /
+  `updateModelSpec(req)`（参数透传 `provider/id/patch/expectedRevision`）。
+- `?mock=1` 下 `dev/mockBackend.ts` 实现两命令：9 个 `MOCK_MODELS` 的内存规格
+  （haiku 行缺 `maxTokens`/`input`/`costCacheRead` 演示 null，且标 `costTiered`
+  演示分层价拒改），可编辑，
+  revision 为 `mock-rev-N` 自增，`?conflict=update_model_spec` 强制冲突；
+  mock 永不读真实文件。
+- 规格抽屉：`costTiered` 为 true 时显示「分层价格，暂不支持编辑」，
+  隐藏四价格输入，保存按钮整单禁用。
+- 规格抽屉只发最小补丁：补丁 = 用户碰过的字段 ∩ 与加载基线语义不同
+  （`cost` 四子键视为一个整体）；空白/写法差异的 no-op 不发请求并提示
+  「没有改动」；保存成功即用返回的 revision 重拍基线并清空已碰字段；
+  `CONFLICT` 时保留表单与已碰字段，重试只重发碰过的字段。
+
+## 22. 管理视图信息架构（`ManageView` 六个标签页）
+
+| 标签页 | 组件 | 内容 |
+|---|---|---|
+| 模型（默认页） | `ModelsTab` | 模型库（`ModelLibrary`）→ 测试（`ModelTesterPanel embedded`，§20）→ 角色分配（`ModelsSection`，§16.6）；规格抽屉（`ModelSpecDrawer`，§21） |
+| Agent | `AgentsTab` | 状态 chips + 可交互 `AgentFlow` + `AgentsSection`（`VibeCard` / Agent 行，§16.6） |
+| 插件 | `PluginsPanel` | §4.12–§4.22 用户级插件 / marketplace |
+| Skills | `SkillsPanel` | §4.12–§4.22 registry 技能 |
+| MCP | `McpPanel` | §4.30–§4.35 原生配置读写 |
+| 记忆库 | `MemoryPanel` | §18 浏览与维护 |
+
+- `ModelDraftStatus`（模型列表/兜底状态条）由「模型」「Agent」两页共用；
+  两页各持一份 `useModelDraft` 草稿，刷新与保存互不干扰。
+- 旧「模型与 Agent」页已拆分为「模型」与「Agent」，旧「模型测试」页已并入「模型」页的「测试」区。
