@@ -5,6 +5,7 @@
  * `allowUnset` 提供「未设置 / 不覆盖」（保存时删除该条目）。
  */
 import { useEffect, useRef, useState } from "react";
+import "./ModelPicker.css";
 import type { ModelInfo } from "../types";
 import { formatContextWindow, formatCost } from "../roleCards";
 interface ModelPickerProps {
@@ -16,6 +17,10 @@ interface ModelPickerProps {
   allowUnset: boolean;
   disabled: boolean;
   label: string;
+  /** 可选的行徽章（如「已加入」/「已有变体」）；返回 null 不显示。 */
+  badgeFor?: (model: ModelInfo) => string | null;
+  /** 内联形态：列表常显（添加模型对话框用），按钮点击聚焦搜索框而非折叠。 */
+  inline?: boolean;
 }
 
 interface ProviderGroup {
@@ -47,19 +52,20 @@ function ModelMeta(props: { model: ModelInfo }) {
 }
 
 export function ModelPicker(props: ModelPickerProps) {
-  const { models, value, onChange, unsetLabel, allowUnset, disabled, label } = props;
-  const [open, setOpen] = useState(false);
+  const { models, value, onChange, unsetLabel, allowUnset, disabled, label, badgeFor, inline = false } = props;
+  const [open, setOpen] = useState(inline);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const close = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+  }, [open, inline]);
 
   const needle = query.trim().toLowerCase();
   const visible = needle
@@ -79,9 +85,13 @@ export function ModelPicker(props: ModelPickerProps) {
         type="button"
         className="model-picker-btn"
         aria-label={label}
-        aria-expanded={open}
+        aria-expanded={inline ? true : open}
         disabled={disabled}
         onClick={() => {
+          if (inline) {
+            searchRef.current?.focus();
+            return;
+          }
           setQuery("");
           setOpen(!open);
         }}
@@ -100,7 +110,7 @@ export function ModelPicker(props: ModelPickerProps) {
           </>
         )}
       </button>
-      {open ? (
+      {inline || open ? (
         <div className="model-picker-pop">
           <input
             className="filter-input"
@@ -108,6 +118,7 @@ export function ModelPicker(props: ModelPickerProps) {
             value={query}
             aria-label="搜索模型"
             autoFocus
+            ref={searchRef}
             onChange={(e) => setQuery(e.target.value)}
           />
           <ul className="model-picker-list" role="listbox" aria-label={label}>
@@ -118,7 +129,7 @@ export function ModelPicker(props: ModelPickerProps) {
                   className="model-picker-item"
                   onClick={() => {
                     onChange(null);
-                    setOpen(false);
+                    if (!inline) setOpen(false);
                   }}
                 >
                   <span className="muted">{unsetLabel}</span>
@@ -131,7 +142,7 @@ export function ModelPicker(props: ModelPickerProps) {
                   type="button"
                   className="model-picker-item"
                   onClick={() => {
-                    setOpen(false);
+                    if (!inline) setOpen(false);
                   }}
                 >
                   <span className="mono">{value}</span>
@@ -154,11 +165,12 @@ export function ModelPicker(props: ModelPickerProps) {
                         }
                         onClick={() => {
                           onChange(m.selector);
-                          setOpen(false);
+                          if (!inline) setOpen(false);
                         }}
                       >
                         <span className="model-picker-name">{m.name}</span>
                         <span className="badge badge-grey">{m.provider}</span>
+                        {badgeFor?.(m) ? <span className="badge badge-grey">{badgeFor(m)}</span> : null}
                         <span className="mono muted model-picker-selector">{m.selector}</span>
                         <ModelMeta model={m} />
                       </button>

@@ -36,9 +36,13 @@ const MODELS: ModelInfo[] = [
     name: "Fast One",
     thinkingLevels: ["low", "high"],
     contextWindow: 1_000_000,
+    maxTokens: null,
     reasoning: true,
+    input: ["text"],
     costInput: 0.3,
     costOutput: 1.2,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
   {
     selector: "p1/big",
@@ -47,9 +51,13 @@ const MODELS: ModelInfo[] = [
     name: "Big One",
     thinkingLevels: ["high", "max"],
     contextWindow: 200_000,
+    maxTokens: null,
     reasoning: true,
+    input: ["text"],
     costInput: null,
     costOutput: null,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
   {
     selector: "p2/other",
@@ -58,9 +66,13 @@ const MODELS: ModelInfo[] = [
     name: "Other",
     thinkingLevels: [],
     contextWindow: null,
+    maxTokens: null,
     reasoning: false,
+    input: ["text"],
     costInput: 1,
     costOutput: null,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
 ];
 
@@ -131,6 +143,7 @@ describe("Agent 实际使用模型", () => {
       provider: "p1",
       sourceText: "来自「改用模型」",
       thinking: "max",
+      selector: "p1/big",
     });
   });
 
@@ -167,6 +180,7 @@ describe("Agent 实际使用模型", () => {
       provider: "p1",
       sourceText: "内置默认 @smol → 轻快任务角色",
       thinking: "low",
+      selector: "p1/fast",
     });
   });
 
@@ -228,6 +242,29 @@ describe("Agent 实际使用模型", () => {
     expect(resolveAgentEffective(agent(), undefined, {}, MODELS).provider).toBeNull();
     expect(
       resolveAgentEffective(agent({ defaultModel: [] }), undefined, roles, MODELS).provider,
+    ).toBeNull();
+  });
+
+  it("selector：去 thinking 后缀；跟随会话/内置默认时为 null", () => {
+    // 覆盖里的别名展开到底层 selector。
+    expect(resolveAgentEffective(agent(), "@smol:high", roles, MODELS).selector).toBe("p1/fast");
+    // 未知 selector 也给出（吸附查找用；打标仍看 provider）。
+    expect(resolveAgentEffective(agent(), "retired/old:high", roles, MODELS).selector).toBe(
+      "retired/old",
+    );
+    // 直接指定的字面内置默认。
+    expect(
+      resolveAgentEffective(agent({ defaultModel: ["p2/other"] }), undefined, roles, MODELS)
+        .selector,
+    ).toBe("p2/other");
+    // 别名指向的角色值非字符串 → 内置默认 → 无 selector。
+    expect(
+      resolveAgentEffective(agent(), undefined, { smol: 5 }, MODELS).selector,
+    ).toBeNull();
+    // 未配置别名走内置默认 / 无默认跟随会话：无 selector。
+    expect(resolveAgentEffective(agent(), undefined, {}, MODELS).selector).toBeNull();
+    expect(
+      resolveAgentEffective(agent({ defaultModel: [] }), undefined, roles, MODELS).selector,
     ).toBeNull();
   });
 

@@ -70,8 +70,14 @@ function pill(x: number, y: number, text: string, tone: "danger" | "accent" | "g
   );
 }
 
-export function AgentFlow(props: { nodes: AgentFlowNode[]; orchestratorText: string }) {
-  const { nodes, orchestratorText } = props;
+export function AgentFlow(props: {
+  nodes: AgentFlowNode[];
+  orchestratorText: string;
+  /** 提供后节点可点击/键盘选中（AgentsTab 用）；不提供时与原来完全一致。 */
+  onSelect?: (agent: string) => void;
+  selected?: string | null;
+}) {
+  const { nodes, orchestratorText, onSelect, selected } = props;
   if (nodes.length === 0) return null;
   const nodesHeight = nodes.length * NODE_H + (nodes.length - 1) * GAP;
   const height = Math.max(nodesHeight, ORCH_H) + PAD * 2;
@@ -172,8 +178,28 @@ export function AgentFlow(props: { nodes: AgentFlowNode[]; orchestratorText: str
               : node.advisor === "off"
                 ? pill(pillX, y + 24, "顾问关", "grey")
                 : null;
+          const interactive = onSelect !== undefined;
           return (
-            <g key={node.agent.name} data-testid={`agent-flow-node-${node.agent.name}`}>
+            <g
+              key={node.agent.name}
+              data-testid={`agent-flow-node-${node.agent.name}`}
+              {...(interactive
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-label": `定位到 ${node.agent.name} 的配置行`,
+                    "aria-pressed": selected === node.agent.name,
+                    className: selected === node.agent.name ? "flow-node-selected" : undefined,
+                    onClick: () => onSelect?.(node.agent.name),
+                    onKeyDown: (event: React.KeyboardEvent<SVGGElement>) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelect?.(node.agent.name);
+                      }
+                    },
+                  }
+                : {})}
+            >
               <title>
                 {`${node.agent.name}（${label}）：${duty}\n当前使用：${modelText}\n${node.effective.sourceText}`}
               </title>

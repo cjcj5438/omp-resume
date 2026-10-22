@@ -187,6 +187,8 @@ export interface AgentEffective {
   sourceText: string;
   /** 思考强度（"" 表示默认）。 */
   thinking: string;
+  /** 生效模型的 selector（去 thinking 后缀）；跟随会话 / 内置默认 / 未知形状时为 null。 */
+  selector: string | null;
 }
 
 export interface AliasResolved {
@@ -197,6 +199,8 @@ export interface AliasResolved {
   /** `@smol → 轻快任务角色`；兜底时附 `（smol未配置）`；内置时为 `@smol`。 */
   arrowText: string;
   builtin: boolean;
+  /** 别名解析到底层模型的 selector；走内置默认时为 null。 */
+  selector: string | null;
 }
 
 /**
@@ -223,6 +227,7 @@ function resolveAliasValue(
       thinking: alias.thinking || fallbackThinking,
       arrowText: `@${alias.role}`,
       builtin: true,
+      selector: null,
     };
   }
   const resolved = resolveRoleFallback(alias.role, roles);
@@ -234,6 +239,7 @@ function resolveAliasValue(
       thinking: alias.thinking || fallbackThinking,
       arrowText: `@${alias.role}`,
       builtin: true,
+      selector: null,
     };
   }
   const parsed = parseSelectorValue(resolved.selector);
@@ -250,6 +256,7 @@ function resolveAliasValue(
         ? `@${alias.role} → ${display}角色`
         : `@${alias.role} → ${viaDisplay}角色（${alias.role}未配置）`,
     builtin: false,
+    selector: parsed.selector,
   };
 }
 
@@ -277,6 +284,7 @@ export function resolveAgentEffective(
           ? `改用 ${resolved.arrowText}（跟随该角色）`
           : `来自「改用模型」${resolved.arrowText}`,
         thinking: resolved.thinking,
+        selector: resolved.selector,
       };
     }
     const parsed = parseSelectorValue(raw);
@@ -287,6 +295,7 @@ export function resolveAgentEffective(
       provider: name === null ? null : modelProvider(parsed.selector, models),
       sourceText: "来自「改用模型」",
       thinking: parsed.thinking || fallbackThinking,
+      selector: parsed.selector,
     };
   }
   const first = agent.defaultModel[0];
@@ -297,6 +306,7 @@ export function resolveAgentEffective(
       provider: null,
       sourceText: "该 Agent 未指定默认模型",
       thinking: fallbackThinking,
+      selector: null,
     };
   }
   const more =
@@ -309,6 +319,7 @@ export function resolveAgentEffective(
       provider: resolvedDefault.provider,
       sourceText: `内置默认 ${resolvedDefault.arrowText}${more}`,
       thinking: resolvedDefault.thinking,
+      selector: resolvedDefault.selector,
     };
   }
   const parsed = parseSelectorValue(first);
@@ -319,6 +330,7 @@ export function resolveAgentEffective(
     provider: name === null ? null : modelProvider(parsed.selector, models),
     sourceText: `内置默认（直接指定模型）${more}`,
     thinking: parsed.thinking || fallbackThinking,
+    selector: parsed.selector,
   };
 }
 

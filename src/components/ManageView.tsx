@@ -1,6 +1,6 @@
 /**
- * 管理视图：插件 / Skills / MCP 三个标签页 + 全部更新 + 单操作日志。
- * 单操作模型（useOmpOp）在此创建并传入插件与技能面板；MCP 面板不感知
+ * 管理视图：模型 / Agent / 插件 / Skills / MCP / 记忆库六个标签页 + 全部更新 + 单操作日志。
+ * 单操作模型（useOmpOp）在此创建并传入插件与技能面板；模型/Agent/MCP 面板不感知
  * omp 操作，用 fieldset 在忙时禁用其内部按钮（结构保持不变，不重挂载）。
  */
 import { useState } from "react";
@@ -15,7 +15,8 @@ import { errorText } from "../format";
 import type { OmpUpdateCheck, PluginUpgradeChange } from "../types";
 import { McpPanel } from "./McpPanel";
 import { MemoryPanel } from "./MemoryPanel";
-import { ModelsAgentsPanel } from "./ModelsAgentsPanel";
+import { AgentsTab } from "./AgentsTab";
+import { ModelsTab } from "./ModelsTab";
 import { PluginsPanel, upgradeIsUpToDate } from "./PluginsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { useAlive, useOmpOp, type ToastFn } from "./useOmpOp";
@@ -36,7 +37,7 @@ interface ManageViewProps {
   onOpenSession: (sessionId: string) => void;
 }
 
-type ManageTab = "models" | "plugins" | "skills" | "mcp" | "memory";
+type ManageTab = "models" | "agents" | "plugins" | "skills" | "mcp" | "memory";
 
 interface UpdateAllStep {
   name: string;
@@ -45,7 +46,8 @@ interface UpdateAllStep {
 }
 
 const TABS: { key: ManageTab; label: string }[] = [
-  { key: "models", label: "模型与 Agent" },
+  { key: "models", label: "模型" },
+  { key: "agents", label: "Agent" },
   { key: "plugins", label: "插件" },
   { key: "skills", label: "Skills" },
   { key: "mcp", label: "MCP" },
@@ -194,7 +196,12 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
       >
         {tab === "models" ? (
           <fieldset disabled={busy} className="manage-fieldset">
-            <ModelsAgentsPanel onToast={onToast} />
+            {/* 忙时整页禁用是故意的：bench 虽不占单写锁，但全部更新期间避免一切中途编辑。 */}
+            <ModelsTab onToast={onToast} />
+          </fieldset>
+        ) : tab === "agents" ? (
+          <fieldset disabled={busy} className="manage-fieldset">
+            <AgentsTab onToast={onToast} />
           </fieldset>
         ) : tab === "plugins" ? (
           <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} />

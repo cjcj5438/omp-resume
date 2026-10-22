@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import type { UsageHealthTimelinePoint, UsageTrendPoint, UsageTrendUnit } from "../types";
+import type { BenchBucket } from "../modelBench";
+import { formatRate, formatTps, formatUsd } from "../modelBench";
 import { usageMoney, usageNumber } from "./UsageSummary";
 import { barHeights, cacheHitSeries, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
 import "./Usage.css";
-
 const W = 600;
 const H = 200;
 const PLOT_X = 8;
@@ -164,6 +165,90 @@ export function CacheHitChart({ unit, points }: { unit: UsageTrendUnit; points: 
         );
       })}
       <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
+    </svg>
+  );
+}
+
+/** bench 成功率柱状图：无请求的桶不断线、画空位（与花费图同构）。 */
+export function BenchRateChart({ unit, buckets }: { unit: UsageTrendUnit; buckets: BenchBucket[] }) {
+  const heights = barHeights(buckets.map((b) => b.rate ?? 0), PLOT_H);
+  const { x, w, centers } = barStep(buckets.length);
+  const requests = buckets.reduce((n, b) => n + b.requests, 0);
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="chart"
+      role="img"
+      aria-label={`成功率趋势：${buckets.length} ${unit === "hour" ? "小时" : "天"}，共 ${usageNumber(requests)} 次请求`}
+    >
+      <line x1={PLOT_X} y1={BASE_Y} x2={PLOT_X + PLOT_W} y2={BASE_Y} className="chart-grid" />
+      {buckets.map((b, i) => (
+        <ChartBucket
+          key={b.key}
+          i={i}
+          count={buckets.length}
+          tip={b.rate === null ? `${b.key}\n无测试` : `${b.key}\n成功率 ${formatRate(b.rate)}\n${usageNumber(b.ok)} / ${usageNumber(b.requests)} 次 · ${usageNumber(b.rounds)} 轮`}
+        >
+          {b.rate === null ? null : (
+            <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar" />
+          )}
+        </ChartBucket>
+      ))}
+      <ChartAxis keys={buckets.map((b) => b.key)} unit={unit} centers={centers} />
+    </svg>
+  );
+}
+
+/** bench tok/s 折线：无成功轮次的桶断线（与缓存命中图同构）。 */
+export function BenchTpsChart({ unit, buckets }: { unit: UsageTrendUnit; buckets: BenchBucket[] }) {
+  const values = buckets.map((b) => b.tps);
+  const { centers } = barStep(buckets.length);
+  const max = Math.max(0, ...values.filter((v): v is number => v !== null));
+  const y = (v: number): number => PLOT_TOP + (max > 0 ? (1 - v / max) * PLOT_H : PLOT_H);
+  const runs: { i: number; v: number }[][] = [];
+  values.forEach((v, i) => {
+    if (v === null) return;
+    const last = runs[runs.length - 1];
+    if (last !== undefined && last[last.length - 1].i === i - 1) last.push({ i, v });
+    else runs.push([{ i, v }]);
+  });
+  const valid = values.filter((v): v is number => v !== null);
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="chart"
+      role="img"
+      aria-label={`生成速度趋势：${valid.length} 个桶有数据${valid.length > 0 ? `，最高 ${formatTps(Math.max(...valid))} tok/s` : ""}`}
+    >
+      {[max, max / 2, 0].map((g, gi) => (
+        <g key={gi} aria-hidden="true">
+          <line x1={PLOT_X} y1={y(g)} x2={PLOT_X + PLOT_W} y2={y(g)} className="chart-grid" />
+          <text x={PLOT_X + PLOT_W - 4} y={y(g) - 4} textAnchor="end" className="chart-tick">
+            {formatTps(max > 0 ? g : null)}
+          </text>
+        </g>
+      ))}
+      {runs.map((run, ri) => (
+        <polyline
+          key={ri}
+          points={run.map((p) => `${centers[p.i]},${y(p.v)}`).join(" ")}
+          className="chart-line"
+        />
+      ))}
+      {buckets.map((b, i) => {
+        const v = values[i];
+        return (
+          <ChartBucket
+            key={b.key}
+            i={i}
+            count={buckets.length}
+            tip={v === null ? `${b.key}\n无成功轮次` : `${b.key}\n${formatTps(v)} tok/s\n${usageNumber(b.rounds)} 轮 · 成功率 ${formatRate(b.rate)} · 花费 ${formatUsd(b.cost)}`}
+          >
+            {v === null ? null : <circle cx={centers[i]} cy={y(v)} r={2.5} className="chart-dot" />}
+          </ChartBucket>
+        );
+      })}
+      <ChartAxis keys={buckets.map((b) => b.key)} unit={unit} centers={centers} />
     </svg>
   );
 }

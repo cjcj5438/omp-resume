@@ -13,7 +13,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
-import type { AgentDefinition, AppError, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import type { AgentDefinition, AppError, BenchRound, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry, UsageRange } from "../types";
 import {
@@ -272,15 +272,15 @@ export interface MockHandle {
 }
 
 const MOCK_MODELS: ModelInfo[] = [
-  { selector: "5438/deepseek-v4.1-flash", provider: "5438", id: "deepseek-v4.1-flash", name: "DeepSeek v4.1 Flash (5438)", thinkingLevels: ["low", "high", "max"], contextWindow: 1000000, reasoning: true, costInput: 0.3, costOutput: 1.2 },
-  { selector: "5438/glm-5.3-flash", provider: "5438", id: "glm-5.3-flash", name: "GLM 5.3 Flash (5438)", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 1048576, reasoning: true, costInput: 0.15, costOutput: 0.5 },
-  { selector: "5438/mimo-v2.6-pro", provider: "5438", id: "mimo-v2.6-pro", name: "MiMo v2.6 Pro (5438)", thinkingLevels: ["low", "medium", "high"], contextWindow: 200000, reasoning: true, costInput: 1, costOutput: 4 },
-  { selector: "5438/muse-spark-1.3-contributor", provider: "5438", id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor", thinkingLevels: ["minimal", "low", "medium", "high", "max"], contextWindow: 256000, reasoning: true, costInput: 2, costOutput: 8 },
-  { selector: "5438-claude/claude-sonnet-5-5", provider: "5438-claude", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 400000, reasoning: true, costInput: 3, costOutput: 15 },
-  { selector: "5438-claude/claude-opus-5-5", provider: "5438-claude", id: "claude-opus-5-5", name: "Claude Opus 5.5", thinkingLevels: ["low", "medium", "high", "max"], contextWindow: 400000, reasoning: true, costInput: 15, costOutput: 75 },
-  { selector: "5438-claude/claude-haiku-5-5", provider: "5438-claude", id: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinkingLevels: ["low", "high"], contextWindow: 200000, reasoning: true, costInput: 1, costOutput: 5 },
-  { selector: "factory-droid/gpt-6.1-sol", provider: "factory-droid", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", thinkingLevels: ["medium", "high", "xhigh"], contextWindow: 300000, reasoning: true, costInput: 2, costOutput: 10 },
-  { selector: "factory-droid/claude-sonnet-5-5", provider: "factory-droid", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (factory-droid)", thinkingLevels: ["low", "high", "max"], contextWindow: 400000, reasoning: true, costInput: 3, costOutput: 15 },
+  { selector: "5438/deepseek-v4.1-flash", provider: "5438", id: "deepseek-v4.1-flash", name: "DeepSeek v4.1 Flash (5438)", thinkingLevels: ["low", "high", "max"], contextWindow: 1000000, maxTokens: 393216, reasoning: true, input: ["text", "image"], costInput: 0.3, costOutput: 1.2, costCacheRead: 0.006, costCacheWrite: 0 },
+  { selector: "5438/glm-5.3-flash", provider: "5438", id: "glm-5.3-flash", name: "GLM 5.3 Flash (5438)", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 1048576, maxTokens: 131072, reasoning: true, input: ["text", "image"], costInput: 0.15, costOutput: 0.5, costCacheRead: 0.003, costCacheWrite: 0 },
+  { selector: "5438/mimo-v2.6-pro", provider: "5438", id: "mimo-v2.6-pro", name: "MiMo v2.6 Pro (5438)", thinkingLevels: ["low", "medium", "high"], contextWindow: 200000, maxTokens: 65536, reasoning: true, input: ["text"], costInput: 1, costOutput: 4, costCacheRead: 0.02, costCacheWrite: 0 },
+  { selector: "5438/muse-spark-1.3-contributor", provider: "5438", id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor", thinkingLevels: ["minimal", "low", "medium", "high", "max"], contextWindow: 256000, maxTokens: 65536, reasoning: true, input: ["text", "image"], costInput: 2, costOutput: 8, costCacheRead: 0.04, costCacheWrite: 0 },
+  { selector: "5438-claude/claude-sonnet-5-5", provider: "5438-claude", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], contextWindow: 400000, maxTokens: 128000, reasoning: true, input: ["text", "image"], costInput: 3, costOutput: 15, costCacheRead: 0.3, costCacheWrite: 3.75 },
+  { selector: "5438-claude/claude-opus-5-5", provider: "5438-claude", id: "claude-opus-5-5", name: "Claude Opus 5.5", thinkingLevels: ["low", "medium", "high", "max"], contextWindow: 400000, maxTokens: 128000, reasoning: true, input: ["text", "image"], costInput: 15, costOutput: 75, costCacheRead: 1.5, costCacheWrite: 18.75 },
+  { selector: "5438-claude/claude-haiku-5-5", provider: "5438-claude", id: "claude-haiku-5-5", name: "Claude Haiku 5.5", thinkingLevels: ["low", "high"], contextWindow: 200000, maxTokens: 64000, reasoning: true, input: ["text"], costInput: 1, costOutput: 5, costCacheRead: 0.1, costCacheWrite: 1.25 },
+  { selector: "factory-droid/gpt-6.1-sol", provider: "factory-droid", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", thinkingLevels: ["medium", "high", "xhigh"], contextWindow: 300000, maxTokens: 100000, reasoning: true, input: ["text", "image"], costInput: 2, costOutput: 10, costCacheRead: 0.2, costCacheWrite: 0 },
+  { selector: "factory-droid/claude-sonnet-5-5", provider: "factory-droid", id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (factory-droid)", thinkingLevels: ["low", "high", "max"], contextWindow: 400000, maxTokens: 128000, reasoning: true, input: ["text", "image"], costInput: 3, costOutput: 15, costCacheRead: 0.3, costCacheWrite: 3.75 },
 ];
 
 const MOCK_AGENTS: AgentDefinition[] = [
@@ -358,6 +358,206 @@ function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
   };
 }
 
+/** 模型规格 mock：9 个 MOCK_MODELS 的内存规格，可编辑，revision 自增。永不读真实文件。 */
+function createSpecsMock(forceConflict: boolean) {
+  let revision = 0;
+  // haiku 行故意缺 maxTokens/input/cost 子集，演示 null 规格。
+  const specs: ModelSpec[] = MOCK_MODELS.map((model): ModelSpec => ({
+    provider: model.provider,
+    id: model.id,
+    selector: model.selector,
+    name: model.name,
+    contextWindow: model.contextWindow,
+    maxTokens: model.id === "claude-haiku-5-5" ? null : model.maxTokens,
+    reasoning: model.reasoning,
+    input: model.id === "claude-haiku-5-5" ? null : [...model.input],
+    costInput: model.costInput,
+    costOutput: model.costOutput,
+    costCacheRead: model.id === "claude-haiku-5-5" ? null : model.costCacheRead,
+    costCacheWrite: model.costCacheWrite,
+    // haiku 行演示分层价：四费用 None 化由 Rust 侧做，mock 直接标 tiered。
+    costTiered: model.id === "claude-haiku-5-5",
+  }));
+  const snapshot = (): ModelSpecsResult => ({
+    path: "/mock/.omp/agent/models.yml",
+    available: true,
+    revision: `mock-rev-${revision}`,
+    specs: structuredClone(specs),
+    error: null,
+  });
+  return (cmd: string, args: Record<string, unknown>) => {
+    if (cmd === "get_model_specs") return snapshot();
+    const provider = args["provider"];
+    const id = args["id"];
+    const expectedRevision = args["expectedRevision"];
+    // 与 Rust validate_target 同口径（model_specs.rs:863-879）。
+    for (const [label, value] of [["provider", provider], ["模型 id", id]] as const) {
+      if (typeof value !== "string" || value.trim() === "") throw err("INVALID_INPUT", `${label}不能为空`);
+      if (value.length > 200) throw err("INVALID_INPUT", `${label}过长（最多 200 个字符）`);
+      if (value.includes("\n") || value.includes("\r")) throw err("INVALID_INPUT", `${label}不能换行`);
+    }
+    if ((provider as string).includes("/") || (id as string).includes("/")) {
+      throw err("INVALID_INPUT", "provider 与模型 id 不能包含 /");
+    }
+    const target = specs.find((spec) => spec.provider === provider && spec.id === id);
+    if (!target) throw err("INVALID_INPUT", "未找到指定的模型");
+    if (typeof expectedRevision !== "string" || expectedRevision.trim() === "") {
+      throw err("INVALID_INPUT", "缺少 revision，请刷新后重试");
+    }
+    if (expectedRevision === "absent" || expectedRevision === "unreadable") {
+      throw err("INVALID_INPUT", "模型规格文件不可写，请刷新后重试");
+    }
+    if (forceConflict || expectedRevision !== `mock-rev-${revision}`) {
+      throw err("CONFLICT", "模型规格文件已被外部修改，请刷新后重试");
+    }
+    const patch = (args["patch"] ?? {}) as ModelSpecPatch;
+    // 分层价模型整模型拒改（与 Rust 写侧一致）。
+    if (target.costTiered) {
+      throw err("INVALID_INPUT", "该模型的 cost 含分层价格，暂不支持自动编辑，请手动编辑 models.yml");
+    }
+    if (patch.name !== undefined) {
+      if (typeof patch.name !== "string" || patch.name.trim() === "") throw err("INVALID_INPUT", "模型名称不能为空");
+      if ([...patch.name].length > 200) throw err("INVALID_INPUT", "模型名称过长（最多 200 个字符）");
+      if (patch.name.includes("\n") || patch.name.includes("\r")) throw err("INVALID_INPUT", "模型名称不能换行");
+      // 与 Rust 同口径：全部 Cc 控制字符 + YAML 换行符（含 \t）。
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(patch.name)) {
+        throw err("INVALID_INPUT", "模型名称包含非法字符");
+      }
+    }
+    for (const [label, value] of [["上下文窗口", patch.contextWindow], ["最大输出", patch.maxTokens]] as const) {
+      if (value === undefined) continue;
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+        throw err("INVALID_INPUT", `${label}必须大于 0`);
+      }
+    }
+    if (patch.input !== undefined) {
+      if (!Array.isArray(patch.input) || patch.input.length === 0) throw err("INVALID_INPUT", "输入类型不能为空");
+      if (patch.input.length > 8) throw err("INVALID_INPUT", "输入类型过多（最多 8 个）");
+      const seen = new Set(patch.input);
+      if (seen.size !== patch.input.length) throw err("INVALID_INPUT", "输入类型不能重复");
+      for (const item of patch.input) {
+        if (item !== "text" && item !== "image") throw err("INVALID_INPUT", `不支持的输入类型：${item}`);
+      }
+    }
+    if (patch.cost !== undefined) {
+      const entries = [["输入价格", patch.cost.input], ["输出价格", patch.cost.output], ["缓存读取价格", patch.cost.cacheRead], ["缓存写入价格", patch.cost.cacheWrite]] as const;
+      for (const [label, value] of entries) {
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1e9) {
+          throw err("INVALID_INPUT", `${label}必须是非负有限数`);
+        }
+      }
+    }
+    // 无变化补丁：与 Rust 一致返回原 revision + 空备份路径，不自增。
+    const noop =
+      (patch.name === undefined || patch.name === target.name) &&
+      (patch.contextWindow === undefined || patch.contextWindow === target.contextWindow) &&
+      (patch.maxTokens === undefined || patch.maxTokens === target.maxTokens) &&
+      (patch.reasoning === undefined || patch.reasoning === target.reasoning) &&
+      (patch.input === undefined || (target.input !== null && patch.input.length === target.input.length && patch.input.every((v, i) => v === (target.input as string[])[i]))) &&
+      (patch.cost === undefined ||
+        (patch.cost.input === target.costInput && patch.cost.output === target.costOutput && patch.cost.cacheRead === target.costCacheRead && patch.cost.cacheWrite === target.costCacheWrite));
+    if (noop) {
+      return {
+        revision: `mock-rev-${revision}`,
+        spec: structuredClone(target),
+        backupPath: "",
+      } satisfies ModelSpecUpdateResult;
+    }
+    if (patch.name !== undefined) target.name = patch.name;
+    if (patch.contextWindow !== undefined) target.contextWindow = patch.contextWindow;
+    if (patch.maxTokens !== undefined) target.maxTokens = patch.maxTokens;
+    if (patch.reasoning !== undefined) target.reasoning = patch.reasoning;
+    if (patch.input !== undefined) target.input = [...patch.input];
+    if (patch.cost !== undefined) {
+      target.costInput = patch.cost.input;
+      target.costOutput = patch.cost.output;
+      target.costCacheRead = patch.cost.cacheRead;
+      target.costCacheWrite = patch.cost.cacheWrite;
+    }
+    revision += 1;
+    const result: ModelSpecUpdateResult = {
+      revision: `mock-rev-${revision}`,
+      spec: structuredClone(target),
+      backupPath: `/mock/.omp/agent/models.yml.omp-resume.mock-${revision}.bak`,
+    };
+    return result;
+  };
+}
+
+/** 模型测试器 mock：7 天 bench 历史（5 模型 × 3 provider，含一个常挂 403 模型）。 */
+function createBenchMock() {
+  // 与上方 model mock 的 modelRoles 值逐字对齐（含 :thinking 后缀）：
+  // default / slow / plan / commit / image。其中 commit 的常挂 403（chat 角色，行可见）。
+  const MOCK_BENCH_SELECTORS = [
+    "5438/muse-spark-1.3-contributor:max",
+    "5438-claude/claude-opus-5-5:high",
+    "5438-claude/claude-sonnet-5-5:xhigh",
+    "5438/deepseek-v4.1-flash:max",
+    "factory-droid/gpt-6.1-sol:high",
+  ];
+  const FAILING = "5438/deepseek-v4.1-flash:max";
+  const weight = (i: number, salt: number): number => {
+    const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  const roundAt = (sel: string, at: string, seed: number, failing: boolean, recent: boolean): BenchRound => {
+    if (failing) {
+      return {
+        at, selector: sel, total: 8, ok: 0, ttftP50Ms: null, ttftP95Ms: null,
+        tpsP50: null, tpsCv: null, cost: 0, errors: ["403 Forbidden: invalid API key"],
+      };
+    }
+    // 近两天的轮次全成功（演示一键推荐），更早的偶发一次失败。
+    const ok = recent || weight(seed, 3) >= 0.12 ? 8 : 7;
+    const ttft = 400 + weight(seed, 5) * 1600;
+    const tps = 18 + weight(seed, 7) * 42;
+    return {
+      at, selector: sel, total: 8, ok,
+      ttftP50Ms: Math.round(ttft),
+      ttftP95Ms: Math.round(ttft * (1.3 + weight(seed, 9) * 0.5)),
+      tpsP50: Math.round(tps * 10) / 10,
+      tpsCv: Math.round(weight(seed, 11) * 0.25 * 1000) / 1000,
+      cost: Math.round((0.002 + weight(seed, 13) * 0.02) * 10000) / 10000,
+      errors: ok === 8 ? [] : ["timeout after 360s"],
+    };
+  };
+  const now = Date.now();
+  const day = 86400000;
+  let history: BenchRound[] = [];
+  MOCK_BENCH_SELECTORS.forEach((sel, mi) => {
+    for (let d = 6; d >= 0; d -= 1) {
+      // 最近两天每天两轮（24h 样本 ≥5），更早每天一轮；最后一轮落在 1 小时内。
+      const times = d < 2 ? [now - d * day - 3600000 * (2 + mi), now - d * day - 3600000 * (8 + mi)] : [now - d * day - 3600000 * (4 + mi)];
+      times.forEach((t, ti) => {
+        history.push(roundAt(sel, new Date(t).toISOString(), mi * 100 + d * 10 + ti, sel === FAILING, d < 2));
+      });
+    }
+  });
+  history.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+  return (cmd: string, args: Record<string, unknown>) => {
+    if (cmd === "model_bench_history") return structuredClone(history);
+    if (cmd === "model_perf_list") {
+      const perfs: ModelPerf[] = MOCK_BENCH_SELECTORS.slice(0, 4).map((sel, i) => ({
+        selector: sel.includes(":") ? sel.split(":")[0] : sel,
+        samples: 120 - i * 17,
+        ttftMs: Math.round(700 + weight(i, 21) * 900),
+        tps: Math.round((22 + weight(i, 23) * 30) * 10) / 10,
+        updatedAt: new Date(now - 3600000 * (1 + i * 5)).toISOString(),
+      }));
+      return perfs;
+    }
+    const selector = args["selector"];
+    if (typeof selector !== "string" || !selector.includes("/")) {
+      throw err("INVALID_INPUT", "selector 必须是 provider/model[:thinking]");
+    }
+    const round = roundAt(selector, new Date().toISOString(), history.length * 7 + 1, selector === FAILING, true);
+    history = [...history, round];
+    return structuredClone(round);
+  };
+}
+
 export async function installMockBackend(): Promise<MockHandle> {
   const params = new URLSearchParams(window.location.search);
   const latency = Number(params.get("latency") ?? "0") || 0;
@@ -377,6 +577,10 @@ export async function installMockBackend(): Promise<MockHandle> {
     (params.get("conflict") ?? "").split(",").includes("update_model_config"),
     params.get("fallback") === "off",
   );
+  const specs = createSpecsMock(
+    (params.get("conflict") ?? "").split(",").includes("update_model_spec"),
+  );
+  const bench = createBenchMock();
   const memory = createMemoryMock({
     available: params.get("memory") !== "off",
     backend: params.get("memoryBackend") ?? "mnemopi",
@@ -731,6 +935,13 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "get_model_config":
       case "update_model_config":
         return model(cmd, args);
+      case "get_model_specs":
+      case "update_model_spec":
+        return specs(cmd, args);
+      case "model_bench_run":
+      case "model_bench_history":
+      case "model_perf_list":
+        return bench(cmd, args);
       case "memory_overview":
       case "memory_list":
       case "memory_detail":

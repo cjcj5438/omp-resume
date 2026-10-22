@@ -506,9 +506,13 @@ export interface ModelInfo {
   name: string;
   thinkingLevels: string[];
   contextWindow: number | null;
+  maxTokens: number | null;
   reasoning: boolean;
+  input: string[];
   costInput: number | null;
   costOutput: number | null;
+  costCacheRead: number | null;
+  costCacheWrite: number | null;
 }
 
 export type AgentSource = "builtin" | "user";
@@ -546,6 +550,66 @@ export interface UpdateModelConfigResult {
   value: unknown;
 }
 
+// 模型规格编辑（CONTRACT §21）：models.yml 非凭据字段的读-改-写。
+
+/** 单个模型的规格快照：只含非凭据字段；`selector` 为 `provider/id`。 */
+export interface ModelSpec {
+  provider: string;
+  id: string;
+  selector: string;
+  name: string | null;
+  contextWindow: number | null;
+  maxTokens: number | null;
+  reasoning: boolean | null;
+  input: string[] | null;
+  costInput: number | null;
+  costOutput: number | null;
+  costCacheRead: number | null;
+  costCacheWrite: number | null;
+  costTiered: boolean;
+}
+
+/** `get_model_specs` 返回（`available=false` 为正常空状态）。 */
+export interface ModelSpecsResult {
+  path: string;
+  available: boolean;
+  revision: string;
+  specs: ModelSpec[];
+  error: string | null;
+}
+
+/** 费用整体替换：四个数字必须齐全。 */
+export interface ModelCostPatch {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** 规格补丁：缺席字段不触碰。 */
+export interface ModelSpecPatch {
+  name?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean;
+  input?: string[];
+  cost?: ModelCostPatch;
+}
+
+/** `update_model_spec` 请求：`expectedRevision` 为文件字节 SHA256。 */
+export interface ModelSpecPatchRequest {
+  provider: string;
+  id: string;
+  patch: ModelSpecPatch;
+  expectedRevision: string;
+}
+
+/** `update_model_spec` 返回：新 revision + 写后规格 + 备份路径。 */
+export interface ModelSpecUpdateResult {
+  revision: string;
+  spec: ModelSpec;
+  backupPath: string;
+}
 // 记忆库（CONTRACT §18）：本地 Mnemopi 记忆库浏览与维护。
 
 export interface MemoryTotals {
@@ -727,4 +791,29 @@ export interface MemoryRestoreResult {
   bank: string;
   restoredFrom: MemoryBackup;
   safetyBackup: MemoryBackup | null;
+}
+
+// 模型测试器（CONTRACT §20）：omp bench 测速结果 + omp 日常实测记录。
+
+/** 一轮 bench：短探针（5 次）+ 长探针（3 次）合成，正常 total=8。 */
+export interface BenchRound {
+  at: string;
+  selector: string;
+  total: number;
+  ok: number;
+  ttftP50Ms: number | null;
+  ttftP95Ms: number | null;
+  tpsP50: number | null;
+  tpsCv: number | null;
+  cost: number;
+  errors: string[];
+}
+
+/** omp 自家记录的日常实测（agent.db model_perf 表聚合）。 */
+export interface ModelPerf {
+  selector: string;
+  samples: number;
+  ttftMs: number | null;
+  tps: number | null;
+  updatedAt: string;
 }

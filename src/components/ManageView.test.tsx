@@ -88,13 +88,18 @@ beforeEach(() => {
 });
 
 describe("ManageView 页签", () => {
-  it("默认模型与 Agent 页，可切 插件 / Skills / MCP，返回会话回调", async () => {
+  it("默认模型页，可切 Agent / 插件 / Skills / MCP，返回会话回调", async () => {
     await installMockBackend();
     const { onBack } = renderManageView();
 
     expect(screen.getByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "模型与 Agent", selected: true })).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "主要模型" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "模型", selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "模型库" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "测试" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "角色分配" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
+    expect(screen.getByRole("tab", { name: "Agent", selected: true })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "插件" }));
     await screen.findByText("已安装插件");

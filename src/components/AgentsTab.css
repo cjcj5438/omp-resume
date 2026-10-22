@@ -1,0 +1,20 @@
+/* 「Agent」标签页：页头与状态 chips；Agent 行/流程图样式沿用 ModelsAgentsPanel.css（.models-agents 上下文）。 */
+
+.agents-tab-intro { margin: 0; }
+.agents-tab-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.agents-tab-head .agents-tab-intro { margin-right: auto; }
+.agents-tab-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.agents-tab-hint { margin: 8px 0 0; font-size: 12px; }
+
+/* 流程图点节点后的行高亮：描边强调 + 淡底，约 1.6s 后由组件移除。 */
+.models-agents .agent-row-flash {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+/* 流程图选中节点：与详情行高亮同语，取色一律走主题变量。 */
+.models-agents .agent-flow .flow-node-selected .flow-node {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.models-agents .agent-flow g[role="button"] { cursor: default; }
+.models-agents .agent-flow g[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

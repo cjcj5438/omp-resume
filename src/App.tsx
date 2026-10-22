@@ -22,6 +22,7 @@ import type {
   SessionSummary,
 } from "./types";
 import { errorText } from "./format";
+import { useBenchMonitor } from "./modelBench";
 import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, filterSessions, filterSessionsByTags, retainExisting } from "./listUtils";
 import { runContinueFromNode, type ContinueOutcome, type DeleteTarget } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
@@ -108,12 +109,13 @@ function App() {
       setMetaError(normalizeError(e));
     }
   }, []);
-
   useEffect(() => {
     void load();
     void loadMeta();
   }, [load, loadMeta]);
 
+  // 模型测试定时监控：应用开着才跑，退出就停。
+  useBenchMonitor();
   // 置顶变更即持久化（仅界面偏好，存储失败静默）。
   useEffect(() => {
     savePins(pins);

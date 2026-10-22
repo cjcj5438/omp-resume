@@ -1,12 +1,44 @@
 /**
- * ModelsAgentsPanel 测试：角色卡融合、Agent 实际使用、其他兜底、未知值保留、
+ * ModelSections 测试：角色卡融合、Agent 实际使用、其他兜底、未知值保留、
  * 部分失败与冲突。保存载荷断言用直连 mockIPC 桩。
+ * Harness 用 useModelDraft + ModelDraftStatus + ModelsSection + AgentsSection
+ * 拼出与旧 ModelsAgentsPanel 相同的 DOM（旧 wrapper 已删除）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
-import { ModelsAgentsPanel } from "./ModelsAgentsPanel";
+import { useModelDraft } from "../modelDraft";
+import { AgentsSection } from "./AgentsSection";
+import { ModelDraftStatus } from "./ModelDraftStatus";
+import { ModelsSection } from "./ModelsSection";
+import type { ToastFn } from "./useOmpOp";
+
+function Harness(props: { onToast: ToastFn }) {
+  const loaded = useModelDraft(props.onToast);
+  if (loaded.status === "loading") return <div className="pane-note">正在读取模型配置…</div>;
+  if (loaded.status === "error") {
+    return (
+      <div className="manage-section">
+        <div className="banner banner-error" role="alert">
+          <div>{loaded.loadError ?? "读取模型配置失败"}</div>
+          <button type="button" className="btn btn-small" onClick={() => void loaded.loadConfig()}>
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const s = loaded.state;
+  return (
+    <div className="manage-section">
+      <ModelDraftStatus state={s} />
+      <ModelsSection state={s} />
+      <AgentsSection state={s} />
+      <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
+    </div>
+  );
+}
 
 const MODELS: ModelInfo[] = [
   {
@@ -16,9 +48,13 @@ const MODELS: ModelInfo[] = [
     name: "MiMo v2.6 Pro (5438)",
     thinkingLevels: ["low", "high"],
     contextWindow: 200000,
+    maxTokens: null,
     reasoning: true,
+    input: ["text"],
     costInput: 1,
     costOutput: 4,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
   {
     selector: "5438/deepseek-v4.1-flash",
@@ -27,9 +63,13 @@ const MODELS: ModelInfo[] = [
     name: "DeepSeek v4.1 Flash",
     thinkingLevels: ["low", "max"],
     contextWindow: 1000000,
+    maxTokens: null,
     reasoning: true,
+    input: ["text"],
     costInput: 0.3,
     costOutput: 1.2,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
   {
     selector: "factory-droid/gpt-6.1-sol",
@@ -38,12 +78,15 @@ const MODELS: ModelInfo[] = [
     name: "GPT-6.1 Sol",
     thinkingLevels: ["high"],
     contextWindow: 300000,
+    maxTokens: null,
     reasoning: true,
+    input: ["text"],
     costInput: 2,
     costOutput: 10,
+    costCacheRead: null,
+    costCacheWrite: null,
   },
 ];
-
 const AGENTS: AgentDefinition[] = [
   {
     name: "task",
@@ -164,7 +207,7 @@ describe("主要模型（角色卡融合）", () => {
   it("主模型、按角色兜底、按模型兜底在同一张卡里", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     const card = roleCard("default");
@@ -188,7 +231,7 @@ describe("主要模型（角色卡融合）", () => {
   it("未知主模型原样保留，加角色后只写 modelRoles", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     const judge = roleCard("judge");
@@ -219,7 +262,7 @@ describe("主要模型（角色卡融合）", () => {
   it("角色卡改兜底只写兜底，且只改对应 key", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     const chain = within(roleCard("default")).getByTestId("chain-default");
@@ -237,7 +280,7 @@ describe("主要模型（角色卡融合）", () => {
   it("兜底为空时点名报错，不发请求", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     fireEvent.click(
@@ -256,7 +299,7 @@ describe("主要模型（角色卡融合）", () => {
     const saves: SaveCall[] = [];
     const stub = stubConfig(saves, { failKeys: ["retry.fallbackChains"] });
     const onToast = vi.fn();
-    render(<ModelsAgentsPanel onToast={onToast} />);
+    render(<Harness onToast={onToast} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     // 同时改主模型与兜底：两个 key 都要写。
@@ -282,7 +325,7 @@ describe("Agent", () => {
   it("每行先看当前实际使用的模型", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "Agent" });
 
     // task：覆盖生效。
@@ -298,7 +341,7 @@ describe("Agent", () => {
   it("「不改用」删除覆盖条目，未改动的 key 不重写", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "Agent" });
 
     fireEvent.click(screen.getByRole("button", { name: "scout 改用的模型" }));
@@ -321,7 +364,7 @@ describe("Agent", () => {
   it("停用与顾问只写各自配置键", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "Agent" });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "停用 deployer" }));
@@ -340,7 +383,7 @@ describe("Agent", () => {
 describe("兜底 chip 的信息展示", () => {
   it("条目显示 provider 徽章；裸条目显示「继承」档位徽章", async () => {
     stubConfig([]);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     const chips = within(within(roleCard("default")).getByTestId("chain-default")).getAllByRole(
@@ -356,7 +399,7 @@ describe("兜底 chip 的信息展示", () => {
 
   it("带后缀条目显示档位徽章；未知 selector 无 provider 徽章", async () => {
     stubConfig([]);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "其他模型的兜底" });
     fireEvent.click(screen.getByText(/共 2 条/));
 
@@ -373,7 +416,7 @@ describe("其他模型的兜底", () => {
   it("折叠展示未吸附 chain，不认识的 key 有说明", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "其他模型的兜底" });
 
     // 默认折叠：只见条数（details 收起）。
@@ -392,7 +435,7 @@ describe("其他模型的兜底", () => {
   it("改完保存只写兜底", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "其他模型的兜底" });
     fireEvent.click(screen.getByText(/共 2 条/));
 
@@ -426,7 +469,7 @@ describe("兜底总开关与冲突", () => {
         retryStatus: { modelFallback: false, fallbackOn: "usage-limit", fallbackRevertPolicy: "never" },
       },
     });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
     expect(screen.getByText(/兜底已关闭/)).toHaveTextContent("不会生效");
     expect(screen.getByText(/兜底：关/)).toHaveTextContent("仅用尽额度时切换");
@@ -435,7 +478,7 @@ describe("兜底总开关与冲突", () => {
   it("CONFLICT 提示并重新载入最新配置", async () => {
     const saves: SaveCall[] = [];
     const stub = stubConfig(saves, { conflictFirst: true });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     fireEvent.click(screen.getByTestId("expand-role-vision"));
@@ -458,7 +501,7 @@ describe("未配置角色与吸底保存条", () => {
   it("紧凑行显示实际使用，点「设置」展开成卡、可再收起", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     // memory 沿回退链用 default 的模型；advisor 只认已配置的 slow，走内置。
@@ -480,7 +523,7 @@ describe("未配置角色与吸底保存条", () => {
   it("改一个角色出现吸底保存条并计数，保存后消失", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "主要模型" });
 
     // 未修改时没有保存条。
@@ -503,7 +546,7 @@ describe("未配置角色与吸底保存条", () => {
 describe("Agent 编排流程图", () => {
   it("主代理显示 default 角色当前模型；节点显示中文职责与当前使用", async () => {
     stubConfig([]);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "Agent" });
 
     const flow = screen.getByTestId("agent-flow");
@@ -523,7 +566,7 @@ describe("Agent 编排流程图", () => {
 
   it("停用后流程图节点标注「已停用」", async () => {
     stubConfig([]);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByRole("region", { name: "Agent" });
 
     fireEvent.click(screen.getByLabelText("停用 task"));
@@ -557,7 +600,7 @@ describe("Vibe 工作会话", () => {
         agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "@smol" },
       }),
     });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     // fast：别名展开到底层模型展示，注明跟随链路与底层档位。
@@ -575,7 +618,7 @@ describe("Vibe 工作会话", () => {
   it("在卡片改 fast 后保存：只写 sonic 覆盖，其余键原样不动", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves, { config: vibeConfig() });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     const tier = screen.getByTestId("vibe-tier-fast");
@@ -604,7 +647,7 @@ describe("Vibe 工作会话", () => {
         agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "@smol" },
       }),
     });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     // 只动 good 档，保存后 fast 的别名必须原样保留。
@@ -625,7 +668,7 @@ describe("Vibe 工作会话", () => {
 
   it("卡片与 Agent 行双向同步（同一份草稿）", async () => {
     stubConfig([], { config: vibeConfig() });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     // 卡片改 good → sonic…task 的 Agent 行同步。
@@ -654,7 +697,7 @@ describe("Vibe 工作会话", () => {
     const saves: SaveCall[] = [];
     // BASE_CONFIG 里没有 sonic：展示走托底，保存照写 sonic 覆盖。
     stubConfig(saves);
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     expect(screen.getByTestId("vibe-effective-fast")).toHaveTextContent("跟随当前会话模型");
@@ -676,7 +719,7 @@ describe("Vibe 工作会话", () => {
 
   it("指挥者行只读展示主对话模型，并注明共用与 /vibe 入口", async () => {
     stubConfig([], { config: vibeConfig() });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     const conductor = screen.getByTestId("vibe-conductor");
@@ -692,9 +735,161 @@ describe("Vibe 工作会话", () => {
     );
   });
 
+  it("指挥者：default 角色链 + 吸附到主模型的链，与角色卡一致", async () => {
+    stubConfig([], { config: vibeConfig() });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // default 角色链（2 条，保序）+ 吸附的「MiMo v2.6 Pro (5438)」模型链（1 条）。
+    const block = screen.getByTestId("vibe-fallback-conductor");
+    const chips = within(block).getAllByRole("listitem");
+    expect(chips).toHaveLength(3);
+    expect(chips[0]).toHaveTextContent("MiMo v2.6 Pro (5438)");
+    expect(chips[1]).toHaveTextContent("GPT-6.1 Sol");
+    expect(chips[2]).toHaveTextContent("GPT-6.1 Sol");
+    expect(block).toHaveTextContent("「MiMo v2.6 Pro (5438)」的兜底");
+    // 只读：没有任何排序/删除按钮。
+    expect(within(block).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("good：task 角色链 + 吸附到生效模型的链", async () => {
+    stubConfig([], { config: vibeConfig() });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // task 覆盖生效 5438/mimo-v2.6-pro：task 角色链 + 吸附的模型链。
+    const block = screen.getByTestId("vibe-fallback-good");
+    const chips = within(block).getAllByRole("listitem");
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent("DeepSeek v4.1 Flash");
+    expect(chips[1]).toHaveTextContent("GPT-6.1 Sol");
+    expect(block).toHaveTextContent("「MiMo v2.6 Pro (5438)」的兜底");
+    expect(within(block).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("fast：只看生效模型的吸附链，sonic 键的链不出现", async () => {
+    stubConfig([], {
+      config: vibeConfig({
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "5438/mimo-v2.6-pro:max" },
+      }),
+    });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 生效模型 5438/mimo-v2.6-pro → 吸附的模型链（GPT-6.1 Sol）；
+    // sonic 键的链（DeepSeek）不是模型角色链，不展示。
+    const block = screen.getByTestId("vibe-fallback-fast");
+    const chips = within(block).getAllByRole("listitem");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("GPT-6.1 Sol");
+    expect(block).not.toHaveTextContent("DeepSeek v4.1 Flash");
+    expect(within(block).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("fast：别名覆盖展开到底层模型后再吸附（回归）", async () => {
+    stubConfig([], {
+      config: vibeConfig({
+        roles: { ...BASE_CONFIG.roles, smol: "5438/mimo-v2.6-pro" },
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "@smol" },
+      }),
+    });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // @smol → 5438/mimo-v2.6-pro，吸附 BASE 自带的该模型链（GPT-6.1 Sol）。
+    const block = screen.getByTestId("vibe-fallback-fast");
+    expect(block).not.toHaveTextContent("还没有兜底模型");
+    const chips = within(block).getAllByRole("listitem");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent("GPT-6.1 Sol");
+  });
+
+  it("picker 换模型后吸附的链立即切换；无链可附时才空态", async () => {
+    stubConfig([], {
+      config: vibeConfig({
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "5438/mimo-v2.6-pro:max" },
+      }),
+    });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 基线：字面覆盖 mimo → 吸附该模型链（1 条 GPT-6.1 Sol）。
+    const before = screen.getByTestId("vibe-fallback-fast");
+    expect(within(before).getAllByRole("listitem")).toHaveLength(1);
+    expect(before).toHaveTextContent("GPT-6.1 Sol");
+
+    // 换到 DeepSeek：mimo 的吸附链消失，且无 deepseek 模型链 → 空态。
+    const tier = screen.getByTestId("vibe-tier-fast");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 快速工作会话（fast）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    const block = screen.getByTestId("vibe-fallback-fast");
+    expect(block).toHaveTextContent("还没有兜底模型");
+    expect(within(block).queryByRole("listitem")).not.toBeInTheDocument();
+  });
+
+  it("picker 清掉后按无覆盖重算吸附，不再显示旧模型的链", async () => {
+    stubConfig([], {
+      config: vibeConfig({
+        // 无覆盖时 sonic 内置默认 @smol → deepseek，该模型无 chain key → 空态。
+        roles: { ...BASE_CONFIG.roles, smol: "5438/deepseek-v4.1-flash" },
+        agentOverrides: { ...BASE_CONFIG.agentOverrides, sonic: "5438/mimo-v2.6-pro:max" },
+      }),
+    });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 基线：字面覆盖 mimo → 吸附该模型链。
+    expect(screen.getByTestId("vibe-fallback-fast")).toHaveTextContent("GPT-6.1 Sol");
+
+    const tier = screen.getByTestId("vibe-tier-fast");
+    fireEvent.click(
+      within(tier).getByRole("button", { name: "Vibe 快速工作会话（fast）改用的模型" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "不改用" }));
+    // 清掉后按「无覆盖」重算 → @smol → deepseek → 无链可附 → 空态
+    // （旧代码会回落到已存覆盖的 mimo，仍显示旧链）。
+    const block = screen.getByTestId("vibe-fallback-fast");
+    expect(block).toHaveTextContent("还没有兜底模型");
+    expect(within(block).queryByRole("listitem")).not.toBeInTheDocument();
+  });
+
+  it("跟随会话（无生效模型）时空态；角色卡改兜底后 Vibe 同步", async () => {
+    // BASE_CONFIG 里没有 sonic agent 定义 → fast 走托底（无默认）→ 跟随会话。
+    stubConfig([]);
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // sonic 无覆盖、无内置默认 → 跟随会话 → 空态。
+    expect(screen.getByTestId("vibe-fallback-fast")).toHaveTextContent("还没有兜底模型");
+
+    // 角色卡里删掉 default 链的一条 → 指挥者兜底同步。
+    const chain = within(roleCard("default")).getByTestId("chain-default");
+    fireEvent.click(within(chain).getByRole("button", { name: "删除 factory-droid/gpt-6.1-sol" }));
+    const chips = within(screen.getByTestId("vibe-fallback-conductor")).getAllByRole("listitem");
+    expect(chips).toHaveLength(2);
+  });
+
+  it("零条目的链视同无链：Vibe 兜底显示空态，不出空标题", async () => {
+    stubConfig([], {
+      config: vibeConfig({
+        fallbackChains: { default: [], "5438/mimo-v2.6-pro": [] },
+      }),
+    });
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("vibe-card");
+
+    // 角色链与吸附链都存在但零条目 → 空态，不渲染链标题与空列表。
+    const block = screen.getByTestId("vibe-fallback-conductor");
+    expect(block).toHaveTextContent("还没有兜底模型");
+    expect(block.querySelector(".vibe-fallback-group")).not.toBeInTheDocument();
+    expect(within(block).queryByRole("listitem")).not.toBeInTheDocument();
+  });
+
   it("清空主对话主模型后指挥者行回落到内置默认，不再显示旧值", async () => {
     stubConfig([], { config: vibeConfig() });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
     expect(screen.getByTestId("vibe-conductor")).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
 
@@ -710,7 +905,7 @@ describe("Vibe 工作会话", () => {
   it("改主对话角色时指挥者行同步，且不参与任何保存键", async () => {
     const saves: SaveCall[] = [];
     stubConfig(saves, { config: vibeConfig() });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     // 在角色卡里换主对话模型 → Vibe 卡的指挥者行立即跟随（同一份草稿）。
@@ -744,7 +939,7 @@ describe("Vibe 工作会话", () => {
         },
       }),
     });
-    render(<ModelsAgentsPanel onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("vibe-card");
 
     const tier = screen.getByTestId("vibe-tier-fast");

@@ -8,6 +8,7 @@ import type {
   AppendBranchMarkerRequest,
   AppendBranchMarkerResult,
   AppError,
+  BenchRound,
   CheckSessionRequest,
   CheckSessionResult,
   Conversation,
@@ -28,6 +29,10 @@ import type {
   McpSetEnabledRequest,
   ModelConfig,
   ModelInfo,
+  ModelPerf,
+  ModelSpecPatchRequest,
+  ModelSpecUpdateResult,
+  ModelSpecsResult,
   OpenInItermRequest,
   PromptHistoryEntry,
   OmpVersion,
@@ -386,4 +391,34 @@ export function memoryRestore(req: { backupId: string }): Promise<MemoryRestoreR
 /** 永久删除一份备份（不可撤销）。 */
 export function memoryDeleteBackup(req: { backupId: string }): Promise<null> {
   return call("memory_delete_backup", { backupId: req.backupId });
+}
+
+/** 跑一轮 bench（CONTRACT §20.1）：短探针 + 长探针合成，返回即已记入历史。 */
+export function modelBenchRun(selector: string): Promise<BenchRound> {
+  return call("model_bench_run", { selector });
+}
+
+/** 最近 30 天的 bench 历史（早→晚排序）。 */
+export function modelBenchHistory(): Promise<BenchRound[]> {
+  return call("model_bench_history");
+}
+
+/** omp 自家记录的日常实测；读不到时为空数组（前端隐藏该列）。 */
+export function modelPerfList(): Promise<ModelPerf[]> {
+  return call("model_perf_list");
+}
+
+/** 模型规格快照（CONTRACT §21）：models.yml 非凭据字段；无文件时 available=false。 */
+export function getModelSpecs(): Promise<ModelSpecsResult> {
+  return call("get_model_specs");
+}
+
+/** 写一个模型的规格（读-比-写）；成功返回新 revision 与备份路径。 */
+export function updateModelSpec(req: ModelSpecPatchRequest): Promise<ModelSpecUpdateResult> {
+  return call("update_model_spec", {
+    provider: req.provider,
+    id: req.id,
+    patch: req.patch,
+    expectedRevision: req.expectedRevision,
+  });
 }
