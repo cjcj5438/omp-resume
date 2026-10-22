@@ -7,8 +7,9 @@ import { barHeights, cacheHitSeries, compactNumber, formatErrorRate, formatHitRa
 import "./Usage.css";
 const W = 600;
 const H = 200;
-const PLOT_X = 8;
-const PLOT_W = 584;
+/** 左侧留出纵轴刻度槽，参考价/参考量标在绘图区外，绝不压在柱子上。 */
+const PLOT_X = 46;
+const PLOT_W = W - PLOT_X - 8;
 const PLOT_TOP = 14;
 const PLOT_H = 140;
 const BASE_Y = PLOT_TOP + PLOT_H;
@@ -87,9 +88,26 @@ export function TrendChart({ unit, points, metric }: { unit: UsageTrendUnit; poi
       {max > 0 ? (
         <g className="chart-ref" aria-hidden="true">
           <line x1={PLOT_X} y1={BASE_Y - PLOT_H} x2={PLOT_X + PLOT_W} y2={BASE_Y - PLOT_H} className="chart-grid" />
-          <text className="chart-tick chart-ref-label" x={PLOT_X + 2} y={BASE_Y - PLOT_H - 3}>{metric === "cost" ? usageMoney(max) : compactNumber(max)}</text>
+          <text
+            className="chart-tick chart-ref-label"
+            x={PLOT_X - 6}
+            y={BASE_Y - PLOT_H + 4}
+            textAnchor="end"
+          >
+            {metric === "cost" ? usageMoney(max) : compactNumber(max)}
+          </text>
           <line x1={PLOT_X} y1={BASE_Y - PLOT_H / 2} x2={PLOT_X + PLOT_W} y2={BASE_Y - PLOT_H / 2} className="chart-grid" />
-          <text className="chart-tick chart-ref-label" x={PLOT_X + 2} y={BASE_Y - PLOT_H / 2 - 3}>{metric === "cost" ? usageMoney(max / 2) : compactNumber(max / 2)}</text>
+          <text
+            className="chart-tick chart-ref-label"
+            x={PLOT_X - 6}
+            y={BASE_Y - PLOT_H / 2 + 4}
+            textAnchor="end"
+          >
+            {metric === "cost" ? usageMoney(max / 2) : compactNumber(max / 2)}
+          </text>
+          <text className="chart-tick chart-ref-label" x={PLOT_X - 6} y={BASE_Y + 4} textAnchor="end">
+            0
+          </text>
         </g>
       ) : null}
       <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />

@@ -55,14 +55,8 @@ section.health-card[aria-label="最近错误"] { margin-top: 12px; }
 .chart-tick { fill: var(--text-muted); font-size: 11px; }
 /* 趋势图 y 参考线：画在柱之后，标签带底色描边光晕，不拦截柱热区。 */
 .chart-ref { pointer-events: none; }
-/* 参考价标签：底衬用页面底色（不是卡片底），才能同时盖住网格线与身后的柱子。 */
-.chart-ref-label {
-  paint-order: stroke;
-  stroke: var(--bg);
-  stroke-width: 4px;
-  stroke-linejoin: round;
-  font-variant-numeric: tabular-nums;
-}
+/* 纵轴刻度（0 / 中值 / 峰值）：画在绘图区左侧留白里，不与柱子重叠。 */
+.chart-ref-label { font-variant-numeric: tabular-nums; }
 /* 竖向参考线：只在悬停该列时露出，给细柱一个明确的定位反馈。 */
 .chart-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; pointer-events: none; transition: opacity var(--motion, 120ms) ease; }
 .chart-bucket :is(.chart-bar, .chart-bar-soft, .chart-bar-error, .chart-dot, .chart-fb, .chart-line) { pointer-events: none; }
