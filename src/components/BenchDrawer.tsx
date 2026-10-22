@@ -19,6 +19,7 @@ import {
 } from "../modelBench";
 import { friendlyModelName, modelProvider } from "../roleCards";
 import { tagLabel } from "./BenchSparkline";
+import { BenchRecords } from "./BenchRecords";
 import { Drawer } from "./Drawer";
 import { BenchRateChart, BenchTpsChart } from "./UsageCharts";
 import type { ToastFn } from "./useOmpOp";
@@ -39,10 +40,12 @@ export interface BenchDrawerProps {
   onToast: ToastFn;
   onAddTag: () => void;
   onEdit: () => void;
+  /** 记录被删除后由父级重载历史。 */
+  onRecordsChanged: () => void;
 }
 
 export function BenchDrawer(props: BenchDrawerProps): ReactNode {
-  const { row, models, rounds, tags, config, roles, applyHint = false, onClose, onUpdateConfig, onStage, onToast, onAddTag, onEdit } = props;
+  const { row, models, rounds, tags, config, roles, applyHint = false, onClose, onUpdateConfig, onStage, onToast, onAddTag, onEdit, onRecordsChanged } = props;
   const [unit, setUnit] = useState<BenchBucketUnit>("hour");
   const { model } = row;
   const entry = config.entries.find((e) => e.selector === model.selector) ?? null;
@@ -212,6 +215,10 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
           <BenchTpsChart unit={unit === "hour" ? "hour" : "day"} buckets={buckets} />
         </div>
       )}
+
+      <div className="bench-drawer-block">
+        <BenchRecords selector={model.selector} rounds={rounds} onToast={onToast} onChanged={onRecordsChanged} />
+      </div>
 
       <div className="bench-drawer-block">
         <div className="bench-drawer-title">最近错误</div>

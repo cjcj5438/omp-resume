@@ -5,7 +5,7 @@
 .bench-intro { margin: 0; }
 .bench-hint, .bench-current, .bench-estimate { font-size: 12px; }
 
-.bench-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.bench-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); justify-content: space-between; }
 .bench-actions, .bench-monitor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* 分段控件最小骨架（共享样式无全局 .segment，行为与 §19 一致）。 */
@@ -19,20 +19,30 @@
 .bench-chipwrap { display: inline-flex; align-items: center; gap: 2px; }
 .bench-chip-x { padding: 1px 5px; }
 
-.bench-table-wrap { overflow-x: auto; }
-.bench-table { table-layout: fixed; min-width: 730px; }
+.bench-table-wrap { overflow: auto; max-height: 62vh; }
+.bench-table { table-layout: fixed; min-width: 860px; }
 .bench-table td { overflow: hidden; text-overflow: ellipsis; }
+/* 数值列右对齐 + 等宽数字，便于纵向对比。
+ * 选择器带 .bench-table 前缀：App.css 的 `.manage-table th, td { text-align: left }`
+ * 是 class + 元素，单类选择器压不过它。 */
+.bench-table th.bench-num,
+.bench-table td.bench-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 标签列：允许换行，不撑破固定列宽。 */
+.bench-tags { display: flex; gap: 4px; flex-wrap: wrap; align-items: flex-start; }
+/* 表头吸顶（滚动容器是 .bench-table-wrap）。 */
+.bench-table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 /* 固定列用 colgroup 宽度（perf 列有时不存在，nth-child 会错位）：数值/徽章列内容宽度固定。 */
-.bench-col-tags { width: 76px; }
+.bench-col-tags { width: 110px; }
 .bench-col-rate { width: 60px; }
 .bench-col-ttft { width: 108px; }
 .bench-col-tps { width: 84px; }
 .bench-col-ratio { width: 66px; }
 .bench-col-perf { width: 92px; }
-.bench-col-trend { width: 80px; }
-.bench-col-act { width: 44px; }
+.bench-col-trend { width: 84px; }
+.bench-col-act { width: 40px; }
 .bench-table th { overflow-wrap: anywhere; }
 /* 行 hover/过渡走共享 .manage-table 规则；这里只加选中态（§19：hover 在 active 之后）。 */
+.bench-row { cursor: pointer; }
 .bench-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bench-row-selected { background: var(--accent-soft); transition: background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease; }
 .bench-row-selected:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -65,6 +75,12 @@
 .bench-setrole { display: flex; gap: 6px; flex-wrap: wrap; }
 .bench-kpis { margin-top: 0; }
 .bench-kpis .kpi-value { font-size: 22px; }
+/* 测试记录列表（抽屉）：一行一轮，删除是行内按钮。 */
+.bench-records-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bench-records { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.bench-record { display: grid; grid-template-columns: 1fr repeat(4, minmax(52px, auto)) auto; gap: 8px; align-items: center; font-size: 12px; }
+.bench-record-at { color: var(--text); overflow-wrap: anywhere; }
+.bench-record-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .bench-errors { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; overflow-wrap: anywhere; }
 
 /* 对话框表单纵向堆叠。 */

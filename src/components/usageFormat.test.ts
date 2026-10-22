@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   ERROR_KIND_NAME,
+  activitySummary,
   barHeights,
   cacheHitRate,
   cacheHitSeries,
@@ -126,4 +127,20 @@ it("热力列：周一为行 0，首尾补 null 至整列", () => {
   expect(cols[1][1]?.key).toBe("2026-10-20");
   expect(cols[1][2]?.key).toBe("2026-10-21");
   expect(cols[1].slice(3)).toEqual([null, null, null, null]);
+});
+
+it("活跃度汇总：活跃天数、合计、最高单日（同价取最早）、末尾连续天数", () => {
+  expect(activitySummary([])).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0 });
+  expect(
+    activitySummary(["2026-01-01", "2026-01-02", "2026-01-03"].map((key) => ({ key, cost: 0 }))),
+  ).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0 });
+  const days = [10, 0, 5, 7].map((cost, i) => ({ key: `2026-01-0${i + 1}`, cost }));
+  const sum = activitySummary(days);
+  expect(sum.activeDays).toBe(3);
+  expect(sum.totalCost).toBe(22);
+  // 最高单日只看花费；末尾 5、7 连续 ⇒ streak 2（中间那天的 0 是断点但不影响末尾）。
+  expect(sum.best).toEqual({ key: "2026-01-01", cost: 10 });
+  expect(sum.streak).toBe(2);
+  // 同价取最早。
+  expect(activitySummary([{ key: "a", cost: 3 }, { key: "b", cost: 3 }]).best).toEqual({ key: "a", cost: 3 });
 });

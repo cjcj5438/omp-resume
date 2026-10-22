@@ -1,9 +1,10 @@
 /**
- * omp 内置命令速查：全部命令 / 组合用法两个视图，支持过滤与一键复制。
+ * omp 命令速查：全部命令 / 组合用法 / 终端命令三个视图，支持过滤与一键复制。
  * 版本提示：传入本机已安装版本，与速查基准版本不一致时在头部提示一行。
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { OMP_COMMANDS, OMP_PINNED_COMMANDS, OMP_VERSION, filterOmpCommands, findOmpCommand, versionMismatch } from "../ompCommands";
+import { OMP_CLI_COMMANDS, OMP_CLI_VERSION } from "../ompCliCommands";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
 import { Modal } from "./ui";
@@ -19,7 +20,7 @@ const COPIED_MS = 1500;
 const FAILED_MS = 4000;
 
 export function CheatSheetDialog({ onClose, installedVersion = null }: CheatSheetDialogProps) {
-  const [tab, setTab] = useState<"commands" | "combos">("commands");
+  const [tab, setTab] = useState<"commands" | "combos" | "cli">("commands");
   const [query, setQuery] = useState("");
   // 已复制按钮的 key（1.5 秒后还原）；复制失败改为同屏可见提示。
   const [copied, setCopied] = useState<string | null>(null);
@@ -49,7 +50,21 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
 
   const groups = useMemo(() => filterOmpCommands(OMP_COMMANDS, query), [query]);
   const combos = useMemo(() => filterOmpCombos(OMP_COMBOS, query), [query]);
+  // 终端子命令：名称/参数/中文说明/示例做子串匹配（单组，保持字母序）。
+  const cli = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q === "") return OMP_CLI_COMMANDS;
+    return OMP_CLI_COMMANDS.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.args.toLowerCase().includes(q) ||
+        c.zh.toLowerCase().includes(q) ||
+        c.examples.some((ex) => ex.toLowerCase().includes(q)),
+    );
+  }, [query]);
   const total = OMP_COMMANDS.reduce((n, g) => n + g.commands.length, 0);
+  // 内置注册表条数（不含随包发布的扩展命令），供头部文案区分。
+  const builtin = OMP_COMMANDS.filter((g) => g.group !== "扩展命令").reduce((n, g) => n + g.commands.length, 0);
   const shown = groups.reduce((n, g) => n + g.commands.length, 0);
   // 空查询时在顶部加一个「常用」分组（引用同一批命令对象，不计入总数）；过滤时隐藏，避免重复行。
   const pinnedGroup = useMemo(
@@ -74,9 +89,13 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
       <p className="cheatsheet-head">
         {tab === "commands"
           ? query.trim() === ""
-            ? `基于 omp ${OMP_VERSION} · 共 ${total} 条内置命令`
+            ? `基于 omp ${OMP_VERSION} · 共 ${total} 条斜杠命令（内置 ${builtin} + 扩展 ${total - builtin}）`
             : `基于 omp ${OMP_VERSION} · 匹配 ${shown} / ${total} 条`
-          : `基于 omp ${OMP_VERSION} · ${combos.length} 个场景`}
+          : tab === "combos"
+            ? `基于 omp ${OMP_VERSION} · ${combos.length} 个场景`
+            : query.trim() === ""
+              ? `基于 omp ${OMP_CLI_VERSION} · 共 ${OMP_CLI_COMMANDS.length} 个终端子命令`
+              : `基于 omp ${OMP_CLI_VERSION} · 匹配 ${cli.length} / ${OMP_CLI_COMMANDS.length} 个终端子命令`}
       </p>
       {versionMismatch(installedVersion) ? (
         <p className="cheatsheet-version-note">
@@ -103,11 +122,26 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
           >
             组合用法
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "cli"}
+            className={tab === "cli" ? "cheatsheet-tab is-active" : "cheatsheet-tab"}
+            onClick={() => setTab("cli")}
+          >
+            终端命令
+          </button>
         </div>
         <input
           type="search"
           className="filter-input cheatsheet-filter"
-          placeholder={tab === "commands" ? "按命令名、参数或中文说明过滤" : "按场景、命令或说明过滤"}
+          placeholder={
+            tab === "commands"
+              ? "按命令名、参数、示例或中文说明过滤"
+              : tab === "combos"
+                ? "按场景、命令或说明过滤"
+                : "按子命令、参数或中文说明过滤"
+          }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="过滤命令"
@@ -131,6 +165,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                 <ul className="cheatsheet-rows">
                   {g.commands.map((c) => (
                     <li className="cheatsheet-row" key={c.name}>
+                      <div className="cheatsheet-line">
                       <div className="cheatsheet-main">
                         <div>
                           <span className="mono">/{c.name}</span>
@@ -176,11 +211,94 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                           </button>
                         ) : null}
                       </span>
+                      </div>
+                      <ul className="cheatsheet-examples">
+                        {c.examples.map((ex, i) => {
+                          const key = `ex:${g.group}:${c.name}:${i}`;
+                            return (
+                              <li className="cheatsheet-example" key={key}>
+                                <span className="mono">{ex}</span>
+                                <button
+                                  type="button"
+                                  className="cheatsheet-copy"
+                                  aria-label={`复制示例 ${ex}`}
+                                  title={`复制示例 ${ex}`}
+                                  onClick={() => void copy(key, ex)}
+                                >
+                                  {copied === key ? "已复制 ✓" : "复制"}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
                     </li>
                   ))}
                 </ul>
               </section>
             ))}
+          </>
+        ) : tab === "cli" ? (
+          <>
+            {cli.length === 0 ? <div className="pane-note">没有匹配的终端子命令</div> : null}
+            <section className="cheatsheet-group">
+              <h3 className="cheatsheet-group-title">终端子命令（{cli.length}）</h3>
+              <ul className="cheatsheet-rows">
+                {cli.map((c) => (
+                  <li className="cheatsheet-row" key={c.name}>
+                    <div className="cheatsheet-line">
+                    <div className="cheatsheet-main">
+                      <div>
+                        <span className="mono">omp {c.name}</span>
+                      </div>
+                      {c.args ? <div className="mono cheatsheet-args">{c.args}</div> : null}
+                    </div>
+                    <span className="cheatsheet-zh">{c.zh}</span>
+                    <span className="cheatsheet-actions">
+                      <button
+                        type="button"
+                        className="cheatsheet-copy"
+                        aria-label={`复制 omp ${c.name}`}
+                        title={`复制 omp ${c.name}`}
+                        onClick={() => void copy(`clicmd:${c.name}`, `omp ${c.name}`)}
+                      >
+                        {copied === `clicmd:${c.name}` ? "已复制 ✓" : "复制"}
+                      </button>
+                      {c.args ? (
+                        <button
+                          type="button"
+                          className="cheatsheet-copy"
+                          aria-label={`复制 omp ${c.name} 的参数模板`}
+                          title={`复制 omp ${c.name} ${c.args}`}
+                          onClick={() => void copy(`clitpl:${c.name}`, `omp ${c.name} ${c.args}`)}
+                        >
+                          {copied === `clitpl:${c.name}` ? "已复制 ✓" : "参数"}
+                        </button>
+                      ) : null}
+                    </span>
+                    </div>
+                    <ul className="cheatsheet-examples">
+                        {c.examples.map((ex, i) => {
+                          const key = `cli:${c.name}:${i}`;
+                          return (
+                            <li className="cheatsheet-example" key={key}>
+                              <span className="mono">{ex}</span>
+                              <button
+                                type="button"
+                                className="cheatsheet-copy"
+                                aria-label={`复制示例 ${ex}`}
+                                title={`复制示例 ${ex}`}
+                                onClick={() => void copy(key, ex)}
+                              >
+                                {copied === key ? "已复制 ✓" : "复制"}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                  </li>
+                ))}
+              </ul>
+            </section>
           </>
         ) : (
           <>
@@ -230,8 +348,8 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
         )}
       </div>
       <p className="cheatsheet-foot">
-        自定义命令、技能（/skill:xxx）和插件命令不在此列；实时补全以在 omp 中输入 /
-        为准。
+        以上为 omp 斜杠命令与终端子命令；`/skill:xxx` 技能命令、自定义命令与插件命令不在此列，
+        实时补全以在 omp 中输入 / 为准。
       </p>
     </Modal>
   );

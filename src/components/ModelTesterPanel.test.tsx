@@ -183,6 +183,54 @@ describe("受控嵌入", () => {
   });
 });
 
+describe("测试记录删除", () => {
+  function stubWithDelete(historyCalls: { count: number }, deletedCalls: Record<string, unknown>[]): void {
+    mockIPC((cmd, rawArgs) => {
+      const args = (rawArgs ?? {}) as Record<string, unknown>;
+      if (cmd === "list_models") return structuredClone(MODELS);
+      if (cmd === "get_model_config") return modelConfig();
+      if (cmd === "model_bench_history") {
+        historyCalls.count += 1;
+        return structuredClone(historyRounds());
+      }
+      if (cmd === "model_perf_list") return [];
+      if (cmd === "model_bench_delete") {
+        deletedCalls.push(args);
+        return 1;
+      }
+      if (cmd === "update_model_config") return { key: args["key"], value: args["value"] };
+      throw `no handler for ${cmd}`;
+    });
+  }
+
+  it("抽屉里的测试记录可删单轮与清空，删除后重载历史", async () => {
+    const historyCalls = { count: 0 };
+    const deletedCalls: Record<string, unknown>[] = [];
+    stubWithDelete(historyCalls, deletedCalls);
+    render(<ModelTesterPanel onToast={vi.fn()} />);
+    const fastCell = await screen.findByText("Fast");
+    fireEvent.click(fastCell.closest("tr") ?? fastCell);
+    const drawer = await screen.findByRole("complementary", { name: "模型 p/fast" });
+    expect(within(drawer).getByText("测试记录（2 轮）")).toBeInTheDocument();
+
+    // 历史是 now 相对生成的（每次调用时间戳不同），删除目标取列表里渲染出来的那一轮。
+    const delBtn = within(drawer).getAllByRole("button", { name: /^删除 .+ 这一轮记录$/ })[0];
+    const target = (delBtn.getAttribute("aria-label") ?? "").slice("删除 ".length, -" 这一轮记录".length);
+    expect(target).not.toBe("");
+    const before = historyCalls.count;
+    fireEvent.click(delBtn);
+    await vi.waitFor(() => expect(deletedCalls).toEqual([{ selector: "p/fast", at: target }]));
+    // onChanged → 再次拉历史。
+    await vi.waitFor(() => expect(historyCalls.count).toBe(before + 1));
+
+    fireEvent.click(within(drawer).getByRole("button", { name: "清空记录…" }));
+    const modal = await screen.findByRole("dialog", { name: "清空测试记录" });
+    expect(modal.textContent).toContain("将删除该模型的 2 轮记录，不可撤销。");
+    fireEvent.click(within(modal).getByRole("button", { name: "清空" }));
+    await vi.waitFor(() => expect(deletedCalls[1]).toEqual({ selector: "p/fast", at: null }));
+  });
+});
+
 describe("键盘可达", () => {
   it("Enter/Space 打开抽屉，行内测试按钮 stopPropagation", async () => {
     stub((args) => ({ key: args["key"], value: args["value"] }));

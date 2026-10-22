@@ -403,6 +403,11 @@ export function modelBenchHistory(): Promise<BenchRound[]> {
   return call("model_bench_history");
 }
 
+/** 删除 bench 记录：at 为 null 时清空该模型全部轮次；返回删除条数。 */
+export function modelBenchDelete(req: { selector: string; at: string | null }): Promise<number> {
+  return call("model_bench_delete", req);
+}
+
 /** omp 自家记录的日常实测；读不到时为空数组（前端隐藏该列）。 */
 export function modelPerfList(): Promise<ModelPerf[]> {
   return call("model_perf_list");

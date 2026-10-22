@@ -355,29 +355,74 @@ pub fn model_bench_history_impl(data_dir: &Path) -> Vec<BenchRound> {
     }
     kept.sort_by_key(|a| a.0);
     if dirty {
-        rewrite_history(&path, &kept);
+        // 裁剪只是副作用，失败继续静默（读历史本身仍返回内存里的结果）。
+        let _ = rewrite_history(&path, &kept);
     }
     kept.into_iter().map(|(_, round)| round).collect()
 }
 
-/// 原子重写历史文件（同目录临时文件 + rename）；任何失败都静默忽略。
+/// 删除记录：`at` 为 `Some` 时只删 selector+at 精确匹配的那一轮，`None` 时清空该
+/// selector 全部轮次。返回删除条数；无匹配不写盘。坏行/无时间戳行随重写一并丢弃
+/// （与 [`model_bench_history_impl`] 的同口径）。
+pub fn model_bench_delete_impl(
+    data_dir: &Path,
+    selector: &str,
+    at: Option<&str>,
+) -> Result<usize, AppError> {
+    validate_selector(selector)?;
+    let _guard = BENCH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path = bench_path(data_dir);
+    let Ok(bytes) = fs::read(&path) else {
+        return Ok(0);
+    };
+    let mut deleted = 0usize;
+    let mut kept: Vec<(DateTime<Utc>, BenchRound)> = Vec::new();
+    for line in String::from_utf8_lossy(&bytes).lines() {
+        let Ok(round) = serde_json::from_str::<BenchRound>(line) else {
+            continue;
+        };
+        let Ok(parsed) = DateTime::parse_from_rfc3339(&round.at) else {
+            continue;
+        };
+        if round.selector == selector && at.is_none_or(|a| round.at == a) {
+            deleted += 1;
+            continue;
+        }
+        kept.push((parsed.with_timezone(&Utc), round));
+    }
+    if deleted == 0 {
+        return Ok(0);
+    }
+    kept.sort_by_key(|a| a.0);
+    rewrite_history(&path, &kept)?;
+    Ok(deleted)
+}
+
+/// 原子重写历史文件（同目录临时文件 + rename）。
 /// 调用方持 `BENCH_LOCK`（进程内串行），临时路径单 pid 一份即可。
-fn rewrite_history(path: &Path, kept: &[(DateTime<Utc>, BenchRound)]) {
+fn rewrite_history(path: &Path, kept: &[(DateTime<Utc>, BenchRound)]) -> Result<(), AppError> {
+    let io_error =
+        |e: std::io::Error| AppError::new(ErrorCode::Io, format!("无法写入探测历史：{e}"));
     let Some(parent) = path.parent() else {
-        return;
+        return Ok(());
     };
     let mut text = String::new();
     for (_, round) in kept {
-        let Ok(mut line) = serde_json::to_string(round) else {
-            return;
-        };
+        let mut line = serde_json::to_string(round)
+            .map_err(|e| AppError::new(ErrorCode::Io, format!("无法序列化探测结果：{e}")))?;
         line.push('\n');
         text.push_str(&line);
     }
+    fs::create_dir_all(parent).map_err(io_error)?;
     let tmp = parent.join(format!(".{BENCH_FILE}.{}.tmp", std::process::id()));
-    if fs::write(&tmp, text.as_bytes()).is_err() || fs::rename(&tmp, path).is_err() {
+    let result = fs::write(&tmp, text.as_bytes()).and_then(|()| fs::rename(&tmp, path));
+    if let Err(e) = result {
         let _ = fs::remove_file(&tmp);
+        return Err(io_error(e));
     }
+    Ok(())
 }
 
 /// 解析 agent.db 路径：`OMP_RESUME_AGENT_DB` > `$HOME/.omp/agent/agent.db`。
@@ -471,6 +516,18 @@ pub async fn model_bench_history() -> Result<Vec<BenchRound>, AppError> {
     tauri::async_runtime::spawn_blocking(|| {
         let data_dir = meta::data_dir()?;
         Ok(model_bench_history_impl(&data_dir))
+    })
+    .await
+    .map_err(crate::io_join_error)?
+}
+
+/// CONTRACT §20.4/§4.56：删除 bench 记录（`at` 为 `None` 时清空该模型全部轮次），
+/// 返回删除条数。
+#[tauri::command]
+pub async fn model_bench_delete(selector: String, at: Option<String>) -> Result<usize, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = meta::data_dir()?;
+        model_bench_delete_impl(&data_dir, &selector, at.as_deref())
     })
     .await
     .map_err(crate::io_join_error)?
@@ -686,6 +743,64 @@ mod tests {
         assert!(!rewritten.contains("bad line") && !rewritten.contains(&old));
         // 文件不存在 → []。
         assert!(model_bench_history_impl(&dir.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn delete_removes_single_round_or_all_rounds_of_selector() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let at = |hours: i64| (now - chrono::Duration::hours(hours)).to_rfc3339_opts(SecondsFormat::Millis, true);
+        let (a_first, a_last, b_at) = (at(3), at(2), at(1));
+        let line = |selector: &str, at: &str| {
+            serde_json::to_string(&BenchRound {
+                at: at.to_string(),
+                selector: selector.to_string(),
+                total: 5,
+                ok: 5,
+                ttft_p50_ms: None,
+                ttft_p95_ms: None,
+                tps_p50: None,
+                tps_cv: None,
+                cost: 0.0,
+                errors: Vec::new(),
+            })
+            .unwrap()
+        };
+        let path = dir.path().join(BENCH_FILE);
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n{}\n",
+                line("acme/widget", &a_first),
+                line("other/model", &b_at),
+                line("acme/widget", &a_last)
+            ),
+        )
+        .unwrap();
+
+        // 单轮删除：只掉 A 的指定轮，另一轮与 B 都留着且按 at 升序。
+        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", Some(&a_first)).unwrap(), 1);
+        let left = model_bench_history_impl(dir.path());
+        assert_eq!(left.len(), 2);
+        assert!(left.iter().all(|r| r.at != a_first));
+        assert_eq!(left[0].selector, "acme/widget");
+        assert_eq!(left[0].at, a_last);
+        assert_eq!(left[1].selector, "other/model");
+
+        // 清空该 selector：只剩 B；再清一次为 0 且不写盘。
+        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(), 1);
+        let left = model_bench_history_impl(dir.path());
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].selector, "other/model");
+        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(), 0);
+
+        // selector 不合法 ⇒ InvalidInput；文件不存在 ⇒ 0。
+        let bad = model_bench_delete_impl(dir.path(), "bad selector", None).unwrap_err();
+        assert_eq!(bad.code, ErrorCode::InvalidInput);
+        assert_eq!(
+            model_bench_delete_impl(&dir.path().join("missing"), "acme/widget", None).unwrap(),
+            0
+        );
     }
 
     #[test]

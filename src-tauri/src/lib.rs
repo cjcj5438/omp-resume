@@ -371,6 +371,7 @@ pub fn run() {
             omp_models::update_model_config,
             model_bench::model_bench_run,
             model_bench::model_bench_history,
+            model_bench::model_bench_delete,
             model_bench::model_perf_list,
             model_specs::get_model_specs,
             model_specs::update_model_spec,

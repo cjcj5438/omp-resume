@@ -552,6 +552,13 @@ function createBenchMock() {
     if (typeof selector !== "string" || !selector.includes("/")) {
       throw err("INVALID_INPUT", "selector 必须是 provider/model[:thinking]");
     }
+    if (cmd === "model_bench_delete") {
+      const at = args["at"];
+      const keep = history.filter((r) => !(r.selector === selector && (typeof at !== "string" || r.at === at)));
+      const deleted = history.length - keep.length;
+      if (deleted > 0) history = keep;
+      return deleted;
+    }
     const round = roundAt(selector, new Date().toISOString(), history.length * 7 + 1, selector === FAILING, true);
     history = [...history, round];
     return structuredClone(round);
@@ -953,6 +960,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         return specs(cmd, args);
       case "model_bench_run":
       case "model_bench_history":
+      case "model_bench_delete":
       case "model_perf_list":
         return bench(cmd, args);
       case "memory_overview":

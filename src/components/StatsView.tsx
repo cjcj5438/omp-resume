@@ -7,8 +7,8 @@ import { HealthBoard } from "./HealthBoard";
 import { Kpi, TopSessions } from "./UsageCards";
 import { TrendChart, type TrendMetric } from "./UsageCharts";
 import { Donut } from "./UsageDonut";
-import { UsageHeatmap } from "./UsageHeatmap";
-import { cacheHitRate, compactNumber, formatDuration, formatHitRate } from "./usageFormat";
+import { HeatLegend, UsageHeatmap } from "./UsageHeatmap";
+import { activitySummary, cacheHitRate, compactNumber, formatDuration, formatHitRate } from "./usageFormat";
 import { usageMoney, usageNumber } from "./UsageSummary";
 import "./Usage.css";
 
@@ -42,8 +42,17 @@ function useRangeData<T>(fetchKey: string, load: () => Promise<T>): {
   const [error, setError] = useState<AppError | null>(null);
   const [nonce, setNonce] = useState(0);
   const loadedKey = useRef<string | null>(null);
+  // 每个范围最后一次成功的数据：切回已加载的范围要立刻有内容，不能等请求。
+  const cache = useRef(new Map<string, T>());
+  // 上一轮的 fetchKey（不含 nonce）：变了说明换了范围/标签页，旧数据必须立刻让位。
+  const prevFetchKey = useRef<string | null>(null);
   useEffect(() => {
     const key = `${fetchKey}#${nonce}`;
+    const keyChanged = prevFetchKey.current !== fetchKey;
+    prevFetchKey.current = fetchKey;
+    // 换范围：不放着上一个范围的数据当结果。已加载过的范围用缓存立刻顶上，
+    // 没加载过的清空并显示加载文案。同范围的刷新（nonce 变化）保留旧数据，避免闪一下空图。
+    if (keyChanged) setData(cache.current.get(fetchKey) ?? null);
     if (loadedKey.current === key) {
       // 缓存命中（切回已加载的范围，不再请求）：必须复位 loading，
       // 否则上一个未完成请求的 setLoading(true) 会残留，刷新按钮永久禁用。
@@ -57,6 +66,7 @@ function useRangeData<T>(fetchKey: string, load: () => Promise<T>): {
       .then((next) => {
         if (!alive) return;
         loadedKey.current = key;
+        cache.current.set(fetchKey, next);
         setData(next);
       })
       .catch((e: unknown) => {
@@ -149,6 +159,7 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
   const { total, timing } = data;
   const active = timing.waitMs + timing.genMs + timing.toolMs;
   const hit = cacheHitRate(total.tokens);
+  const activity = activitySummary(data.activity);
   return (<>
     <section className="kpi-grid kpi-grid-6" aria-label="用量总计">
       <Kpi label="会话" value={usageNumber(data.sessions)} subs={[`项目 ${data.byProject.length} 个`]} />
@@ -201,17 +212,40 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
           />
         </section>
       </div>
-      <div className="health-grid">
-        <section className="health-card" aria-label="活跃度">
+      <section className="health-card usage-activity" aria-label="活跃度">
+        <div className="card-head">
           <h2>活跃度</h2>
-          <span className="usage-muted">近 26 周 · 按日花费 · 不受上方范围影响</span>
+          <span className="usage-head-right">
+            <HeatLegend />
+            <span className="usage-muted">近 26 周 · 按日花费 · 不受上方范围影响</span>
+          </span>
+        </div>
+        <div className="heat-flex">
           <UsageHeatmap days={data.activity} />
-        </section>
-        <section className="health-card" aria-label="高花费会话">
-          <h2>高花费会话</h2>
-          <TopSessions sessions={data.topSessions} titleOf={sessionTitle} onOpen={onOpenSession} />
-        </section>
-      </div>
+          <div className="heat-summary">
+            <div className="heat-stat">
+              <strong>{activity.activeDays}</strong>
+              <span>活跃天数</span>
+            </div>
+            <div className="heat-stat">
+              <strong>{usageMoney(activity.totalCost)}</strong>
+              <span>合计花费</span>
+            </div>
+            <div className="heat-stat">
+              <strong>{activity.best === null ? "—" : usageMoney(activity.best.cost)}</strong>
+              <span>{activity.best === null ? "最高单日" : `最高单日 · ${activity.best.key.slice(5)}`}</span>
+            </div>
+            <div className="heat-stat">
+              <strong>{activity.streak}</strong>
+              <span>连续活跃天数</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="health-card usage-top" aria-label="高花费会话">
+        <h2>高花费会话</h2>
+        <TopSessions sessions={data.topSessions} titleOf={sessionTitle} onOpen={onOpenSession} />
+      </section>
       <StatsTable name="按项目" heads={["会话"]} total={data.total.cost.total} rows={data.byProject.map((p) => ({ key: p.cwd, name: p.cwd.split("/").filter(Boolean).pop() ?? p.cwd, title: p.cwd, cost: p.cost, tokens: p.tokens.total, cells: [`${p.sessions} 个会话`] }))} />
       <StatsTable name="按模型" heads={["调用", "速度", "首字延迟"]} total={data.total.cost.total} rows={data.byModel.map((m) => ({ key: JSON.stringify([m.provider, m.model]), name: `${m.provider || "未知提供商"} / ${m.model || "未知模型"}`, cost: m.cost, tokens: m.tokens.total, cells: [`${usageNumber(m.messages)} 次`, m.tps == null ? "—" : `${formatTps(m.tps)} tok/s`, formatMs(m.ttftMs ?? null)] }))} />
     </>}
@@ -232,7 +266,7 @@ function HealthPanel({ range, onRange }: { range: UsageRange; onRange: (r: Usage
 
 export function StatsView({ onBack, sessionTitle, onOpenSession }: { onBack: () => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void }) {
   const [tab, setTab] = useState<StatsTab>("cost");
-  const [costRange, setCostRange] = useState<UsageRange>("30d");
+  const [costRange, setCostRange] = useState<UsageRange>("today");
   const [healthRange, setHealthRange] = useState<UsageRange>("today");
   // 看板首次访问后常驻（hidden 隐藏）：各自记住范围，切回不重复请求。
   const [healthVisited, setHealthVisited] = useState(false);

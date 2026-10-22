@@ -1444,6 +1444,11 @@ pre.mono {
   font-size: 12px;
 }
 
+/* 清理排序分段控件：与 .usage-seg 同盒模型（App.css 不在 Usage.css 作用域内）。 */
+.cleanup-sort { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.cleanup-sort .btn { border-color: transparent; background: transparent; padding: 3px 10px; font-size: 12px; }
+.cleanup-sort .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
 .cleanup-body {
   flex: 1;
   min-height: 0;

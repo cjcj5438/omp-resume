@@ -60,6 +60,15 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
     void loadSpecs();
   }, [loadSpecs]);
 
+  // 外部改了 models.yml 后回到应用：规格快照随模型列表（useModelDraft 同样在聚焦时校验）一起更新。
+  useEffect(() => {
+    const onFocus = (): void => {
+      void loadSpecs();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadSpecs]);
+
   const updateBench = useCallback((next: BenchConfig): void => {
     setBench(next);
     saveBenchConfig(next);

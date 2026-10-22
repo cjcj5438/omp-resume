@@ -245,12 +245,13 @@ describe("命令速查", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "速查" }));
     const dialog = await screen.findByRole("dialog", { name: "命令速查" });
-    expect(within(dialog).getByText(/共 \d+ 条内置命令/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/共 \d+ 条斜杠命令（内置 \d+ \+ 扩展 \d+）/)).toBeInTheDocument();
 
     const filter = within(dialog).getByRole("searchbox", { name: "过滤命令" });
     fireEvent.change(filter, { target: { value: "compact" } });
-    expect(within(dialog).getByText("/compact", { exact: false })).toBeInTheDocument();
-    expect(within(dialog).queryByText("/shake", { exact: false })).toBeNull();
+    // 每行都有一个「复制 /<命令名>」按钮：过滤后只剩 compact 那一行。
+    expect(within(dialog).getAllByRole("button", { name: "复制 /compact" })).toHaveLength(1);
+    expect(within(dialog).queryByRole("button", { name: "复制 /shake" })).toBeNull();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull();

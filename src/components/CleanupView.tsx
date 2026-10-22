@@ -13,8 +13,10 @@ import {
   REASON_LABEL,
   isSelectable,
   selectionTotals,
+  sortCandidates,
   toDeleteTargets,
   toggleAllSelectable,
+  type CleanupSortDir,
 } from "../cleanup";
 import type { DeleteTarget } from "../flows";
 import { Badge } from "./ui";
@@ -52,6 +54,7 @@ export function CleanupView({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
+  const [sortDir, setSortDir] = useState<CleanupSortDir>("desc");
 
   useEffect(() => {
     let alive = true;
@@ -85,7 +88,8 @@ export function CleanupView({
     };
   }, [days, topN, refreshToken, rescan]);
 
-  const list = candidates ?? [];
+  // 展示顺序完全由前端决定（后端固定体积降序），勾选集合按 path，换序不丢选中。
+  const list = sortCandidates(candidates ?? [], sortDir);
   const selectableCount = list.filter(isSelectable).length;
   const totals = selectionTotals(list, checked);
   const allSelected =
@@ -135,6 +139,24 @@ export function CleanupView({
           />
           名
         </label>
+        <div className="cleanup-sort" role="group" aria-label="排序方向">
+          <button
+            type="button"
+            className="btn"
+            aria-pressed={sortDir === "desc"}
+            onClick={() => setSortDir("desc")}
+          >
+            体积倒序
+          </button>
+          <button
+            type="button"
+            className="btn"
+            aria-pressed={sortDir === "asc"}
+            onClick={() => setSortDir("asc")}
+          >
+            体积正序
+          </button>
+        </div>
         <button
           type="button"
           className="btn"

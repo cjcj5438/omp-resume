@@ -153,20 +153,21 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
     void load();
   }, [load, refreshToken, refreshKey]);
 
+  // 重载历史：运行器有新轮次、或抽屉里删了记录时调用（失败静默，界面上是旧数据）。
+  const reloadHistory = useCallback(() => {
+    modelBenchHistory()
+      .then((h) => {
+        if (alive.current) setHistory(h);
+      })
+      .catch(() => {});
+  }, [alive]);
+
   // 运行器有轮次完成 → 重载历史（补上该 selector 的新轮次）。只依赖计数器。
   const completedRuns = runnerSnap.completedRuns;
   useEffect(() => {
     if (completedRuns === 0) return;
-    let cancelled = false;
-    modelBenchHistory()
-      .then((h) => {
-        if (!cancelled) setHistory(h);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [completedRuns]);
+    reloadHistory();
+  }, [completedRuns, reloadHistory]);
 
   // roles 来源三选一：父级 rolesOverride 无引用稳定保证，浅比较内容一致时复用上次
   // 引用，避免下游 bench/tags memo 失效（ModelsTab 不得改，只能在消费侧稳定）。
@@ -395,11 +396,11 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
             <tr>
               <th scope="col">模型</th>
               <th scope="col">标签</th>
-              <th scope="col">成功率</th>
-              <th scope="col">TTFT p50/p95</th>
-              <th scope="col">tok/s(±CV)</th>
-              <th scope="col" title="tok/s 相对主模型（基线）的倍率">对比基线</th>
-              {showPerfColumn ? <th scope="col">日常实测</th> : null}
+              <th scope="col" className="bench-num">成功率</th>
+              <th scope="col" className="bench-num">TTFT p50/p95</th>
+              <th scope="col" className="bench-num">tok/s(±CV)</th>
+              <th scope="col" className="bench-num" title="tok/s 相对主模型（基线）的倍率">对比基线</th>
+              {showPerfColumn ? <th scope="col" className="bench-num">日常实测</th> : null}
               <th scope="col">趋势</th>
               <th scope="col" aria-label="操作"><span aria-hidden="true" /></th>
             </tr>
@@ -452,8 +453,8 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       ))}
                     </span>
                   </td>
-                  <td>{stats === null ? <span className="muted">未测试</span> : formatRate(stats.rate)}</td>
-                  <td className="bench-nowrap">
+                  <td className="bench-num">{stats === null ? <span className="muted">未测试</span> : formatRate(stats.rate)}</td>
+                  <td className="bench-num bench-nowrap">
                     {stats === null ? (
                       <span className="muted">—</span>
                     ) : (
@@ -462,7 +463,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       </span>
                     )}
                   </td>
-                  <td className="bench-nowrap">
+                  <td className="bench-num bench-nowrap">
                     {stats === null ? (
                       <span className="muted">—</span>
                     ) : (
@@ -472,9 +473,9 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       </span>
                     )}
                   </td>
-                  <td>{row.baseline ? <span className="muted">—</span> : <RatioCell ratio={row.ratio} />}</td>
+                  <td className="bench-num">{row.baseline ? <span className="muted">—</span> : <RatioCell ratio={row.ratio} />}</td>
                   {showPerfColumn ? (
-                    <td className="bench-nowrap">
+                    <td className="bench-num bench-nowrap">
                       {row.perf === null ? (
                         <span className="muted">—</span>
                       ) : (
@@ -524,6 +525,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
           onToast={onToast}
           onAddTag={() => setTagModalOpen(true)}
           onEdit={() => setEditTarget(drawerRow.model.selector)}
+          onRecordsChanged={reloadHistory}
         />
       ) : null}
 

@@ -42,12 +42,12 @@ it("花费页范围切换的迟到结果不覆盖当前统计；刷新失败可�
     return mockEmptyUsageStats(range);
   });
   render(<StatsView {...links} />);
-  await waitFor(() => expect(calls).toEqual(["30d"]));
+  await waitFor(() => expect(calls).toEqual(["today"]));
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
-  await waitFor(() => expect(calls).toEqual(["30d", "all"]));
+  await waitFor(() => expect(calls).toEqual(["today", "all"]));
   await act(async () => { all.resolve(mockUsageStats("all")); });
   expect(within(screen.getByLabelText("用量总计")).getByText("$192.60")).toBeTruthy();
-  await act(async () => { recent.resolve(mockUsageStats("30d")); });
+  await act(async () => { recent.resolve(mockUsageStats("today")); });
   expect(within(screen.getByLabelText("用量总计")).getByText("$192.60")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "刷新统计" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("扫描失败");
@@ -57,8 +57,8 @@ it("花费页范围切换的迟到结果不覆盖当前统计；刷新失败可�
 });
 
 it("范围切走又快速切回：缓存命中不重复请求，迟到结果不覆盖且刷新可用", async () => {
-  const stats30d = mockUsageStats("30d");
-  const expected = `$${stats30d.total.cost.total.toFixed(2)}`;
+  const today = mockUsageStats("today");
+  const expected = `$${today.total.cost.total.toFixed(2)}`;
   const initial = Promise.withResolvers<UsageStats>();
   const pending = Promise.withResolvers<UsageStats>();
   const calls: UsageRange[] = [];
@@ -73,22 +73,60 @@ it("范围切走又快速切回：缓存命中不重复请求，迟到结果不�
     return mockUsageStats(range);
   });
   render(<StatsView {...links} />);
-  await waitFor(() => expect(calls).toEqual(["30d"]));
-  await act(async () => { initial.resolve(stats30d); });
+  await waitFor(() => expect(calls).toEqual(["today"]));
+  await act(async () => { initial.resolve(today); });
   expect(within(screen.getByLabelText("用量总计")).getByText(expected)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
-  await waitFor(() => expect(calls).toEqual(["30d", "all"]));
-  // all 尚未返回就切回 30d：缓存命中，不应再发请求。
-  fireEvent.click(screen.getByRole("button", { name: "近 30 天" }));
-  expect(calls).toEqual(["30d", "all"]);
+  await waitFor(() => expect(calls).toEqual(["today", "all"]));
+  // all 尚未返回就切回今天：缓存命中，不应再发请求。
+  fireEvent.click(screen.getByRole("button", { name: "今天" }));
+  expect(calls).toEqual(["today", "all"]);
   await act(async () => { pending.resolve(mockUsageStats("all")); });
-  // 迟到的 all 结果不覆盖 30d 数据。
+  // 迟到的 all 结果不覆盖今天的数据。
   expect(within(screen.getByLabelText("用量总计")).getByText(expected)).toBeTruthy();
   // 缓存命中必须复位 loading，否则刷新按钮永久禁用。
   const refresh = screen.getByRole("button", { name: "刷新统计" });
   expect(refresh).toBeEnabled();
   fireEvent.click(refresh);
-  await waitFor(() => expect(calls).toEqual(["30d", "all", "30d"]));
+  await waitFor(() => expect(calls).toEqual(["today", "all", "today"]));
+});
+
+it("切换范围立刻清掉旧范围数据并显示加载文案", async () => {
+  const first = Promise.withResolvers<UsageStats>();
+  const second = Promise.withResolvers<UsageStats>();
+  const calls: UsageRange[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd !== "get_usage_stats") return mockUsageHealth("today");
+    const range = (args as { range: UsageRange }).range;
+    calls.push(range);
+    return calls.length === 1 ? first.promise : second.promise;
+  });
+  render(<StatsView {...links} />);
+  await waitFor(() => expect(calls).toEqual(["today"]));
+  await act(async () => { first.resolve(mockUsageStats("today")); });
+  const todayCost = mockUsageStats("today").total.cost.total.toFixed(2);
+  expect(screen.getByLabelText("用量总计").textContent).toContain(`$${todayCost}`);
+  // 切到没加载过的范围：旧 KPI 立刻消失，换成加载文案。
+  fireEvent.click(screen.getByRole("button", { name: "近 7 天" }));
+  await waitFor(() => expect(calls).toEqual(["today", "7d"]));
+  expect(screen.queryByLabelText("用量总计")).toBeNull();
+  expect(screen.getByRole("status").textContent).toContain("正在扫描用量");
+  await act(async () => { second.resolve(mockUsageStats("7d")); });
+  expect(await screen.findByLabelText("用量总计")).toBeTruthy();
+});
+
+it("趋势全零时给一句说明而不是空坐标系", async () => {
+  const stats = mockUsageStats("30d");
+  const zeroed: UsageStats = { ...stats, trend: { ...stats.trend, points: stats.trend.points.map((p) => ({ ...p, cost: 0, tokens: { ...p.tokens, total: 0 } })) } };
+  mockIPC((cmd, args) => {
+    const range = (args as { range: UsageRange }).range;
+    return cmd === "get_usage_stats" ? zeroed : mockUsageHealth(range);
+  });
+  render(<StatsView {...links} />);
+  expect(await screen.findByText("花费在该范围内为 0")).toBeTruthy();
+  expect(screen.queryByRole("img", { name: /花费趋势/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Token" }));
+  expect(await screen.findByText("Token在该范围内为 0")).toBeTruthy();
 });
 
 it("花费趋势按范围切换小时/天分桶，all 不补零", async () => {
@@ -97,18 +135,19 @@ it("花费趋势按范围切换小时/天分桶，all 不补零", async () => {
     return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
   });
   render(<StatsView {...links} />);
+  // 默认「今天」⇒ 小时桶。
   const chart = await screen.findByRole("img", { name: /花费趋势/ });
-  expect(chart.getAttribute("aria-label")).toContain("30 天");
-  expect(chart.querySelectorAll("rect.chart-bar").length).toBe(30);
-  expect(chart.querySelectorAll("rect.chart-hit").length).toBe(30);
+  expect(chart.getAttribute("aria-label")).toContain("24 小时");
+  expect(chart.querySelectorAll("rect.chart-bar").length).toBe(24);
+  expect(chart.querySelectorAll("rect.chart-hit").length).toBe(24);
   expect(chart.querySelector("rect.chart-hit")?.getAttribute("data-tip")).toContain("花费");
   expect(chart.querySelector("rect.chart-bar title")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "近 24 小时" }));
+  fireEvent.click(screen.getByRole("button", { name: "近 7 天" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /花费趋势/ });
-    expect(next.getAttribute("aria-label")).toContain("24 小时");
-    expect(next.querySelectorAll("rect.chart-bar").length).toBe(24);
-    expect(next.querySelectorAll("rect.chart-hit").length).toBe(24);
+    expect(next.getAttribute("aria-label")).toContain("7 天");
+    expect(next.querySelectorAll("rect.chart-bar").length).toBe(7);
+    expect(next.querySelectorAll("rect.chart-hit").length).toBe(7);
   });
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
   await waitFor(() => {
@@ -126,10 +165,10 @@ it("看板默认今天；KPI 展示中断注记与缓存未上报；切换标签
   });
   render(<StatsView {...links} />);
   await screen.findByLabelText("用量总计");
-  expect(calls).toEqual(["get_usage_stats:30d"]);
+  expect(calls).toEqual(["get_usage_stats:today"]);
   fireEvent.click(screen.getByRole("tab", { name: "运行看板" }));
   expect(await screen.findByLabelText("关键指标")).toBeTruthy();
-  expect(calls).toEqual(["get_usage_stats:30d", "get_usage_health:today"]);
+  expect(calls).toEqual(["get_usage_stats:today", "get_usage_health:today"]);
   const kpis = screen.getByLabelText("关键指标");
   expect(within(kpis).getByText("132")).toBeTruthy();
   expect(within(kpis).getByText("另有 2 次用户中断")).toBeTruthy();
@@ -141,6 +180,24 @@ it("看板默认今天；KPI 展示中断注记与缓存未上报；切换标签
   fireEvent.click(screen.getByRole("tab", { name: "运行看板" }));
   expect(calls.filter((c) => c === "get_usage_health:7d")).toHaveLength(1);
   expect(within(screen.getByLabelText("关键指标")).getByText("940")).toBeTruthy();
+});
+
+it("活跃度卡片：热力图铺开 + 右侧汇总（活跃天数 / 合计 / 最高单日 / 连续）", async () => {
+  const stats = mockUsageStats("30d");
+  mockIPC((cmd, args) => {
+    const range = (args as { range: UsageRange }).range;
+    return cmd === "get_usage_stats" ? stats : mockUsageHealth(range);
+  });
+  render(<StatsView {...links} />);
+  const card = await screen.findByLabelText("活跃度");
+  // 卡片独占一行（不在 health-grid 里），汇总与热力图分离。
+  expect(card.closest(".health-grid")).toBeNull();
+  const heat = within(card).getByRole("img", { name: /活跃度热力图/ });
+  expect(heat.querySelectorAll("rect.heat-cell").length).toBe(182);
+  expect(within(card).getByText("活跃天数")).toBeTruthy();
+  expect(within(card).getByText("合计花费")).toBeTruthy();
+  expect(within(card).getByText("连续活跃天数")).toBeTruthy();
+  expect(card.textContent).toContain("最高单日");
 });
 
 it("看板空数据给出克制空态，命中率显示“—”而非 0%", async () => {

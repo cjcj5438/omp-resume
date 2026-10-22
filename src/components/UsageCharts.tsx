@@ -65,6 +65,10 @@ export function TrendChart({ unit, points, metric }: { unit: UsageTrendUnit; poi
   const label = metric === "cost"
     ? `花费趋势：${points.length} ${unit === "hour" ? "小时" : "天"}，总计 ${usageMoney(totalCost)}${max > 0 ? `，最高 ${usageMoney(max)}（${points[peak]?.key ?? ""}）` : ""}`
     : `Token 趋势：${points.length} ${unit === "hour" ? "小时" : "天"}，总计 ${compactNumber(totalTokens)}${max > 0 ? `，最高 ${compactNumber(max)}（${points[peak]?.key ?? ""}）` : ""}`;
+  // 全零不画空图（一根柱子都没有的空坐标系只会让人以为渲染坏了）。
+  if (max <= 0) {
+    return <div className="pane-note">{`${metric === "cost" ? "花费" : "Token"}在该范围内为 0`}</div>;
+  }
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={label}>
       <line x1={PLOT_X} y1={BASE_Y} x2={PLOT_X + PLOT_W} y2={BASE_Y} className="chart-grid" />

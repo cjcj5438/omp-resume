@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BENCH_CONFIG_KEY } from "../modelBench";
 import type { BenchRound, ModelConfig, ModelInfo, ModelSpec } from "../types";
 import { ModelsTab } from "./ModelsTab";
@@ -133,6 +133,26 @@ describe("模型库", () => {
     fireEvent.change(within(lib).getByRole("searchbox", { name: "搜索模型库" }), { target: { value: "slow" } });
     expect(within(lib).queryByText("Fast")).toBeNull();
     expect(within(lib).getByText("Slow")).toBeInTheDocument();
+  });
+
+  it("外部改了 models.yml：重新打开与窗口聚焦都会带出新增模型，无需点刷新", async () => {
+    const added = (id: string): ModelInfo => ({ ...MODELS[0], selector: `ext/${id}`, provider: "ext", id, name: `Ext ${id}` });
+    // 先让进程内缓存记住旧 revision（模型库不含 ext）。
+    stub({ revision: "rev-old" });
+    await renderTab();
+    cleanup();
+
+    // 挂载路径：revision 变了 → 缓存失效，重跑 list_models。
+    stub({ revision: "rev-ext-1", models: [...MODELS, added("one")] });
+    await renderTab();
+    const lib = screen.getByRole("region", { name: "模型库" });
+    expect(await within(lib).findByText("Ext one")).toBeInTheDocument();
+
+    // 聚焦路径：同一次挂载内文件再变，回到应用窗口即更新。
+    stub({ revision: "rev-ext-2", models: [...MODELS, added("one"), added("two")] });
+    expect(within(lib).queryByText("Ext two")).toBeNull();
+    fireEvent.focus(window);
+    expect(await within(lib).findByText("Ext two")).toBeInTheDocument();
   });
 
   it("第三个用途折叠为 +N（title 列出剩余）", async () => {

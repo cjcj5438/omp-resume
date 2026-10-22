@@ -56,3 +56,14 @@ export function toDeleteTargets(
       inUse: c.inUse,
     }));
 }
+
+export type CleanupSortDir = "desc" | "asc";
+
+/** 按体积排序（同体积按 path 升序），与后端返回顺序无关，保证确定性。 */
+export function sortCandidates(list: CleanupCandidate[], dir: CleanupSortDir): CleanupCandidate[] {
+  const sign = dir === "desc" ? -1 : 1;
+  return [...list].sort((a, b) => {
+    if (a.bytes !== b.bytes) return sign * (a.bytes - b.bytes);
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+}

@@ -3,9 +3,9 @@ import { heatGrid, heatLevels } from "./usageFormat";
 import { usageMoney, usageNumber } from "./UsageSummary";
 import "./Usage.css";
 
-const CELL = 12;
+const CELL = 14;
 const GAP = 3;
-const LEFT = 22;
+const LEFT = 26;
 const TOP = 16;
 const STEP = CELL + GAP;
 
@@ -19,7 +19,7 @@ export function UsageHeatmap({ days }: { days: UsageTrendPoint[] }) {
   });
   const showMonth = monthLabels.map((m, ci) => m !== 0 && (ci === 0 || m !== monthLabels[ci - 1]));
   return (
-    <div>
+    <div className="heat-wrap">
       <svg viewBox={`0 0 ${LEFT + cols.length * STEP} ${TOP + 7 * STEP}`} className="heat" role="img" aria-label={`活跃度热力图：近 26 周，${active} 天有用量`}>
         {cols.map((col, ci) => (
           <g key={ci}>
@@ -41,17 +41,23 @@ export function UsageHeatmap({ days }: { days: UsageTrendPoint[] }) {
             )}
           </g>
         ))}
-        {(["一", "三", "五"] as const).map((t, k) => (
+        {(["一", "三", "五", "日"] as const).map((t, k) => (
           <text key={t} className="chart-tick" x={0} y={TOP + (k * 2) * STEP + 10}>{t}</text>
         ))}
       </svg>
-      <div className="heat-legend" aria-hidden="true">
-        <span>少</span>
-        {[0, 1, 2, 3, 4].map((l) => (
-          <svg key={l} width={12} height={12}><rect className="heat-cell" data-level={l} width={12} height={12} rx={2} /></svg>
-        ))}
-        <span>多</span>
-      </div>
     </div>
+  );
+}
+
+/** 热力等级图例（0–4）：放在卡片头右侧，与热力图分离。 */
+export function HeatLegend() {
+  return (
+    <span className="heat-legend" aria-hidden="true">
+      <span>少</span>
+      {[0, 1, 2, 3, 4].map((l) => (
+        <svg key={l} width={12} height={12}><rect className="heat-cell" data-level={l} width={12} height={12} rx={2} /></svg>
+      ))}
+      <span>多</span>
+    </span>
   );
 }

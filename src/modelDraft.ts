@@ -8,7 +8,7 @@
  * configFromDraft 的草稿视角，未触碰的键与值原样保留。
  */
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { getModelConfig, listModels, normalizeError, updateModelConfig } from "./api";
+import { getModelConfig, getModelSpecs, listModels, normalizeError, updateModelConfig } from "./api";
 import { useAlive, type ToastFn } from "./components/useOmpOp";
 import { errorText } from "./format";
 import { deepEqual, rawValueText } from "./modelConfig";
@@ -43,8 +43,21 @@ const CONFIG_KEYS = {
 
 const CONFLICT_TEXT = "配置已被外部修改，请刷新（下方已重新载入最新配置）";
 
-/** 进程内模型缓存：`omp models --json` 较慢，刷新按钮才重跑。 */
-let modelsCache: ModelInfo[] | null = null;
+/**
+ * 进程内模型缓存：`omp models --json` 较慢，不能每次挂载都重跑。
+ * `source` 是读取时 models.yml 的 revision（字节 SHA256）：文件被外部改动
+ * （手动加模型/provider）后 revision 不同，下次校验即重载；刷新按钮仍强制重载。
+ */
+let modelsCache: { list: ModelInfo[]; source: string | null } | null = null;
+
+/** models.yml 当前 revision；读不到返回 null（此时沿用缓存，不因探测失败打断列表）。 */
+async function modelsSource(): Promise<string | null> {
+  try {
+    return (await getModelSpecs()).revision;
+  } catch {
+    return null;
+  }
+}
 
 export interface SavePair {
   key: string;
@@ -258,7 +271,7 @@ export type ModelDraftLoad =
   | { status: "ready"; state: ModelDraftState };
 
 export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
-  const [models, setModels] = useState<ModelInfo[] | null>(modelsCache);
+  const [models, setModels] = useState<ModelInfo[] | null>(modelsCache?.list ?? null);
   const [modelsLoading, setModelsLoading] = useState(modelsCache === null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [config, setConfig] = useState<ModelConfig | null>(null);
@@ -304,25 +317,47 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
     void loadConfig();
   }, [loadConfig]);
 
+  // 非强制校验互斥：窗口聚焦与挂载同时触发时只跑一次，避免重复启动慢速 omp。
+  const modelsBusy = useRef(false);
+
   const loadModels = useCallback(async (force: boolean) => {
-    if (!force && modelsCache !== null) return;
-    setModelsError(null);
-    setModelsLoading(true);
+    if (!force && modelsBusy.current) return;
+    modelsBusy.current = true;
+    if (force) {
+      setModelsError(null);
+      setModelsLoading(true);
+    }
     try {
-      const list = await listModels();
+      // 先于 omp 取 revision：列表读取期间文件再变，下次校验会发现不一致并重载。
+      const source = await modelsSource();
       if (!alive.current) return;
-      modelsCache = list;
-      setModels(list);
-    } catch (e: unknown) {
-      if (!alive.current) return;
-      setModelsError(errorText(normalizeError(e)));
+      if (!force && modelsCache !== null && (source === null || source === modelsCache.source)) return;
+      setModelsError(null);
+      setModelsLoading(true);
+      try {
+        const list = await listModels();
+        if (!alive.current) return;
+        modelsCache = { list, source };
+        setModels(list);
+      } catch (e: unknown) {
+        if (!alive.current) return;
+        setModelsError(errorText(normalizeError(e)));
+      } finally {
+        if (alive.current) setModelsLoading(false);
+      }
     } finally {
-      if (alive.current) setModelsLoading(false);
+      modelsBusy.current = false;
     }
   }, []);
 
+  // 挂载与窗口重新聚焦都对照 models.yml revision：外部编辑后回到应用即更新模型库。
   useEffect(() => {
     void loadModels(false);
+    const onFocus = (): void => {
+      void loadModels(false);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [loadModels]);
 
   async function saveBlock(block: BlockKey, pairs: SavePair[]) {

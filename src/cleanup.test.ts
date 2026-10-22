@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CleanupCandidate } from "./types";
 import {
   selectionTotals,
+  sortCandidates,
   toDeleteTargets,
   toggleAllSelectable,
 } from "./cleanup";
@@ -48,5 +49,19 @@ describe("toDeleteTargets", () => {
     const targets = toDeleteTargets(LIST, new Set(["/a", "/busy"]));
     expect(targets).toHaveLength(1);
     expect(targets[0]).toMatchObject({ path: "/a", sizeBytes: 1000, messageCount: null });
+  });
+});
+
+describe("sortCandidates", () => {
+  it("体积倒序 / 正序互为反向，同体积按 path 升序，与输入顺序无关", () => {
+    const tied = [cand({ path: "/z", bytes: 900 }), cand({ path: "/m", bytes: 900 }), cand({ path: "/c", bytes: 900 })];
+    const desc = sortCandidates([...LIST].reverse(), "desc");
+    expect(desc.map((c) => c.path)).toEqual(["/unknown", "/busy", "/a", "/b"]);
+    const asc = sortCandidates(LIST, "asc");
+    expect(asc.map((c) => c.path)).toEqual(["/b", "/a", "/busy", "/unknown"]);
+    expect(sortCandidates(tied, "desc").map((c) => c.path)).toEqual(["/c", "/m", "/z"]);
+    expect(sortCandidates(tied, "asc").map((c) => c.path)).toEqual(["/c", "/m", "/z"]);
+    // 不改入参。
+    expect(LIST.map((c) => c.path)).toEqual(["/a", "/busy", "/unknown", "/b"]);
   });
 });

@@ -4,7 +4,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { OMP_VERSION } from "../ompCommands";
+import { OMP_COMMANDS, OMP_VERSION } from "../ompCommands";
+import { OMP_CLI_COMMANDS } from "../ompCliCommands";
 import { OMP_COMBOS } from "../ompCombos";
 import { CheatSheetDialog } from "./CheatSheetDialog";
 
@@ -85,6 +86,45 @@ describe("复制", () => {
     await act(async () => {});
     expect(screen.getByRole("status")).toHaveTextContent("复制失败");
     expect(screen.getByRole("button", { name: "复制 /delete" })).toHaveTextContent("复制");
+  });
+});
+
+describe("使用示例", () => {
+  it("命令行下方列出可复制的示例", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "effort" } });
+    const compact = OMP_COMMANDS.flatMap((g) => g.commands).find((c) => c.name === "effort");
+    if (compact === undefined) throw new Error("找不到 effort");
+    for (const ex of compact.examples) expect(screen.getByRole("button", { name: `复制示例 ${ex}` })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "复制示例 /effort high" }));
+    await act(async () => {});
+    expect(writeText).toHaveBeenCalledWith("/effort high");
+  });
+});
+
+describe("终端命令", () => {
+  it("终端命令页列出子命令、示例，并可复制", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    renderDialog();
+    fireEvent.click(screen.getByRole("tab", { name: "终端命令" }));
+    expect(document.querySelector(".cheatsheet-head")?.textContent).toContain(
+      `共 ${OMP_CLI_COMMANDS.length} 个终端子命令`,
+    );
+    const bench = OMP_CLI_COMMANDS.find((c) => c.name === "bench");
+    if (bench === undefined) throw new Error("找不到 bench");
+    expect(screen.getByRole("button", { name: "复制 omp bench" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `复制示例 ${bench.examples[0]}` }));
+    await act(async () => {});
+    expect(writeText).toHaveBeenCalledWith(bench.examples[0]);
+
+    fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "worktree" } });
+    expect(screen.getByRole("button", { name: "复制 omp worktree" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "复制 omp bench" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "不存在的子命令xyz" } });
+    expect(screen.getByText("没有匹配的终端子命令")).toBeInTheDocument();
   });
 });
 

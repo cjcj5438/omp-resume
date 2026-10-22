@@ -73,12 +73,20 @@
   padding: 0;
 }
 
+/* 一行 = 上排（命令 / 中文说明 / 复制）+ 下排整宽示例。 */
 .cheatsheet-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cheatsheet-line {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--border);
+  width: 100%;
 }
 
 .cheatsheet-row:last-child {
@@ -106,6 +114,39 @@
   max-width: 42%;
   text-align: right;
   color: var(--text-muted);
+}
+
+/* 使用示例：说明下方逐条列出，等宽命令 + 行内复制。 */
+.cheatsheet-examples {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cheatsheet-example {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-example .mono {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* 示例块在左列主信息下，右列仍只放一句中文说明。 */
+.cheatsheet-examples {
+  padding-left: 0;
+}
+
+.cheatsheet-example .cheatsheet-copy {
+  flex: none;
 }
 
 /* 行内复制：平时收起，悬停或键盘聚焦到行内时出现。 */

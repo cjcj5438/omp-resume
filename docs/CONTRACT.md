@@ -23,7 +23,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
 - 时间一律 ISO-8601 UTC 毫秒字符串（如 `2026-10-14T02:18:47.387Z`），
   不使用 unix 时间戳。
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
-  4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、
+  4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
   4.54–4.55 模型规格（§21）。
 
 ## 1. 配置解析
@@ -709,40 +709,50 @@ header `.title`、每个 `title_change` 的 `.title`。
   （`window.open` 可能落到应用内窗口）。入口在侧栏 omp 版本行的「更新日志」小链接与
   OmpUpdateDialog 的「查看更新日志」；capabilities 无需扩展
   （`opener:default` 已允许 https）。
-- **命令速查**（`src/ompCommands.ts` / `src/ompCombos.ts` / `CheatSheetDialog.tsx`，
-  纯前端静态数据，无后端命令）：
-  - 基准 `OMP_VERSION = "18.12.3"`，共 **87 条**内置命令（分组 + 英文参数提示 +
-    手写中文一句话说明 + 别名）。相较 18.12.2 新增 `/forget-approvals`，无移除、
-    无更名（与上游 CHANGELOG [18.12.3] Added 一致）；`/setup` 参数提示修正为
-    `[providers]`（其它参数会被 handler 拒绝），`/ssh` 改为与 `/mcp` 等一致的
-    子命令枚举式 `<add|list|remove|help>`；别名不变。自定义命令、技能（`/skill:xxx`）
-    与插件命令不收录（/autoresearch、/init、/annotate、/green、/review 不在统一
-    内置注册表内，随扩展机制提供），实时补全以 omp 内输入 `/` 为准。
+- **命令速查**（`src/ompCommands.ts` / `src/ompCliCommands.ts` / `src/ompCombos.ts` /
+  `CheatSheetDialog.tsx`，纯前端静态数据，无后端命令）：
+  - 基准 `OMP_VERSION = "18.12.6"`，共 **87 条**内置命令（分组 + 英文参数提示 +
+    手写中文一句话说明 + 别名 + 1–3 条可粘贴示例）。18.12.3 → 18.12.6 无内置命令
+    新增/更名/移除。另加一组「扩展命令」，收录随包发布的 `/review`、`/green`、
+    `/annotate`（上游 `custom-commands/bundled/`，RPC 里 `source` 为 custom）；
+    其余自定义命令、技能（`/skill:xxx`）与插件命令不收录，实时补全以 omp 内输入 `/` 为准。
+  - **示例不变量**（`ompCommands.test.ts` 单测锁定）：每条命令 1–3 条示例；首个
+    token 必须能被 `findOmpCommand` 解析回该命令本身；`args` 非空的命令至少一条带参数；
+    无参数命令的示例只有命令本身（不臆造子命令）。
   - **复核方法**（表头注释同样记录，改表后需按此抽查）：`omp` 没有
     `--list-commands`；用 `omp --mode rpc` 发 `get_available_commands` 取机器可读的
-    `{name, description, input.hint, aliases, subcommands}`（18.12.3 下 46 条核心
-    内置，仅 RPC 可执行子集；`--no-extensions`/`--no-skills` 可剥离扩展与技能命令），
+    `{name, description, input.hint, aliases, subcommands}`（18.12.6 下 52 条非 skill
+    命令，仅 RPC 可执行子集；`--no-extensions`/`--no-skills` 可剥离扩展与技能命令），
     再与 TUI 补全列表及逐条按 Tab 后的参数 ghost hint、上游 tag 源码
     `packages/coding-agent/src/slash-commands/builtin-*.ts`（统一内置注册表本身）
     三方交叉核对，得到全部内置命令与参数提示。
   - `filterOmpCommands(groups, query)`：大小写不敏感子串，去掉查询前导 `/`；
     匹配 name / 别名 / 参数提示 / 中文说明 / 意图关键词（`OMP_INTENT_KEYWORDS`，
     如 排队→`/queue`、协作→`/collab`、预算→`/goal`），只保留有命中的分组。
-    `findOmpCommand(name)` 按命令名或别名精确查找（含别名，供组合校验）。
+    另匹配命令的 `examples`；`findOmpCommand(name)` 按命令名或别名精确查找（含别名，供组合校验）。
   - **版本提示**：`CheatSheetDialog` 可选 prop `installedVersion`（App 传入
     `ompVersion`）；纯函数 `versionMismatch(installed)` **只做相等判断**
     （不做 semver 比较），已安装版本为空/未知时不提示；不一致时显示
-    「你安装的是 X，速查基于 18.12.3，个别命令可能有差异」。
-  - **两个视图**（顶部分段 [全部命令 | 组合用法]，过滤框共用、切换视图保留查询）：
+    「你安装的是 X，速查基于 18.12.6，个别命令可能有差异」。
+  - **三个视图**（顶部分段 [全部命令 | 组合用法 | 终端命令]，过滤框共用、切换视图保留查询）：
     - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明；空查询时顶部额外显示
       「常用」分组（`OMP_PINNED_COMMANDS` 引用的命令，不计入总数；复制按钮 key 带分组名前缀，
       与原分组行互不干扰），过滤时隐藏。头部显示
-      「基于 omp 18.12.3 · 共 87 条内置命令」，过滤中显示「匹配 X / 87 条」。
+      「基于 omp 18.12.6 · 共 90 条斜杠命令（内置 87 + 扩展 3）」，过滤中显示
+      「匹配 X / 90 条」。
       行内一键复制：主按钮复制 `/name`；有参数时另有「参数」按钮复制
-      `/name <args 原样>` 模板（不替换占位符）。复制成功按钮变「已复制 ✓」1.5 秒，
+      `/name <args 原样>` 模板（不替换占位符）；每个示例下方另有「复制示例 <原文>」按钮。
+      行布局是两层：上排（命令 / 中文说明 / 复制按钮）、下排整宽示例列表。复制成功按钮变「已复制 ✓」1.5 秒，
       失败在弹窗内可见提示「复制失败：剪贴板不可用，请手动选择文本复制」4 秒后消失；
       复制经 `src/clipboard.ts` 的 `copyText`（返回 boolean，绝不抛异常）。
       按钮在行 hover 或键盘聚焦时出现，`@media (hover: none)` 触屏常显。
+    - 终端命令（`OMP_CLI_COMMANDS`，单一分组、按 name 字母序，共 **51** 个）：
+      数据取自 `omp --help` 的 COMMANDS 清单（不含顶层 flags，也不含 Available Tools
+      里同名工具），每条含参数提示与手写中文说明，示例一律以 `omp ` 开头、第二个
+      token 就是该子命令本身，参数只用 `omp <name> --help` 里真实出现的形式（无法
+      确认时只写 `omp <name> --help`）。头部显示「基于 omp 18.12.6 · 共 51 个终端
+      子命令」或「匹配 X / 51 个」。行布局与「全部命令」一致（上排命令/说明/复制，
+      下排整宽示例），另可复制 `omp <name>` 与 `omp <name> <args>` 模板。
     - 组合用法：12 张「场景 → 命令序列」卡片（`OMP_COMBOS`），每张含标题、
       「何时使用」、有序步骤（命令 + 一句话说明）；每步可单独复制，卡片头
       「复制全部」把各步命令**每步一行换行拼接**。带参数的步骤写成
@@ -754,6 +764,9 @@ header `.title`、每个 `title_change` 的 `.title`。
     mnemopi 后端编写（view → stats → diagnose → enqueue）：`queue` 仅 sharpshooter
     后端实现（其余后端报 not available），`mm …` 仅 hindsight 后端可用，
     mnemopi 下 `clear` 会删除整个作用域的记忆库 DB 文件（故组合内不收录 `clear`）。
+  - 终端子命令不变量（`ompCommands.test.ts` 单测锁定）：名称唯一、按字母序、
+    每条至少 1 条示例且示例第二个 token 等于子命令名；`OMP_CLI_VERSION` 与
+    `OMP_VERSION` 相等。
   - 样式集中在 `src/components/CheatSheet.css`（`.cheatsheet-*`，只用 App.css
     语义变量，浅色/深色主题共用）。
 - **复制会话 ID**（`src/clipboard.ts`）：详情头 ID 按钮写入剪贴板，纯前端。
@@ -958,10 +971,14 @@ bashExecution（无 content 数组）与 developer：
 
 侧栏视图切换条「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
 
-- 「花费」（默认范围 `30d`）：范围分段（今天 / 近 24 小时 / 近 7 天 / 近 30 天 /
-  全部）+ 刷新；总计卡（总额 + 主对话/后台/子代理 + token 明细）；**花费趋势柱状图**
-  （按 `trend.unit` 画 hour/day 桶）；「按项目」「按模型」表（花费、token、会话数 /
-  调用次数，行内占比条）。
+- 「总览」（默认范围 `today`）：范围分段（今天 / 近 24 小时 / 近 7 天 / 近 30 天 /
+  全部，激活态为 `--accent-soft` 底 + `--accent` 描边）+ 刷新；6 张 KPI 卡、
+  花费/Token 可切换趋势柱状图（按 `trend.unit` 画 hour/day 桶；该范围内全为 0 时
+  不画空坐标系，改显示「花费/Token 在该范围内为 0」）、Token 与耗时构成环、
+  活跃度卡片（独占一行：热力图 + 右侧四格汇总「活跃天数 / 合计花费 / 最高单日
+  （同价取最早）/ 连续活跃天数」，图例在卡片头右侧；近 26 周按日花费，不受上方范围影响）、
+  高花费会话榜（独占一行）、「按项目」「按模型」表（花费、token、会话数 /
+  调用次数，行内占比条）。所有 `.health-card` 标题统一 14px（`.card-head > h2` 也吃到）。
 - 「运行看板」（默认范围 `today`；KPI：请求数（含失败与用户中断）、错误数 + 错误率（`errors.total /
   requests`，另注「另有 N 次用户中断」）、兜底切换次数、缓存命中率（`null` 显示「—」
   并注明「该上游未返回缓存数据」）；请求趋势（错误/兜底叠加）、缓存命中率趋势、
@@ -974,7 +991,9 @@ bashExecution（无 content 数组）与 developer：
   折线圆点 `r` 2.5→5、兜底圆点 `r` 3→4，全部 `var(--motion)` 过渡；提示浮层由全局 `ChartTip` 渲染。
 - 每个标签页各自记住范围；两个面板数据独立请求（范围/刷新按钮各自一套），
   迟到响应不覆盖当前结果；已加载过的「范围」再切回时命中缓存不再请求（必须同时
-  复位加载态，否则刷新按钮会永久禁用）；加载 / 空数据 / 错误与重试状态与既有视图同风格。
+  复位加载态，否则刷新按钮会永久禁用）；**换范围时立刻不显示上一个范围的数据**
+  （命中过的范围用该范围缓存顶上，没命中过则清空并显示加载文案）；同范围刷新
+  （refresh nonce 变化）保留旧数据，避免闪空；加载 / 空数据 / 错误与重试状态与既有视图同风格。
 
 ### 12.5 IO、缓存与错误
 
@@ -1131,7 +1150,9 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 ### 14.4 前端
 
 - 侧栏视图切换条「清理」（与「管理」「统计」同条）→ 主区域 `CleanupView`：
-  「超过 N 天 / 体积前 N 名」两个数字输入、候选表格（标题、cwd 末段、原因标签、
+  「超过 N 天 / 体积前 N 名」两个数字输入、排序分段「体积倒序 / 体积正序」
+  （`sortCandidates`，同体积按 path 升序，与后端返回顺序无关；勾选集合按 path，
+  换序不丢选中）、候选表格（标题、cwd 末段、原因标签、
   体积、修改时间、复选框、「查看」）、顶部「已选 X 个，可释放 Y」、
   「全选可勾选项」与「删除所选…」。
 - 「删除所选…」**复用** App 的既有批量删除编排与 DeleteDialog：
@@ -1280,7 +1301,12 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   costCacheRead: number|null, costCacheWrite: number|null }`（camelCase）。
   无 selector 的条目跳过；缺字段容忍为 null/空。坏 JSON → `OMP_FAILED`。
 - 可能较慢（耗时数秒到十几秒不等，随机器/网络波动）：前端异步加载 + 进程内缓存
-  （模块级，跨挂载复用），「刷新模型列表」按钮只重跑本命令。
+  （模块级，跨挂载复用）。缓存条目记录读取时 `models.yml` 的 revision（`get_model_specs`
+  的字节 SHA256，读取先于 `list_models`）；「模型」/「Agent」页挂载与窗口重新聚焦时
+  先对照当前 revision：不变沿用缓存，变化（外部手动增删 provider/模型）才重跑本命令；
+  revision 读取失败沿用缓存；并发的非强制校验互斥，只启动一次 omp。
+  「刷新模型列表」按钮强制重跑本命令。只覆盖 `models.yml`，不含 `models.json`、登录
+  带来的目录变化。
   模型选择器按 provider 分组、可搜索；当前值不在列表（别名 / 已下线）时
   原样显示并标「未知值 · 保留」，用户不动就不改写。
 
@@ -1339,7 +1365,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   「刷新模型」）→「模型库」（`ModelLibrary`，只读一览表：搜索 + 上下文/最大输出/
   目录价/思考/用途列（名下 muted selector 次行、紧凑数字 `1M` / `393,216` / `$0.3 / $1.2`、
   思考档位以 `·` 连接）+ 「加入测试」/「测试 ▶」/「规格」入口）→「测试」（内嵌 bench，
-  见 §20.4）→「角色分配」（`ModelsSection`：下述「主要模型」+「其他模型的兜底」，
+  见 §20.5）→「角色分配」（`ModelsSection`：下述「主要模型」+「其他模型的兜底」，
   bench 推荐回填到这里的角色草稿）。「Agent」标签页（`AgentsTab`）自上而下：导语 +
   状态 chips（编排器 / 子代理数 / 停用 / 顾问 / Vibe 两档）+ 模型列表/兜底状态条
   （`ModelDraftStatus`，两页共用）→ 可交互编排流程图 → 下述「Agent」区块。
@@ -2059,13 +2085,14 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 - **抽屉**（`Drawer.tsx`）：见 §18.9——140ms 右滑淡入，`prefers-reduced-motion` 关闭。
 - **鼠标指针**：桌面应用惯例，交互元素保持 `cursor: default`，不引入手指指针。
 
-## 20. 模型测试器（§4.51–§4.53，管理视图「模型」标签页的「测试」区）
+## 20. 模型测试器（§4.51–§4.53、§4.56，管理视图「模型」标签页的「测试」区）
 
 > 测速度、测稳定性，结果可写回 `modelRoles`。测速走 omp 自带的 `omp bench`（直连模型，
 > 不带 agent 前缀），是本应用唯一会调用 LLM 的路径。写配置仍然只走 §16.5
-> `update_model_config`，本章不新增写配置的命令。实现：`src-tauri/src/model_bench.rs`、
+> `update_model_config`；本章唯一的写盘命令是 §20.4（删除 `model-bench.jsonl` 里的记录）。
+> 实现：`src-tauri/src/model_bench.rs`、
 > `src/modelBench.ts`、`src/components/ModelTesterPanel.tsx`（及 `BenchToolbar` /
-> `BenchTagFilter` / `BenchSparkline` / `BenchDrawer` / `BenchSavebar` /
+> `BenchTagFilter` / `BenchSparkline` / `BenchDrawer` / `BenchRecords` / `BenchSavebar` /
 > `ModelEntryModal` 拆出件）。
 
 ### 20.1 / 4.51 `model_bench_run { selector } -> BenchRound`
@@ -2119,14 +2146,26 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   updatedAt: ISO(updated_at 秒) }`，按 samples 降序。
 - 库不存在、表/列不匹配、任何 SQL 错误 → `[]`（前端隐藏「日常实测」列）。
 
-### 20.4 前端（纯前端状态，不新增配置键）
+### 20.4 / 4.56 `model_bench_delete { selector, at? } -> number`
+
+- `selector` 校验同 §20.1（不合法 → `INVALID_INPUT`）。
+- `at` 为 ISO-8601 UTC 毫秒字符串时只删 `selector` 与 `at` 都精确匹配的那一轮；为 `null` /
+  缺省时删 `selector` 的全部轮次。返回删除条数。
+- 文件不存在或没有命中 → 返回 0，不写盘。命中时按 §20.2 的口径重写
+  `model-bench.jsonl`（坏行与无时间戳行一并丢弃），失败 → `IO`（与裁剪的静默不同：
+  用户显式删除必须能报错）。持同一把进程内互斥锁，全程读-改-写。
+- 前端入口在抽屉的「测试记录」块：单轮可删，另有「清空记录…」（`Modal` 二次确认）。
+  抽屉自带「删除」（移除测试条目）不动记录。
+
+### 20.5 前端（纯前端状态，不新增配置键）
 
 - 「模型」标签页的「测试」区（`ModelsTab` 中段，`ModelTesterPanel embedded`）：
   隐藏独立导语、紧凑布局，bench 配置仍存 localStorage `omp-resume:model-tester:v1` 并由
   `ModelsTab` 受控持有（`{ entries: [{ selector, tags, monitor }], customTags,
   intervalMin: 0|30|60|360 }`，默认 `{ entries: [], customTags: ["test"], intervalMin: 0 }`，
   损坏回默认；dev 与 .app 不互通，同 pins）。页头「刷新模型」同时刷新模型列表、
-  规格快照与测试器（`refreshKey`）。
+  规格快照与测试器（`refreshKey`）；窗口重新聚焦时规格快照自动重读，模型列表按 §16.3
+  的 revision 校验自动更新。
 - **列表** = `entries` ∪ 当前 `modelRoles` 里对话类角色的普通 selector（`@别名`、逗号列表跳过；
   `judge` / `image` 等非对话角色不纳入）。被角色占用的模型自动带该角色标签且不能删除。
   selector（含 `:thinking`）即身份，同模型不同思考强度算两条。添加/编辑走宽对话框
@@ -2158,11 +2197,18 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   取 24h 样本 ≥5 且成功率 ≥95% 的最高综合分者，与当前值不同才加入；无候选时提示门槛。
   已开的 omp 窗口不切换，新会话生效。（`BenchSavebar` 本地「待保存」底栏只在非嵌入用法下渲染。）
 - **抽屉**（复用 `Drawer`）：标签开关、监控开关、「设为 <标签>」、编辑（被角色占用时禁用并说明）、
-  删除（被角色占用时禁用并说明）、24h / 7d 切换、4 个 KPI（成功率 / TTFT p50 / tok/s / 花费）、
-  成功率柱状图 + tok/s 折线（复用 `UsageCharts` 的 `ChartBucket` 与 `ChartTip`）、最近错误。
-  动效与悬浮遵守 §19。
+  删除测试条目（被角色占用时禁用并说明；**不删记录**）、24h / 7d 切换、4 个 KPI
+  （成功率 / TTFT p50 / tok/s / 花费）、成功率柱状图 + tok/s 折线（复用 `UsageCharts` 的
+  `ChartBucket` 与 `ChartTip`）、「测试记录」（`BenchRecords`：按 `at` 倒序列出每轮
+  时间 / 成功率 / TTFT / tok/s / 花费，逐轮可删，「清空记录…」二次确认后删该 selector
+  全部轮次，删除走 §20.4 并在成功后重载历史）、最近错误。动效与悬浮遵守 §19。
+- **表格排版**：数值列（成功率 / TTFT / tok/s / 对比基线 / 日常实测）右对齐且
+  `font-variant-numeric: tabular-nums`（选择器需带 `.bench-table` 前缀压过
+  `.manage-table` 的 `text-align: left`）；表头 `position: sticky` 在
+  `.bench-table-wrap`（`overflow: auto; max-height: 62vh`）内吸顶；工具条成条
+  （边框 + 卡底 + 两端对齐）；标签列 110px 且允许换行；行 `cursor: pointer`。
 
-### 20.5 实测记录（omp 18.12.3，2026-10-20）
+### 20.6 实测记录（omp 18.12.3，2026-10-20）
 
 - `amr-link/deepseek-v4.1-flash:max` 按 §20.1 两次探针实跑：短探针 32.5s、长探针 11.5s，
   共 $0.0022；短探针 tok/s 34–168，长探针 163–168（据此定 tok/s 只取长探针）。

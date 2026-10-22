@@ -132,3 +132,30 @@ export function heatGrid(cells: HeatCell[]): (HeatCell | null)[][] {
   if (col.length > 0) pushCol();
   return cols;
 }
+
+/**
+ * 活跃度汇总：活跃天数（花费 > 0）、合计花费、最高单日（同价取最早）、
+ * 截至最后一天的连续活跃天数（末尾连续 >0 的天数）。
+ */
+export function activitySummary(days: { key: string; cost: number }[]): {
+  activeDays: number;
+  totalCost: number;
+  best: { key: string; cost: number } | null;
+  streak: number;
+} {
+  let activeDays = 0;
+  let totalCost = 0;
+  let best: { key: string; cost: number } | null = null;
+  for (const d of days) {
+    if (d.cost <= 0) continue;
+    activeDays += 1;
+    totalCost += d.cost;
+    if (best === null || d.cost > best.cost) best = { key: d.key, cost: d.cost };
+  }
+  let streak = 0;
+  for (let i = days.length - 1; i >= 0; i -= 1) {
+    if (days[i].cost <= 0) break;
+    streak += 1;
+  }
+  return { activeDays, totalCost, best, streak };
+}
