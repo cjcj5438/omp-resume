@@ -26,6 +26,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-card);
+  flex-wrap: wrap;
 }
 
 .cheatsheet-tab {
@@ -62,9 +63,29 @@
   margin-top: 8px;
 }
 
+/* 分组标题吸顶：长列表滚动时始终知道自己在哪一组。 */
 .cheatsheet-group-title {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 16px 0 6px;
+  padding: 4px 0;
   font-size: 13px;
-  margin: 12px 0 4px;
+  background: var(--bg);
+}
+
+.cheatsheet-group-title:first-child {
+  margin-top: 0;
+}
+
+.cheatsheet-group-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .cheatsheet-rows {
@@ -109,11 +130,134 @@
   overflow-wrap: break-word;
 }
 
+/* 一句话说明放在命令名下方（整宽），不再挤在右列。 */
 .cheatsheet-zh {
-  flex: none;
-  max-width: 42%;
-  text-align: right;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.cheatsheet-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cheatsheet-cmd {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 详解：何时用 / 参数 / 注意 / 相关，统一用左侧小标签 + 正文。 */
+.cheatsheet-label {
+  display: inline-block;
+  min-width: 44px;
+  margin-right: 8px;
+  font-size: 11px;
   color: var(--text-muted);
+}
+
+.cheatsheet-when {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.cheatsheet-params {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.cheatsheet-params dt {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.cheatsheet-params dd {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 2px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.cheatsheet-params code {
+  flex: none;
+  color: var(--accent);
+}
+
+.cheatsheet-params dd span {
+  color: var(--text-muted);
+}
+
+.cheatsheet-cautions {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cheatsheet-cautions .cheatsheet-label {
+  color: var(--danger);
+}
+
+.cheatsheet-related {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+/* 可点击的交叉引用：看起来像链接，但不是真链接（同视图内跳转）。 */
+.cheatsheet-link {
+  padding: 1px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-card);
+  color: var(--accent);
+  cursor: default;
+  transition: background-color var(--motion, 120ms) ease, border-color var(--motion, 120ms) ease;
+}
+
+.cheatsheet-link:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 入门路径：序号 + 目标 + 前置 + 每步「为什么 / 现在就试」。 */
+.cheatsheet-path-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cheatsheet-path-after {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 路径步骤里的命令是可点的交叉引用（跳到该命令的完整说明）。 */
+.cheatsheet-path .cheatsheet-step-cmd {
+  flex: none;
 }
 
 /* 使用示例：说明下方逐条列出，等宽命令 + 行内复制。 */

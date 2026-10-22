@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition, BenchRound, ModelInfo } from "./types";
 import {
   BENCH_BUILTIN_TAGS,
+  addToBench,
+  removeFromBench,
   classifyBenchError,
   createBenchRunner,
   defaultBenchConfig,
@@ -158,7 +160,7 @@ describe("recommendChanges", () => {
 });
 
 describe("deriveBenchList", () => {
-  const cfg = (entries: BenchConfig["entries"]): BenchConfig => ({ entries, customTags: [], intervalMin: 0 });
+  const cfg = (entries: BenchConfig["entries"], hidden: string[] = []): BenchConfig => ({ entries, customTags: [], intervalMin: 0, hidden });
 
   it("@别名与逗号列表跳过；角色占用的不可删且带隐式标签", () => {
     const rows = deriveBenchList(
@@ -183,6 +185,33 @@ describe("deriveBenchList", () => {
     expect(rows.map((r) => r.selector).sort()).toEqual(["p/a:high", "p/a:low"]);
   });
 
+  it("移除：角色占用行记入 hidden 后不再出现，角色语义不变；重新加入恢复原标签", () => {
+    const roles = { default: "p/used", task: "p/used2" };
+    const base = cfg([{ selector: "p/local", tags: ["smol"], monitor: true }]);
+    const withRoles = deriveBenchList(base, roles);
+    expect(withRoles.map((r) => r.selector).sort()).toEqual(["p/local", "p/used", "p/used2"]);
+
+    // 移出角色占用行：entries 不动，只加 hidden。
+    const removed = removeFromBench(base, "p/used", ["default"]);
+    expect(removed.hidden).toEqual(["p/used"]);
+    expect(deriveBenchList(removed, roles).map((r) => r.selector).sort()).toEqual(["p/local", "p/used2"]);
+
+    // 重新加入被移除的那行：hidden 清掉，角色语义立刻回来。
+    const readded = addToBench(removed, "p/used", []);
+    expect(readded.hidden).toEqual([]);
+    expect(deriveBenchList(readded, roles).map((r) => r.selector).sort()).toEqual([
+      "p/local",
+      "p/used",
+      "p/used2",
+    ]);
+    // 加入已有条目：不重复追加，原标签/监控原样保留。
+    expect(addToBench(base, "p/local", ["other"]).entries).toEqual(base.entries);
+    // 移出非角色占用行：直接删条目，不留 hidden。
+    const dropped = removeFromBench(base, "p/local", []);
+    expect(dropped).toEqual({ ...base, entries: [] });
+  });
+
+
   it("能力角色（judge/image 等）整行排除；未知自定义角色按对话角色处理", () => {
     const rows = deriveBenchList(
       cfg([]),
@@ -200,7 +229,7 @@ describe("deriveTagSet", () => {
 
   it("内置 9 角色 + modelRoles 其他键 + customTags；顺序固定", () => {
     const tags = deriveTagSet(
-      { entries: [], customTags: ["test"], intervalMin: 0 },
+      { entries: [], customTags: ["test"], intervalMin: 0, hidden: [] },
       { default: "p/a", myrole: "p/b", judge: "p/j", image: "p/img" },
       {},
       agents,
@@ -215,7 +244,7 @@ describe("deriveTagSet", () => {
 
   it("未使用检测：非内置标签无人引用时标记", () => {
     const tags = deriveTagSet(
-      { entries: [], customTags: ["test"], intervalMin: 0 },
+      { entries: [], customTags: ["test"], intervalMin: 0, hidden: [] },
       { myrole: "p/b" },
       {},
       agents,
@@ -226,7 +255,7 @@ describe("deriveTagSet", () => {
     expect(byId.get("task")!.unused).toBe(false);
     // agentOverrides 里以 @名 出现 → 视为使用。
     const tags2 = deriveTagSet(
-      { entries: [], customTags: ["test"], intervalMin: 0 },
+      { entries: [], customTags: ["test"], intervalMin: 0, hidden: [] },
       { myrole: "p/b" },
       { task: "@myrole" },
       [],
@@ -248,13 +277,21 @@ describe("配置读写", () => {
         ],
         customTags: ["test", "BAD", 42],
         intervalMin: 999,
+        // 非字符串 / 非 selector 的 hidden 项被丢弃；旧配置缺 hidden 时回到 []。
+        hidden: ["p/b", "@bad", 7],
       }),
     });
     expect(loadBenchConfig(mixed)).toEqual({
       entries: [{ selector: "p/a", tags: ["task"], monitor: true }],
       customTags: ["test"],
       intervalMin: 0,
+      hidden: ["p/b"],
     });
+    // 旧版本配置没有 hidden 键：读成 []，不因缺字段回到默认值。
+    const legacy = memStorage({
+      [BENCH_CONFIG_KEY]: JSON.stringify({ entries: [], customTags: [], intervalMin: 30 }),
+    });
+    expect(loadBenchConfig(legacy)).toEqual({ entries: [], customTags: [], intervalMin: 30, hidden: [] });
   });
 
   it("写入后可读回", () => {
@@ -263,6 +300,7 @@ describe("配置读写", () => {
       entries: [{ selector: "p/a:high", tags: ["smol"], monitor: true }],
       customTags: ["test"],
       intervalMin: 60,
+      hidden: ["p/b"],
     };
     saveBenchConfig(cfg, s);
     expect(loadBenchConfig(s)).toEqual(cfg);

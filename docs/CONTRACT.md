@@ -709,8 +709,9 @@ header `.title`、每个 `title_change` 的 `.title`。
   （`window.open` 可能落到应用内窗口）。入口在侧栏 omp 版本行的「更新日志」小链接与
   OmpUpdateDialog 的「查看更新日志」；capabilities 无需扩展
   （`opener:default` 已允许 https）。
-- **命令速查**（`src/ompCommands.ts` / `src/ompCliCommands.ts` / `src/ompCombos.ts` /
-  `CheatSheetDialog.tsx`，纯前端静态数据，无后端命令）：
+- **命令速查**（`src/ompCommands.ts` / `src/ompCommandDetails.ts`（+ `commandDetails/part1..4.ts`）/
+  `src/ompCliCommands.ts` / `src/ompCombos.ts` / `src/ompLearningPaths.ts` / `CheatSheetDialog.tsx`，
+  纯前端静态数据，无后端命令）：
   - 基准 `OMP_VERSION = "18.12.6"`，共 **87 条**内置命令（分组 + 英文参数提示 +
     手写中文一句话说明 + 别名 + 1–3 条可粘贴示例）。18.12.3 → 18.12.6 无内置命令
     新增/更名/移除。另加一组「扩展命令」，收录随包发布的 `/review`、`/green`、
@@ -734,8 +735,17 @@ header `.title`、每个 `title_change` 的 `.title`。
     `ompVersion`）；纯函数 `versionMismatch(installed)` **只做相等判断**
     （不做 semver 比较），已安装版本为空/未知时不提示；不一致时显示
     「你安装的是 X，速查基于 18.12.6，个别命令可能有差异」。
-  - **三个视图**（顶部分段 [全部命令 | 组合用法 | 终端命令]，过滤框共用、切换视图保留查询）：
-    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明；空查询时顶部额外显示
+  - **详解数据**（`OmpCommandDetail`：`when` / `cautions?` / `params?` / `related?`）：87 条内置
+    命令 + 3 条扩展命令逐条覆盖，按分组拆成 `commandDetails/part1..4.ts`。不变量（`ompCommandDetails.test.ts`）：
+    键集合与 `OMP_COMMANDS` 完全一致；`params[].token` 必须逐字出现在该命令 `args` 里，`args` 为空则
+    不写 `params`；`related` 只能引用真实存在的命令名/别名。
+  - **四个视图**（顶部分段 [入门路径 | 全部命令 | 组合用法 | 终端命令]，默认「入门路径」，过滤框共用、
+    切换视图保留查询）：
+    - 入门路径（`OMP_LEARNING_PATHS`，6 条）：按学习顺序串起命令，每条路径有目标、可选的「建议先学」
+      前置、以及每步的「为什么排在这里」+「现在就试」命令行；点命令名跳到「全部命令」并过滤到它。
+      不变量：路径 id 唯一、`after` 指向存在的路径、每步 `cmd` 能解析回该命令、`tryIt` 首 token 是 `/命令`。
+    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明，以及详解块（何时用 / 参数逐项 /
+      注意 / 相关命令，相关命令可点进该命令）；分组标题在滚动容器内吸顶并带条数；空查询时顶部额外显示
       「常用」分组（`OMP_PINNED_COMMANDS` 引用的命令，不计入总数；复制按钮 key 带分组名前缀，
       与原分组行互不干扰），过滤时隐藏。头部显示
       「基于 omp 18.12.6 · 共 90 条斜杠命令（内置 87 + 扩展 3）」，过滤中显示
@@ -1155,6 +1165,9 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   换序不丢选中）、候选表格（标题、cwd 末段、原因标签、
   体积、修改时间、复选框、「查看」）、顶部「已选 X 个，可释放 Y」、
   「全选可勾选项」与「删除所选…」。
+- **视图返回**：`App` 持有视图栈（`sessions` 为根），侧栏切换是「进入」，再点同一按钮或视图内的
+  「返回」/`Esc` 是「退回上一级」——不是一律回到会话页。打开对话框或抽屉时 `Esc` 先关它们，
+  不触发返回。每个视图头部都有一枚 `返回` 按钮（`PromptHistoryView` 也补了头部）。
 - 「删除所选…」**复用** App 的既有批量删除编排与 DeleteDialog：
   清理视图不新增任何删除路径；删除后刷新会话列表与候选（`refreshToken`）。
 - 「查看」仅在会话出现在当前已加载列表时可点（否则禁用并说明原因——
@@ -2156,6 +2169,11 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   用户显式删除必须能报错）。持同一把进程内互斥锁，全程读-改-写。
 - 前端入口在抽屉的「测试记录」块：单轮可删，另有「清空记录…」（`Modal` 二次确认）。
   抽屉自带「删除」（移除测试条目）不动记录。
+- **从测试列表移除**（`removeFromBench` / `addToBench`，`src/modelBench.ts`）：
+  `BenchConfig.hidden: string[]` 记录「被移除但角色仍在用」的 selector，`deriveBenchList`
+  过滤掉它们。被角色占用的行按钮文案是「移除」（不是禁用的「删除」），点后角色分配
+  `modelRoles` 完全不改；「添加模型」重新加入时清掉对应 hidden 并保留原标签/监控。
+  未被角色占用的行仍走原路径（直接删本地条目，不写 hidden）。旧配置缺 `hidden` 视为 `[]`。
 
 ### 20.5 前端（纯前端状态，不新增配置键）
 

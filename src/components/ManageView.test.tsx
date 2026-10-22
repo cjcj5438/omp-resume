@@ -110,7 +110,7 @@ describe("ManageView 页签", () => {
     fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
     expect(await screen.findByRole("combobox", { name: "配置范围" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "返回会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
@@ -124,7 +124,7 @@ describe("App 管理视图进出", () => {
     fireEvent.click(screen.getByRole("button", { name: "管理" }));
     expect(await screen.findByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "返回会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.queryByRole("tablist", { name: "管理视图" })).toBeNull();
     expect(screen.getByText("从左侧选择一个会话查看详情")).toBeInTheDocument();
 

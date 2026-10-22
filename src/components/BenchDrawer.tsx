@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import type { BenchRound, ModelInfo } from "../types";
 import {
   BENCH_ERROR_LABEL,
+  removeFromBench,
   bucketizeRounds,
   classifyBenchError,
   formatMs,
@@ -75,9 +76,15 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
     onUpdateConfig({ ...config, entries: next });
   }
 
+  /** 移出测试列表：角色在用时记入 hidden（角色分配不变），否则直接删本地条目。 */
   function handleDelete(): void {
-    if (!deletable) return;
-    onUpdateConfig({ ...config, entries: config.entries.filter((e) => e.selector !== model.selector) });
+    onUpdateConfig(removeFromBench(config, model.selector, model.usedByRoles));
+    onToast(
+      deletable
+        ? "已从测试列表移除"
+        : `已从测试列表移除；${usedByNames}角色仍在使用该模型`,
+      "info",
+    );
     onClose();
   }
 
@@ -154,11 +161,14 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
           <button
             type="button"
             className="btn btn-small"
-            disabled={!deletable}
-            title={deletable ? undefined : `正在被${usedByNames}角色使用，不能删除`}
+            title={
+              deletable
+                ? "从测试列表移除（记录保留 30 天）"
+                : `从测试列表移除；${usedByNames}角色仍在使用该模型，角色分配不变`
+            }
             onClick={handleDelete}
           >
-            删除
+            {deletable ? "删除" : "移除"}
           </button>
           {!deletable ? <span className="muted"> 正在被{usedByNames}角色使用</span> : null}
         </div>

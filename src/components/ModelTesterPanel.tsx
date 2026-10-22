@@ -20,6 +20,7 @@ import {
   BENCH_ERROR_LABEL,
   benchRunner,
   classifyBenchError,
+  addToBench,
   deriveBenchList,
   deriveTagSet,
   estimateRoundsCost,
@@ -183,6 +184,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
   const agents: AgentDefinition[] = modelConfig?.agents ?? EMPTY_AGENTS;
 
   const benchList = useMemo(() => deriveBenchList(config, roles), [config, roles]);
+  const benchSelectors = useMemo(() => benchList.map((r) => r.selector), [benchList]);
   const tags: BenchTag[] = useMemo(
     () => deriveTagSet(config, roles, modelConfig?.agentOverrides ?? EMPTY_ROLES, agents),
     [config, roles, modelConfig, agents],
@@ -354,7 +356,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
 
       <BenchToolbar
         benchCount={benchList.length}
-        selectors={benchList.map((r) => r.selector)}
+        selectors={benchSelectors}
         estimateAll={estimateAll}
         dailyEstimate={dailyEstimate}
         config={config}
@@ -533,11 +535,11 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
         <ModelEntryModal
           mode="add"
           models={models}
-          existing={new Set(benchList.map((r) => r.selector))}
+          existing={new Set(benchSelectors)}
           customTags={config.customTags}
           onClose={() => setAddOpen(false)}
           onSave={(selector, outTags) => {
-            updateConfig({ ...config, entries: [...config.entries, { selector, tags: outTags, monitor: false }] });
+            updateConfig(addToBench(config, selector, outTags));
             setAddOpen(false);
           }}
           hasSpec={hasSpec}
@@ -548,7 +550,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
         <ModelEntryModal
           mode="edit"
           models={models}
-          existing={new Set(benchList.map((r) => r.selector).filter((s) => s !== editTarget))}
+          existing={new Set(benchSelectors.filter((s) => s !== editTarget))}
           customTags={config.customTags}
           initial={(() => { const found = config.entries.find((e) => e.selector === editTarget); return found === undefined ? { selector: editTarget, tags: [] } : { selector: found.selector, tags: found.tags }; })()}
           onClose={() => setEditTarget(null)}

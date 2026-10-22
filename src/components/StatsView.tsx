@@ -273,7 +273,7 @@ export function StatsView({ onBack, sessionTitle, onOpenSession }: { onBack: () 
   return (
     <main className="detail usage-view">
       <header className="detail-head">
-        <div className="detail-title-row"><h1 className="detail-title">用量统计</h1><button type="button" className="btn" onClick={onBack}>返回会话</button></div>
+        <div className="detail-title-row"><h1 className="detail-title">用量统计</h1><button type="button" className="btn" onClick={onBack}>返回</button></div>
         <p className="usage-muted">只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD</p>
         <div className="tabs" role="tablist" aria-label="用量统计">
           {TABS.map((t) => (

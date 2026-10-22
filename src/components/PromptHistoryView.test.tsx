@@ -30,18 +30,26 @@ function renderView() {
   mockIPC((cmd) => (cmd === "search_prompt_history" ? ENTRIES : undefined));
   const onNewSessionIn = vi.fn();
   const onOpenSession = vi.fn();
+  const onBack = vi.fn();
   render(
     <PromptHistoryView
+      onBack={onBack}
       loadedSessionIds={new Set(["s-loaded"])}
       onOpenSession={onOpenSession}
       onNewSessionIn={onNewSessionIn}
       onToast={() => {}}
     />,
   );
-  return { onNewSessionIn, onOpenSession };
+  return { onNewSessionIn, onOpenSession, onBack };
 }
 
 describe("PromptHistoryView 动作门禁", () => {
+  it("头部「返回」调 onBack", () => {
+    const { onBack } = renderView();
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
   it("来源会话未加载时禁用跳转；cwd 为空时禁用新会话", async () => {
     renderView();
     const gone = (await screen.findByText("来源会话已不在列表")).closest("li");

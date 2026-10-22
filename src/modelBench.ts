@@ -25,12 +25,17 @@ export interface BenchConfig {
   entries: BenchEntry[];
   customTags: string[];
   intervalMin: BenchIntervalMin;
+  /**
+   * 从测试列表移除过的 selector：被 modelRoles 自动带入的行靠它压住。
+   * 「添加模型」重新加入时清掉对应项（角色分配始终不受影响）。
+   */
+  hidden: string[];
 }
 
 export const CUSTOM_TAG_PATTERN = /^[a-z][a-z0-9_-]{0,23}$/;
 
 export function defaultBenchConfig(): BenchConfig {
-  return { entries: [], customTags: ["test"], intervalMin: 0 };
+  return { entries: [], customTags: ["test"], intervalMin: 0, hidden: [] };
 }
 
 function isIntervalMin(v: unknown): v is BenchIntervalMin {
@@ -65,6 +70,13 @@ export function loadBenchConfig(storage?: Storage): BenchConfig {
         ),
       ],
       intervalMin: isIntervalMin(obj.intervalMin) ? obj.intervalMin : 0,
+      hidden: [
+        ...new Set(
+          Array.isArray(obj.hidden)
+            ? obj.hidden.filter((x): x is string => typeof x === "string" && isPlainSelector(x))
+            : [],
+        ),
+      ],
     };
   } catch {
     return defaultBenchConfig();
@@ -106,6 +118,25 @@ export interface BenchRowModel {
   monitor: boolean;
 }
 
+/**
+ * 从测试列表移除一行：删掉本地条目；仍被角色占用时记入 `hidden` 压住自动带入的行。
+ * 角色分配（modelRoles）不受影响。
+ */
+export function removeFromBench(config: BenchConfig, selector: string, usedByRoles: string[]): BenchConfig {
+  const entries = config.entries.filter((e) => e.selector !== selector);
+  if (usedByRoles.length === 0) return { ...config, entries };
+  return { ...config, entries, hidden: [...new Set([...config.hidden, selector])] };
+}
+
+/** 加入测试列表：复用同名条目（保留标签）并清掉 hidden；已在列表里时原样返回。 */
+export function addToBench(config: BenchConfig, selector: string, tags: string[]): BenchConfig {
+  const existing = config.entries.find((e) => e.selector === selector);
+  const entries = existing === undefined
+    ? [...config.entries, { selector, tags, monitor: false }]
+    : config.entries;
+  return { ...config, entries, hidden: config.hidden.filter((h) => h !== selector) };
+}
+
 /** 能力角色（judge/image/web/…）不进测试器；未知/自定义角色按对话角色处理。 */
 function isBenchRole(role: string): boolean {
   return (roleInfo(role)?.kind ?? "chat") === "chat";
@@ -136,7 +167,9 @@ export function deriveBenchList(config: BenchConfig, roles: Record<string, unkno
     row.usedByRoles.push(role);
     if (!row.tags.includes(role)) row.tags.unshift(role);
   }
-  return [...bySelector.values()];
+  // 用户显式移除的行不再出现（entries 原样保留，重新添加时无需重建标签）。
+  const hidden = new Set(config.hidden);
+  return [...bySelector.values()].filter((row) => !hidden.has(row.selector));
 }
 
 // ---- 标签派生 ----

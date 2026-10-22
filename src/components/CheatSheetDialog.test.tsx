@@ -20,6 +20,11 @@ function renderDialog(installedVersion: string | null = null) {
   render(<CheatSheetDialog installedVersion={installedVersion} onClose={() => {}} />);
 }
 
+/** 默认页是「入门路径」；涉及命令行的用例先切到「全部命令」。 */
+function gotoCommands() {
+  fireEvent.click(screen.getByRole("tab", { name: "全部命令" }));
+}
+
 beforeEach(() => {
   stubClipboard(vi.fn().mockResolvedValue(undefined));
 });
@@ -51,6 +56,7 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
+    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "delete" } });
     const btn = screen.getByRole("button", { name: "复制 /delete" });
@@ -69,6 +75,7 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
+    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "compact" } });
     fireEvent.click(screen.getByRole("button", { name: "复制 /compact 的含参数模板" }));
@@ -80,6 +87,7 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockRejectedValue(new Error("denied"));
     stubClipboard(writeText);
     renderDialog();
+    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "delete" } });
     fireEvent.click(screen.getByRole("button", { name: "复制 /delete" }));
@@ -94,6 +102,7 @@ describe("使用示例", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
+    gotoCommands();
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "effort" } });
     const compact = OMP_COMMANDS.flatMap((g) => g.commands).find((c) => c.name === "effort");
     if (compact === undefined) throw new Error("找不到 effort");
@@ -131,6 +140,7 @@ describe("终端命令", () => {
 describe("常用分组", () => {
   it("空查询时顶部显示常用分组，过滤时隐藏且不重复行", () => {
     renderDialog();
+    gotoCommands();
     const titles = [...document.querySelectorAll(".cheatsheet-group-title")].map((el) => el.textContent ?? "");
     expect(titles.length).toBeGreaterThan(1);
     expect(titles[0]).toMatch(/^常用/);

@@ -6,6 +6,8 @@ import { copyText } from "../clipboard";
 import { errorText, formatRelativeTime } from "../format";
 
 interface PromptHistoryViewProps {
+  /** 回到上一级视图（与其它视图的「返回」一致）。 */
+  onBack: () => void;
   /** 当前列表已加载的会话 id；来源会话不在其中时「跳到来源会话」禁用。 */
   loadedSessionIds: ReadonlySet<string>;
   onOpenSession: (sessionId: string) => void;
@@ -17,6 +19,7 @@ interface PromptHistoryViewProps {
 const SEARCH_DEBOUNCE_MS = 200;
 
 export function PromptHistoryView({
+  onBack,
   loadedSessionIds,
   onOpenSession,
   onNewSessionIn,
@@ -50,6 +53,15 @@ export function PromptHistoryView({
 
   return (
     <main className="detail ph-view">
+      <header className="detail-head">
+        <div className="detail-title-row">
+          <h1 className="detail-title">提示词历史</h1>
+          <button type="button" className="btn" onClick={onBack}>
+            返回
+          </button>
+        </div>
+        <p className="usage-muted">只读检索 omp 的 history.db；「跳到来源会话」需要该会话已在列表中。</p>
+      </header>
       <div className="ph-head">
         <input
           type="search"

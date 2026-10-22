@@ -107,6 +107,13 @@ export function Sidebar({
   // 以便一键「全选当前列表」）；有任何勾选时自动视为进入选择态。
   const [multiMode, setMultiMode] = useState(false);
   const selecting = multiMode || checked.size > 0;
+  // 四个视图按钮同一形态：激活时点击 = 返回上一级（title 说明）。
+  const NAV_VIEWS = [
+    { label: "统计", active: statsActive, hint: "用量统计", onClick: onToggleStats },
+    { label: "清理", active: cleanupActive, hint: "清理候选", onClick: onToggleCleanup },
+    { label: "提示词历史", active: historyActive, hint: "提示词历史", onClick: onToggleHistory },
+    { label: "管理", active: manageActive, hint: "管理", onClick: onToggleManage },
+  ];
   const toggleMulti = () => {
     if (selecting) {
       setMultiMode(false);
@@ -156,18 +163,18 @@ export function Sidebar({
           <span aria-hidden="true" className="new-session-plus">+</span>新会话…
         </button>
         <div className="view-nav" role="group" aria-label="视图切换">
-          <button type="button" className="view-nav-btn" aria-pressed={statsActive} onClick={onToggleStats}>
-            统计
-          </button>
-          <button type="button" className="view-nav-btn" aria-pressed={cleanupActive} onClick={onToggleCleanup}>
-            清理
-          </button>
-          <button type="button" className="view-nav-btn" aria-pressed={historyActive} onClick={onToggleHistory}>
-            提示词历史
-          </button>
-          <button type="button" className="view-nav-btn" aria-pressed={manageActive} onClick={onToggleManage}>
-            管理
-          </button>
+          {NAV_VIEWS.map((v) => (
+            <button
+              key={v.label}
+              type="button"
+              className="view-nav-btn"
+              aria-pressed={v.active}
+              title={v.active ? "返回上一级" : v.hint}
+              onClick={v.onClick}
+            >
+              {v.label}
+            </button>
+          ))}
           <button type="button" className="view-nav-btn" onClick={onOpenCheatSheet}>
             速查
           </button>

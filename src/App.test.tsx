@@ -237,6 +237,55 @@ describe("缺 cwd 会话", () => {
   });
 });
 
+describe("视图返回栈", () => {
+  it("统计 → 管理 → 返回：逐级退回，而不是直接跳回会话页", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    fireEvent.click(screen.getByRole("button", { name: "统计" }));
+    await screen.findByRole("heading", { name: "用量统计" });
+    fireEvent.click(screen.getByRole("button", { name: "管理" }));
+    await screen.findByRole("heading", { name: "管理" });
+
+    // 第一次返回 → 统计（上一级），不是会话页。
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(await screen.findByRole("heading", { name: "用量统计" })).toBeInTheDocument();
+    // 再返回 → 会话页。
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "用量统计" })).toBeNull());
+  });
+
+  it("Esc 从子视图退回上一级；对话框打开时不抢 Esc", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    fireEvent.click(screen.getByRole("button", { name: "清理" }));
+    await screen.findByRole("heading", { name: "清理" });
+
+    // 速查对话框打开时 Esc 先关它，视图不动。
+    fireEvent.click(screen.getByRole("button", { name: "速查" }));
+    const dialog = await screen.findByRole("dialog", { name: "命令速查" });
+    // Esc 由对话框自己处理（它在容器上监听，焦点在内时生效）。
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull());
+    expect(screen.getByRole("heading", { name: "清理" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "清理" })).toBeNull());
+  });
+
+  it("提示词历史页也有返回", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    fireEvent.click(screen.getByRole("button", { name: "提示词历史" }));
+    expect(await screen.findByRole("heading", { name: "提示词历史" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "提示词历史" })).toBeNull());
+  });
+});
+
 describe("命令速查", () => {
   it("点击速查打开对话框，过滤缩小行，关闭按钮关闭", async () => {
     await installMockBackend();
@@ -245,6 +294,8 @@ describe("命令速查", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "速查" }));
     const dialog = await screen.findByRole("dialog", { name: "命令速查" });
+    // 默认是「入门路径」；命令表在「全部命令」页。
+    fireEvent.click(within(dialog).getByRole("tab", { name: "全部命令" }));
     expect(within(dialog).getByText(/共 \d+ 条斜杠命令（内置 \d+ \+ 扩展 \d+）/)).toBeInTheDocument();
 
     const filter = within(dialog).getByRole("searchbox", { name: "过滤命令" });

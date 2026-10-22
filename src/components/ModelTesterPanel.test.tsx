@@ -150,7 +150,7 @@ describe("受控嵌入", () => {
       if (cmd === "model_perf_list") return [];
       throw `no handler for ${cmd}`;
     });
-    render(<ModelTesterPanel onToast={vi.fn()} embedded models={MODELS} modelConfig={modelConfig()} config={{ entries: [{ selector: "p/fast", tags: ["task"], monitor: false }], customTags: ["test"], intervalMin: 0 }} />);
+    render(<ModelTesterPanel onToast={vi.fn()} embedded models={MODELS} modelConfig={modelConfig()} config={{ entries: [{ selector: "p/fast", tags: ["task"], monitor: false }], customTags: ["test"], intervalMin: 0, hidden: [] }} />);
     await screen.findByText("Fast");
     expect(seen).not.toContain("list_models");
     expect(seen).not.toContain("get_model_config");
@@ -172,7 +172,7 @@ describe("受控嵌入", () => {
         models={MODELS}
         modelConfig={modelConfig()}
         rolesOverride={{ default: "p/slow", task: "p/fast" }}
-        config={{ entries: [{ selector: "p/fast", tags: ["task"], monitor: false }], customTags: ["test"], intervalMin: 0 }}
+        config={{ entries: [{ selector: "p/fast", tags: ["task"], monitor: false }], customTags: ["test"], intervalMin: 0, hidden: [] }}
         onApplyRoles={() => {}}
       />,
     );

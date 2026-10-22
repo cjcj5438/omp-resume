@@ -45,6 +45,9 @@ interface Toast {
   kind: "info" | "error";
 }
 
+/** 并列的顶层视图；会话页是根，其余可层层进入并逐级返回。 */
+type AppView = "sessions" | "manage" | "stats" | "history" | "cleanup";
+
 function App() {
   const [list, setList] = useState<ListSessionsResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,7 +58,24 @@ function App() {
   const [deleteTargets, setDeleteTargets] = useState<DeleteTarget[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
-  const [view, setView] = useState<"sessions" | "manage" | "stats" | "history" | "cleanup">("sessions");
+  // 视图栈：顶层是当前视图，往回退是上一级（而不是永远回到会话页）。
+  const [viewStack, setViewStack] = useState<AppView[]>(["sessions"]);
+  const view = viewStack[viewStack.length - 1];
+  const navigate = useCallback((next: AppView) => {
+    setViewStack((prev) => (prev[prev.length - 1] === next ? prev : [...prev, next]));
+  }, []);
+  const goBack = useCallback(() => {
+    setViewStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+  }, []);
+  /** 看/选某个会话：栈回到会话页（不是「上一级」，避免从统计退回会话再退回统计）。 */
+  const showSessions = useCallback(() => setViewStack(["sessions"]), []);
+  const toggleView = useCallback(
+    (target: AppView) => {
+      if (view === target) goBack();
+      else navigate(target);
+    },
+    [view, goBack, navigate],
+  );
   // 清理候选项在每次删除后要重新扫描（只读命令，代价可接受）。
   const [cleanupVersion, setCleanupVersion] = useState(0);
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
@@ -155,6 +175,19 @@ function App() {
     };
   }, [load]);
 
+  // 统一返回：Esc 从非会话视图退回上一级（对话框自己先吃掉 Esc，见各 Dialog）。
+  useEffect(() => {
+    if (view === "sessions") return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape") return;
+      if (document.querySelector(".modal-overlay") !== null) return;
+      if (document.querySelector('[role="complementary"]') !== null) return;
+      goBack();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [view, goBack]);
+
   const byPath = useMemo(() => {
     const m = new Map<string, SessionSummary>();
     for (const g of list?.groups ?? [])
@@ -246,12 +279,12 @@ function App() {
     (sessionId: string) => {
       for (const s of byPath.values()) {
         if (s.id !== sessionId) continue;
-        setView("sessions");
+        showSessions();
         setSelectedPath(s.path);
         return;
       }
     },
-    [byPath],
+    [byPath, showSessions],
   );
 
   const requestDelete = useCallback(
@@ -325,15 +358,13 @@ function App() {
         onRetry={() => void load()}
         onRefresh={() => void load()}
         manageActive={view === "manage"}
-        onToggleManage={() => setView((v) => (v === "manage" ? "sessions" : "manage"))}
+        onToggleManage={() => toggleView("manage")}
         statsActive={view === "stats"}
-        onToggleStats={() => setView((v) => (v === "stats" ? "sessions" : "stats"))}
+        onToggleStats={() => toggleView("stats")}
         historyActive={view === "history"}
-        onToggleHistory={() => setView((v) => (v === "history" ? "sessions" : "history"))}
+        onToggleHistory={() => toggleView("history")}
         cleanupActive={view === "cleanup"}
-        onToggleCleanup={() =>
-          setView((v) => (v === "cleanup" ? "sessions" : "cleanup"))
-        }
+        onToggleCleanup={() => toggleView("cleanup")}
         checked={checked}
         onToggleCheck={(path, on) =>
           setChecked((prev) => {
@@ -356,7 +387,7 @@ function App() {
         onClearChecks={() => setChecked(new Set())}
         selectedPath={selectedPath}
         onSelect={(path) => {
-          setView("sessions");
+          showSessions();
           setSelectedPath(path);
         }}
         pins={pins}
@@ -374,6 +405,7 @@ function App() {
       />
       {view === "history" ? (
         <PromptHistoryView
+          onBack={goBack}
           loadedSessionIds={loadedSessionIds}
           onOpenSession={handleOpenSession}
           onNewSessionIn={(cwd) => void handleNewSession(cwd)}
@@ -383,17 +415,17 @@ function App() {
         <ManageView
           projects={manageProjects}
           onToast={addToast}
-          onBack={() => setView("sessions")}
+          onBack={goBack}
           onCheckOmp={handleCheckOmp}
           loadedSessionIds={loadedSessionIds}
           onOpenSession={handleOpenSession}
         />
-      ) : view === "stats" ? <StatsView onBack={() => setView("sessions")} sessionTitle={(path) => { const s = byPath.get(path); return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null; }} onOpenSession={(path) => { setView("sessions"); setSelectedPath(path); }} /> : view === "cleanup" ? (
+      ) : view === "stats" ? <StatsView onBack={goBack} sessionTitle={(path) => { const s = byPath.get(path); return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null; }} onOpenSession={(path) => { showSessions(); setSelectedPath(path); }} /> : view === "cleanup" ? (
         <CleanupView
-          onBack={() => setView("sessions")}
+          onBack={goBack}
           canView={(path) => byPath.has(path)}
           onView={(path) => {
-            setView("sessions");
+            showSessions();
             setSelectedPath(path);
           }}
           onDelete={setDeleteTargets}

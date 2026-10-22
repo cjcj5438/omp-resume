@@ -147,7 +147,7 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
     <main className="detail manage">
       <header className="detail-head manage-head">
         <button type="button" className="btn" onClick={onBack}>
-          返回会话
+          返回
         </button>
         <h1 className="detail-title">管理</h1>
       </header>
