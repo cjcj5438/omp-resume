@@ -13,8 +13,8 @@ use crate::config::{validate_session_path, Config};
 use crate::model::{
     AppError, AppResult, CacheByModel, ErrorCode, ErrorKind, ErrorKindCount, ErrorRecent,
     FallbackRecent, FallbackTarget, ModelRef, SessionUsage, TimelinePoint, TrendUnit,
-    UsageCacheStats, UsageHealth, UsageModel, UsageProject, UsageRange, UsageStats, UsageTimeline,
-    UsageTokens, UsageTrend, UsageTrendPoint,
+    UsageCacheStats, UsageHealth, UsageModel, UsageProject, UsageRange, UsageSession, UsageStats,
+    UsageTimeline, UsageTiming, UsageTokens, UsageTrend, UsageTrendPoint,
 };
 
 #[derive(Default)]
@@ -54,6 +54,7 @@ struct ParsedFile {
     version: Option<u32>,
     entries: Vec<Entry>,
     by_id: HashMap<String, Vec<usize>>,
+    flows: Vec<Flow>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -83,8 +84,37 @@ struct Entry {
     change_role: String,
     /// model_change：resolvedModelIsFallback。
     is_fallback: bool,
+    /// assistant 自报耗时（duration/ttft 均有效时）。
+    timing: Option<Timing>,
 }
 
+/// 工具间隔超过 10 分钟视为会话闲置，不计工具耗时。
+const IDLE_CAP_MS: i64 = 10 * 60 * 1000;
+/// 上游自报耗时；仅 duration、ttft 均有效且 duration ≥ ttft ≥ 0 时存在。
+#[derive(Clone, Copy, PartialEq)]
+struct Timing {
+    wait_ms: u64,
+    gen_ms: u64,
+}
+/// 随 entries 下标并行存放，**不进入 Entry 的相等比较**：fork 复制的同一条助手消息，
+/// 在父/子文件里后续行不同，工具次数/间隔可能不同；放进 Entry 会让副本判定失败而重复计费。
+#[derive(Default, Clone, Copy)]
+struct Flow {
+    tool_results: u32,
+    tool_ms: u64,
+}
+/// 非有限/负数/duration<ttft → None。
+fn timing_of(duration: Option<f64>, ttft: Option<f64>) -> Option<Timing> {
+    let (duration, ttft) = (duration?, ttft?);
+    if !duration.is_finite() || !ttft.is_finite() || duration < 0.0 || ttft < 0.0 || duration < ttft
+    {
+        return None;
+    }
+    Some(Timing {
+        wait_ms: ttft.round() as u64,
+        gen_ms: (duration - ttft).round() as u64,
+    })
+}
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Line {
@@ -114,6 +144,9 @@ struct Message {
     timestamp: Option<Timestamp>,
     stop_reason: String,
     error_message: String,
+    duration: Option<f64>,
+    ttft: Option<f64>,
+    completed_at: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -175,6 +208,8 @@ fn parse_file(path: &Path) -> AppResult<ParsedFile> {
     let mut parsed = ParsedFile::default();
     let mut reader = BufReader::new(File::open(path).map_err(io_error)?);
     let mut line = Vec::new();
+    let mut last_assistant: Option<usize> = None;
+    let mut pending: Option<(usize, i64)> = None;
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line).map_err(io_error)? == 0 {
@@ -190,6 +225,18 @@ fn parse_file(path: &Path) -> AppResult<ParsedFile> {
             parsed.version = raw.version;
             continue;
         }
+        // toolResult 不产生 Entry：只给上一条助手记工具次数。
+        if raw.kind == "message" && raw.message.as_ref().is_some_and(|m| m.role == "toolResult") {
+            if let Some(i) = last_assistant {
+                parsed.flows[i].tool_results += 1;
+            }
+            continue;
+        }
+        let timing_src = raw
+            .message
+            .as_ref()
+            .filter(|m| m.role == "assistant")
+            .map(|m| (m.duration, m.ttft, m.completed_at));
         // kind、provider、model、usage、内层时间、stop、错误原文、切换角色、兜底标记。
         let parsed_entry = match (raw.kind.as_str(), raw.message) {
             ("model_usage", _) => (
@@ -268,7 +315,8 @@ fn parse_file(path: &Path) -> AppResult<ParsedFile> {
         let cost = cost
             .total
             .unwrap_or(cost.input + cost.output + cost.cache_read + cost.cache_write);
-        parsed.entries.push(Entry {
+        let index = parsed.entries.len();
+        let entry = Entry {
             id: raw.id,
             parent: raw.parent_id,
             timestamp: timestamp
@@ -294,7 +342,33 @@ fn parse_file(path: &Path) -> AppResult<ParsedFile> {
             error_message,
             change_role,
             is_fallback,
-        });
+            timing: timing_src.and_then(|(d, t, _)| timing_of(d, t)),
+        };
+        let ts = entry.timestamp;
+        let stop_reason_tool_use = kind == Kind::Assistant && entry.stop_reason == "toolUse";
+        parsed.entries.push(entry);
+        parsed.flows.push(Flow::default());
+        match kind {
+            Kind::User => pending = None,
+            Kind::Assistant => {
+                if let (Some((prev, done)), Some(ts)) = (pending.take(), ts) {
+                    let gap = ts - done;
+                    if (0..=IDLE_CAP_MS).contains(&gap) {
+                        parsed.flows[prev].tool_ms = gap as u64;
+                    }
+                }
+                last_assistant = Some(index);
+                pending = if stop_reason_tool_use {
+                    timing_src
+                        .and_then(|(_, _, c)| c)
+                        .filter(|c| c.is_finite())
+                        .map(|c| (index, c as i64))
+                } else {
+                    None
+                };
+            }
+            Kind::Background | Kind::ModelChange => {}
+        }
     }
     if parsed.version == Some(3) {
         for (i, entry) in parsed.entries.iter().enumerate() {
@@ -608,6 +682,34 @@ where
     fallback_ms
 }
 
+/// 近 N 个自然日窗口（含今天，自首日 0 点起）：7d/30d 与活跃度热力图共用。
+fn trailing_days<Tz: TimeZone>(days: i64, now: DateTime<Utc>, timezone: &Tz) -> Window
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let local = now.with_timezone(timezone);
+    let today = local.date_naive();
+    let dates: Vec<_> = (0..days)
+        .rev()
+        .map(|i| {
+            today
+                .checked_sub_signed(Duration::days(i))
+                .expect("日期回退恒合法")
+        })
+        .collect();
+    let keys = dates
+        .iter()
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .collect();
+    let first_midnight = dates[0].and_hms_opt(0, 0, 0).expect("午夜恒合法");
+    let floor_ms = now.timestamp_millis() - Duration::days(days).num_milliseconds();
+    Window {
+        start_ms: Some(resolve_start_ms(timezone, &first_midnight, floor_ms)),
+        end_ms: Some(now.timestamp_millis()),
+        unit: TrendUnit::Day,
+        keys,
+    }
+}
 /// 本地时区窗口：
 /// today 当天 0 点起；24h 当前整点前推 23 小时（24 个整点桶）；
 /// 7d/30d 含今天的自然日；all 不限。
@@ -669,34 +771,8 @@ where
                 keys,
             }
         }
-        UsageRange::Last7Days | UsageRange::Last30Days => {
-            let days: i64 = if range == UsageRange::Last7Days {
-                7
-            } else {
-                30
-            };
-            let today = local.date_naive();
-            let dates: Vec<_> = (0..days)
-                .rev()
-                .map(|i| {
-                    today
-                        .checked_sub_signed(Duration::days(i))
-                        .expect("日期回退恒合法")
-                })
-                .collect();
-            let keys = dates
-                .iter()
-                .map(|d| d.format("%Y-%m-%d").to_string())
-                .collect();
-            let first_midnight = dates[0].and_hms_opt(0, 0, 0).expect("午夜恒合法");
-            let floor_ms = now.timestamp_millis() - Duration::days(days).num_milliseconds();
-            Window {
-                start_ms: Some(resolve_start_ms(timezone, &first_midnight, floor_ms)),
-                end_ms,
-                unit: TrendUnit::Day,
-                keys,
-            }
-        }
+        UsageRange::Last7Days => trailing_days(7, now, timezone),
+        UsageRange::Last30Days => trailing_days(30, now, timezone),
         UsageRange::All => Window {
             start_ms: None,
             end_ms: None,
@@ -740,6 +816,44 @@ fn clamp_key(window: &Window, key: &mut String) {
         *key = window.keys[0].clone();
     } else if key.as_str() > window.keys[window.keys.len() - 1].as_str() {
         *key = window.keys[window.keys.len() - 1].clone();
+    }
+}
+
+const ACTIVITY_DAYS: i64 = 182;
+const TOP_SESSIONS: usize = 8;
+const SPEED_MIN_GEN_MS: u64 = 500;
+const SPEED_MIN_OUTPUT: u64 = 16;
+
+#[derive(Default)]
+struct SpeedAcc {
+    out: u64,
+    gen_ms: u64,
+    ttft_ms: u64,
+    ttft_n: u64,
+}
+
+impl SpeedAcc {
+    fn add(&mut self, entry: &Entry) {
+        let Some(timing) = entry.timing else {
+            return;
+        };
+        if entry.stop_reason == "error" || entry.stop_reason == "aborted" {
+            return;
+        }
+        self.ttft_ms = self.ttft_ms.saturating_add(timing.wait_ms);
+        self.ttft_n = self.ttft_n.saturating_add(1);
+        if timing.gen_ms >= SPEED_MIN_GEN_MS && entry.tokens.output >= SPEED_MIN_OUTPUT {
+            self.out = self.out.saturating_add(entry.tokens.output);
+            self.gen_ms = self.gen_ms.saturating_add(timing.gen_ms);
+        }
+    }
+
+    fn tps(&self) -> Option<f64> {
+        (self.gen_ms > 0).then(|| self.out as f64 / (self.gen_ms as f64 / 1000.0))
+    }
+
+    fn ttft(&self) -> Option<f64> {
+        (self.ttft_n > 0).then(|| self.ttft_ms as f64 / self.ttft_n as f64)
     }
 }
 
@@ -793,19 +907,43 @@ where
     Tz::Offset: std::fmt::Display,
 {
     let window = window_at(range, now, timezone);
+    let activity_window = trailing_days(ACTIVITY_DAYS, now, timezone);
     let library = scan(cfg, cache)?;
     let mut stats = UsageStats::default();
     let mut models = HashMap::new();
     let mut projects: HashMap<String, UsageProject> = HashMap::new();
     let mut trend: BTreeMap<String, (f64, UsageTokens)> = BTreeMap::new();
-    let mut sessions = HashSet::new();
+    let mut activity: BTreeMap<String, (f64, UsageTokens)> = BTreeMap::new();
+    let mut speeds: HashMap<(String, String), SpeedAcc> = HashMap::new();
+    let mut main_speed = SpeedAcc::default();
+    let mut timing = UsageTiming::default();
+    let mut sessions: HashMap<usize, UsageSession> = HashMap::new();
     for (i, file) in library.files.iter().enumerate() {
         if file.data.version != Some(3) || library.files[file.owner].data.version != Some(3) {
             continue;
         }
         let cwd = &library.files[file.owner].data.cwd;
-        for entry in &file.data.entries {
-            if !in_window(&window, entry.timestamp) || library.inherited(i, entry) {
+        for (j, entry) in file.data.entries.iter().enumerate() {
+            let in_range = in_window(&window, entry.timestamp);
+            let in_activity = entry.kind != Kind::ModelChange
+                && entry.timestamp.is_some()
+                && in_window(&activity_window, entry.timestamp);
+            if !(in_range || in_activity) || library.inherited(i, entry) {
+                continue;
+            }
+            if in_activity {
+                if let Some(ms) = entry.timestamp {
+                    if let Some(mut key) = bucket_key(TrendUnit::Day, ms, timezone) {
+                        clamp_key(&activity_window, &mut key);
+                        let slot = activity
+                            .entry(key)
+                            .or_insert_with(|| (0.0, UsageTokens::default()));
+                        slot.0 += entry.cost;
+                        add_tokens(&mut slot.1, &entry.tokens);
+                    }
+                }
+            }
+            if !in_range {
                 continue;
             }
             add_usage(&mut stats.total, entry, i >= library.top_count);
@@ -816,12 +954,49 @@ where
             });
             project.cost += entry.cost;
             add_tokens(&mut project.tokens, &entry.tokens);
-            if sessions.insert(file.owner) {
+            let is_new = !sessions.contains_key(&file.owner);
+            if is_new {
                 project.sessions += 1;
+            }
+            let s = sessions.entry(file.owner).or_insert_with(|| UsageSession {
+                id: library.files[file.owner].data.id.clone(),
+                path: library.files[file.owner]
+                    .path
+                    .to_string_lossy()
+                    .into_owned(),
+                cwd: cwd.clone(),
+                ..Default::default()
+            });
+            s.cost += entry.cost;
+            s.tokens = s.tokens.saturating_add(entry.tokens.total);
+            if entry.kind == Kind::Assistant {
+                s.calls += 1;
+            }
+            if let Some(t) = entry.timestamp {
+                s.last_ms = s.last_ms.max(t);
             }
             // 趋势只收纳用量条目（model_change 恒零花费，不进趋势）。
             if entry.kind == Kind::ModelChange {
                 continue;
+            }
+            if entry.kind == Kind::Assistant {
+                speeds
+                    .entry((entry.provider.clone(), entry.model.clone()))
+                    .or_default()
+                    .add(entry);
+                if i < library.top_count {
+                    main_speed.add(entry);
+                    if entry.timing.is_some() {
+                        timing.calls += 1;
+                    }
+                    if let Some(t) = &entry.timing {
+                        timing.wait_ms = timing.wait_ms.saturating_add(t.wait_ms);
+                        timing.gen_ms = timing.gen_ms.saturating_add(t.gen_ms);
+                    }
+                    let f = file.data.flows[j];
+                    timing.tool_ms = timing.tool_ms.saturating_add(f.tool_ms);
+                    timing.tool_calls += f.tool_results as u64;
+                }
             }
             let Some(ms) = entry.timestamp else {
                 continue;
@@ -842,7 +1017,41 @@ where
         .by_project
         .sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.cwd.cmp(&b.cwd)));
     stats.by_model = sorted_models(models);
+    for m in &mut stats.by_model {
+        if let Some(acc) = speeds.get(&(m.provider.clone(), m.model.clone())) {
+            m.tps = acc.tps();
+            m.ttft_ms = acc.ttft();
+        }
+    }
     stats.total.models = stats.by_model.clone();
+    stats.sessions = sessions.len() as u64;
+    timing.tps = main_speed.tps();
+    stats.timing = timing;
+    let mut top_sessions: Vec<UsageSession> =
+        sessions.into_values().filter(|s| s.cost > 0.0).collect();
+    top_sessions.sort_by(|a, b| {
+        b.cost
+            .total_cmp(&a.cost)
+            .then_with(|| b.last_ms.cmp(&a.last_ms))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    top_sessions.truncate(TOP_SESSIONS);
+    stats.top_sessions = top_sessions;
+    stats.activity = activity_window
+        .keys
+        .iter()
+        .map(|key| {
+            let (cost, tokens) = activity
+                .get(key)
+                .cloned()
+                .unwrap_or((0.0, UsageTokens::default()));
+            UsageTrendPoint {
+                key: key.clone(),
+                cost,
+                tokens,
+            }
+        })
+        .collect();
     stats.trend = UsageTrend {
         unit: window.unit,
         points: if window.keys.is_empty() {

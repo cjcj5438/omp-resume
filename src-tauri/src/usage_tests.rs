@@ -68,6 +68,30 @@ fn assistant_at(id: &str, cost: f64, ts_ms: i64) -> serde_json::Value {
         "usage":{"input":10,"output":20,"cacheRead":30,"cacheWrite":40,"totalTokens":100,"cost":{"total":cost}}}})
 }
 
+fn timed(
+    id: &str,
+    ts_ms: i64,
+    duration: f64,
+    ttft: f64,
+    output: u64,
+    stop: &str,
+    completed: Option<i64>,
+) -> serde_json::Value {
+    let mut v = json!({"type":"message","id":id,"parentId":null,"timestamp":DATE,
+        "message":{"role":"assistant","provider":"test","model":"model-a","timestamp":ts_ms,
+        "duration":duration,"ttft":ttft,"stopReason":stop,
+        "usage":{"input":10,"output":output,"cacheRead":0,"cacheWrite":0,"cost":{"total":1.0}}}});
+    if let Some(c) = completed {
+        v["message"]["completedAt"] = json!(c);
+    }
+    v
+}
+
+fn tool_result(id: &str, ts_ms: i64) -> serde_json::Value {
+    json!({"type":"message","id":id,"timestamp":DATE,
+        "message":{"role":"toolResult","toolName":"bash","timestamp":ts_ms}})
+}
+
 fn assistant_err(id: &str, ts_ms: i64, stop: &str, err: &str) -> serde_json::Value {
     json!({"type":"message","id":id,"parentId":null,"timestamp":DATE,
         "message":{"role":"assistant","provider":"test","model":"model-a","timestamp":ts_ms,
@@ -1380,4 +1404,253 @@ fn health_requests_equal_sum_of_by_model_messages() {
         assert_eq!(health.requests, sum);
         assert_eq!(health.requests, 3);
     }
+}
+
+#[test]
+fn timing_splits_wait_generation_and_tool_gap_for_main_thread_only() {
+    let (_tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    let main = dir.join("main.jsonl");
+    let t = ms("2026-10-16T10:00:00Z");
+    file(
+        &main,
+        "main",
+        None,
+        &[
+            timed("a1", t, 4000.0, 1000.0, 400, "toolUse", Some(t + 4000)),
+            tool_result("tr1", t + 4100),
+            tool_result("tr2", t + 4200),
+            timed("a2", t + 6500, 3000.0, 500.0, 300, "stop", Some(t + 9500)),
+        ],
+    );
+    file(
+        &main.with_extension("").join("local/sub.jsonl"),
+        "sub",
+        Some("main"),
+        &[timed("a3", t + 1000, 2000.0, 500.0, 150, "stop", None)],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::All,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    assert_eq!(stats.timing.wait_ms, 1500);
+    assert_eq!(stats.timing.gen_ms, 5500);
+    assert_eq!(stats.timing.tool_ms, 2500);
+    assert_eq!(stats.timing.tool_calls, 2);
+    assert_eq!(stats.timing.calls, 2);
+    close(stats.timing.tps.unwrap(), 700.0 / 5.5);
+    assert_eq!(stats.by_model.len(), 1);
+    close(stats.by_model[0].tps.unwrap(), 850.0 / 7.0);
+    close(stats.by_model[0].ttft_ms.unwrap(), 2000.0 / 3.0);
+    assert_eq!(stats.total.messages.assistant, 3);
+    let v = serde_json::to_value(&stats.by_model[0]).unwrap();
+    assert!(v.get("tps").unwrap().as_f64().unwrap() > 0.0);
+    assert!(v.get("ttftMs").unwrap().as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn tool_gap_ignores_idle_user_interrupt_and_missing_completed_at() {
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats_for = |cfg: &Config, cache: &UsageCache| {
+        stats_at(
+            cfg,
+            cache,
+            UsageRange::All,
+            now("2026-10-16T12:00:00Z"),
+            &east,
+        )
+        .unwrap()
+    };
+    let t = ms("2026-10-16T10:00:00Z");
+    // 上限边界：恰为 600000ms 计入，多 1ms 即视为闲置不计。
+    for (name, gap, expect) in [("cap_exact", 600_000, 600_000), ("idle", 600_001, 0)] {
+        let (_tmp, cfg, cache) = setup();
+        file(
+            &cfg.sessions_dir.join(format!("project/{name}.jsonl")),
+            name,
+            None,
+            &[
+                timed("i1", t, 1000.0, 200.0, 100, "toolUse", Some(t + 1000)),
+                tool_result("itr", t + 1100),
+                timed("i2", t + 1000 + gap, 1000.0, 200.0, 100, "stop", None),
+            ],
+        );
+        let stats = stats_for(&cfg, &cache);
+        assert_eq!(stats.timing.tool_ms, expect, "{name}");
+        assert_eq!(stats.timing.tool_calls, 1, "{name}");
+        assert_eq!(stats.timing.calls, 2, "{name}");
+    }
+    // 中间出现 user 消息：该间隔不计（含人的思考时间），但工具次数照计。
+    let (_tmp, cfg, cache) = setup();
+    file(
+        &cfg.sessions_dir.join("project/interrupt.jsonl"),
+        "interrupt",
+        None,
+        &[
+            timed("u1", t, 1000.0, 200.0, 100, "toolUse", Some(t + 1000)),
+            tool_result("utr", t + 1100),
+            json!({"type":"message","id":"u","timestamp":DATE,"message":{"role":"user"}}),
+            timed("u2", t + 5000, 1000.0, 200.0, 100, "stop", None),
+        ],
+    );
+    let stats = stats_for(&cfg, &cache);
+    assert_eq!(stats.timing.tool_ms, 0);
+    assert_eq!(stats.timing.tool_calls, 1);
+    assert_eq!(stats.timing.calls, 2);
+    // completedAt 缺失：该次工具耗时为 0，但工具次数照计。
+    let (_tmp, cfg, cache) = setup();
+    file(
+        &cfg.sessions_dir.join("project/missing.jsonl"),
+        "missing",
+        None,
+        &[
+            timed("m1", t, 1000.0, 200.0, 100, "toolUse", None),
+            tool_result("mtr", t + 1100),
+            timed("m2", t + 5000, 1000.0, 200.0, 100, "stop", None),
+        ],
+    );
+    let stats = stats_for(&cfg, &cache);
+    assert_eq!(stats.timing.tool_ms, 0);
+    assert_eq!(stats.timing.tool_calls, 1);
+    assert_eq!(stats.timing.calls, 2);
+}
+
+#[test]
+fn fork_copy_with_different_followup_is_deduplicated_and_not_double_counted() {
+    let (_tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    let parent = dir.join("parent.jsonl");
+    let t = ms("2026-10-16T10:00:00Z");
+    let a1 = timed("a1", t, 2000.0, 500.0, 200, "toolUse", Some(t + 2000));
+    let a1_child = a1.clone();
+    let a2 = timed("a2", t + 5000, 1000.0, 200.0, 100, "stop", Some(t + 6000));
+    file(
+        &parent,
+        "parent",
+        None,
+        &[a1, tool_result("ptr", t + 2100), a2],
+    );
+    file(
+        &dir.join("child.jsonl"),
+        "child",
+        Some("parent"),
+        &[
+            a1_child,
+            json!({"type":"message","id":"cu","timestamp":DATE,"message":{"role":"user"}}),
+            assistant_at("a_new", 3.0, t + 9000),
+        ],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::All,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    close(stats.total.cost.total, 5.0);
+    assert_eq!(stats.total.messages.assistant, 3);
+    assert_eq!(stats.timing.tool_calls, 1);
+    assert_eq!(stats.timing.calls, 2);
+}
+
+#[test]
+fn model_speed_skips_errors_short_generations_and_tiny_outputs() {
+    let (_tmp, cfg, cache) = setup();
+    let t = ms("2026-10-16T10:00:00Z");
+    file(
+        &cfg.sessions_dir.join("project/main.jsonl"),
+        "main",
+        None,
+        &[
+            timed("ok", t, 2500.0, 500.0, 200, "stop", Some(t + 2500)),
+            timed("err", t + 1000, 2500.0, 500.0, 200, "error", Some(t + 3500)),
+            timed("short", t + 2000, 400.0, 100.0, 200, "stop", Some(t + 2400)),
+            timed("tiny", t + 3000, 2500.0, 300.0, 8, "stop", Some(t + 5500)),
+        ],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::All,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    assert_eq!(stats.by_model.len(), 1);
+    close(stats.by_model[0].tps.unwrap(), 100.0);
+    close(stats.by_model[0].ttft_ms.unwrap(), 300.0);
+    assert_eq!(stats.timing.calls, 4);
+    assert_eq!(stats.timing.wait_ms, 1400);
+    assert_eq!(stats.timing.gen_ms, 6500);
+    close(stats.timing.tps.unwrap(), 100.0);
+}
+
+#[test]
+fn top_sessions_rank_by_cost_and_activity_is_dense_and_independent_of_range() {
+    let (_tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    let f1 = dir.join("f1.jsonl");
+    let f2 = dir.join("f2.jsonl");
+    let f3 = dir.join("f3.jsonl");
+    file(
+        &f1,
+        "f1",
+        None,
+        &[
+            assistant_at("f1-old", 5.0, ms("2026-10-16T02:00:00Z") - 100 * 86400000),
+            assistant_at("f1-today", 3.0, ms("2026-10-16T02:00:00Z")),
+        ],
+    );
+    file(
+        &f2,
+        "f2",
+        None,
+        &[assistant_at("f2-today", 1.0, ms("2026-10-16T03:00:00Z"))],
+    );
+    file(
+        &f3,
+        "f3",
+        None,
+        &[json!({"type":"message","id":"u","timestamp":DATE,
+            "message":{"role":"user","timestamp":1792110600000_i64}})],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::Today,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    close(stats.total.cost.total, 4.0);
+    assert_eq!(stats.sessions, 3);
+    assert_eq!(stats.by_project.len(), 1);
+    assert_eq!(stats.by_project[0].sessions, 3);
+    assert_eq!(stats.top_sessions.len(), 2);
+    assert_eq!(stats.top_sessions[0].id, "f1");
+    close(stats.top_sessions[0].cost, 3.0);
+    assert_eq!(stats.top_sessions[1].id, "f2");
+    close(stats.top_sessions[1].cost, 1.0);
+    assert_eq!(stats.top_sessions[0].cwd, "/my/project");
+    assert!(stats.top_sessions[0].path.ends_with("f1.jsonl"));
+    assert_eq!(stats.activity.len(), 182);
+    assert_eq!(stats.activity[0].key, "2026-04-18");
+    assert_eq!(stats.activity[181].key, "2026-10-16");
+    let old = stats
+        .activity
+        .iter()
+        .find(|p| p.key == "2026-07-08")
+        .unwrap();
+    close(old.cost, 5.0);
+    let sum: f64 = stats.activity.iter().map(|p| p.cost).sum();
+    close(sum, 9.0);
 }

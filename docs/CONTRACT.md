@@ -849,13 +849,31 @@ bashExecution（无 content 数组）与 developer：
   无 usage 时为 0，不读取价目表、不自行估价。
 - `UsageMessages { user, assistant }`：归属后全历史中对应角色的消息数（含子代理），
   toolResult / custom / developer 不计消息数；model_usage 不是 assistant 消息。
-- `UsageModel { provider, model, messages, cost, tokens }`：provider/model 缺失为空字符串；
+- `UsageModel { provider, model, messages, cost, tokens, tps?, ttftMs? }`：provider/model 缺失为空字符串；
   messages 为 assistant + model_usage 的调用条数（包括无 usage 的 assistant）。
+  `tps`/`ttftMs` 为该模型速度（`SessionUsage.models` 沿用同结构，无样本时字段缺省）：
+  速度 = Σoutput ÷ Σ(duration−ttft)，只取非 error/aborted 且 duration/ttft 均有效、
+  duration ≥ ttft ≥ 0 的调用；tps 分子再要求 gen ≥ 500ms 且 output ≥ 16，
+  无样本时为 null。统计含子代理调用（主对话+嵌套）。
 - `SessionUsage { messages: UsageMessages, tokens: UsageTokens, cost: UsageCost, models: UsageModel[] }`。
 - `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[],
-  trend: UsageTrend }`；`UsageProject { cwd, cost, tokens, sessions }`，
-  sessions 为范围内有归属条目的顶层会话数。cwd 取顶层 owner 的 header.cwd。
-  项目/模型按花费降序（相同时按名称）。
+  trend: UsageTrend, sessions, timing: UsageTiming, topSessions: UsageSession[], activity: UsageTrendPoint[] }`；
+  `UsageProject { cwd, cost, tokens, sessions }`，sessions 为范围内有归属条目的顶层会话数。
+  cwd 取顶层 owner 的 header.cwd。项目/模型按花费降序（相同时按名称）。
+- `sessions`：范围内有归属条目的顶层会话数（含只有 user 消息的会话），与各项目 sessions 之和恒等。
+- `UsageTiming { waitMs, genMs, toolMs, toolCalls, calls, tps }`：**仅主对话**（子代理与主对话并行，
+  累加会超过挂钟时间）。waitMs/genMs 为 assistant 自报 duration/ttft 的累加
+  （round 到毫秒；无效值跳过）；calls 为带有效 timing 的主对话调用数（含 error/aborted）；
+  toolCalls 为紧随主对话助手的 toolResult 行数；tps 与模型速度同口径（经 500ms/16 输出过滤，
+  故与简单 calls 不成简单比例）；toolMs = 上一条 `stopReason=="toolUse"` 助手的 completedAt
+  到下一条助手 timestamp 的间隔累加：间隔超过 10 分钟视为闲置不计；中间出现 user 消息
+  则该间隔不计（含人的思考时间）；completedAt 缺失时该次为 0。
+- `UsageSession { id, path, cwd, cost, tokens, calls, lastMs }`：topSessions 为范围内 cost > 0 的
+  顶层会话，按 cost 降序、再 lastMs 降序、再 path 升序，取前 8；cost/tokens/calls/lastMs 均为范围内累加，
+  calls 只计 assistant 条目，path 为顶层会话绝对路径。
+- `activity`：近 182 天（含今天）的日花费点，复用 `UsageTrendPoint`，稠密 182 项升序、
+  缺桶补零，**不受 range 影响且只收带合法时间戳条目**（model_change 不进）。end 为请求时刻 now，
+  故末桶只收 now 之前的数据。
 - `UsageTrend { unit: "hour"|"day", points: UsageTrendPoint[] }`；
   `UsageTrendPoint { key, cost, tokens }`：today/24h 为 hour 桶（key 为本地时区
   `"YYYY-MM-DD HH"`），其余为 day 桶（`"YYYY-MM-DD"`；本节桶 key 例外于 §0 的

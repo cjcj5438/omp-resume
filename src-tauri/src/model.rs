@@ -1155,6 +1155,10 @@ pub struct UsageModel {
     pub messages: u64,
     pub cost: f64,
     pub tokens: UsageTokens,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1212,6 +1216,34 @@ pub struct UsageStats {
     pub by_project: Vec<UsageProject>,
     pub by_model: Vec<UsageModel>,
     pub trend: UsageTrend,
+    pub sessions: u64,
+    pub timing: UsageTiming,
+    pub top_sessions: Vec<UsageSession>,
+    pub activity: Vec<UsageTrendPoint>,
+}
+
+/// 仅主对话：子代理与主对话并行，累加会超过挂钟时间。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTiming {
+    pub wait_ms: u64,
+    pub gen_ms: u64,
+    pub tool_ms: u64,
+    pub tool_calls: u64,
+    pub calls: u64,
+    pub tps: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSession {
+    pub id: String,
+    pub path: String,
+    pub cwd: String,
+    pub cost: f64,
+    pub tokens: u64,
+    pub calls: u64,
+    pub last_ms: i64,
 }
 
 /// 运行错误分类（启发式，见 usage.rs `classify_error`）。
