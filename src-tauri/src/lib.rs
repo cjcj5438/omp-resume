@@ -13,6 +13,9 @@
 /// 全局共享的数据模型：命令参数、返回值与错误类型。
 pub mod model;
 
+/// 模型测速/稳定性探测（见 CONTRACT §20）。
+pub mod model_bench;
+
 /// 清理候选（只读扫描；删除仍走 `delete_sessions`，见 CONTRACT §14）。
 pub mod cleanup;
 pub mod config;
@@ -24,6 +27,8 @@ pub mod memory;
 /// macOS 菜单栏：运行中 omp 会话的只读检测 + 聚焦（见 CONTRACT §17）。
 pub mod menubar;
 pub mod meta;
+/// 模型规格编辑（models.yml 行级编辑 + 沙箱校验，见 CONTRACT §21）。
+pub mod model_specs;
 pub mod occupant;
 pub mod omp_cli;
 pub mod omp_models;
@@ -364,6 +369,11 @@ pub fn run() {
             omp_models::list_models,
             omp_models::get_model_config,
             omp_models::update_model_config,
+            model_bench::model_bench_run,
+            model_bench::model_bench_history,
+            model_bench::model_perf_list,
+            model_specs::get_model_specs,
+            model_specs::update_model_spec,
             memory::memory_overview,
             memory::memory_list,
             memory::memory_detail,

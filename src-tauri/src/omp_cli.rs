@@ -219,7 +219,7 @@ fn read_lines(
     }
 }
 
-fn output_tail(output: &str) -> &str {
+pub(crate) fn output_tail(output: &str) -> &str {
     let start = output.char_indices().rev().nth(499).map_or(0, |(i, _)| i);
     output[start..].trim()
 }

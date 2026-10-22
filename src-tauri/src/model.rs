@@ -758,9 +758,14 @@ pub struct ModelInfo {
     pub name: String,
     pub thinking_levels: Vec<String>,
     pub context_window: Option<u64>,
+    pub max_tokens: Option<u64>,
     pub reasoning: bool,
+    #[serde(default)]
+    pub input: Vec<String>,
     pub cost_input: Option<f64>,
     pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
+    pub cost_cache_write: Option<f64>,
 }
 
 /// agent 定义来源：内置（unpack 导出）或用户自建（`~/.omp/agent/agents`）。
@@ -1015,16 +1020,33 @@ mod tests {
             name: "DeepSeek v4.1 Flash".into(),
             thinking_levels: vec!["low".into(), "high".into()],
             context_window: None,
+            max_tokens: Some(393_216),
             reasoning: true,
+            input: vec!["text".into(), "image".into()],
             cost_input: Some(0.3),
             cost_output: None,
+            cost_cache_read: Some(0.006),
+            cost_cache_write: Some(0.0),
         })
         .unwrap();
         assert_eq!(info["selector"], "5438/deepseek-v4.1-flash");
         assert_eq!(info["thinkingLevels"], serde_json::json!(["low", "high"]));
         assert_eq!(info["contextWindow"], serde_json::Value::Null);
+        assert_eq!(info["maxTokens"], 393_216);
+        assert_eq!(info["input"], serde_json::json!(["text", "image"]));
         assert_eq!(info["costInput"], 0.3);
         assert_eq!(info["costOutput"], serde_json::Value::Null);
+        assert_eq!(info["costCacheRead"], 0.006);
+        assert_eq!(info["costCacheWrite"], 0.0);
+        // 旧快照无 input 字段仍可反序列化（缺省空数组）。
+        let legacy: ModelInfo = serde_json::from_value(serde_json::json!({
+            "selector": "p/m", "provider": "p", "id": "m", "name": "M",
+            "thinkingLevels": [], "contextWindow": null, "maxTokens": null,
+            "reasoning": false, "costInput": null, "costOutput": null,
+            "costCacheRead": null, "costCacheWrite": null
+        }))
+        .unwrap();
+        assert!(legacy.input.is_empty());
         let agent = serde_json::to_value(AgentDefinition {
             name: "scout".into(),
             description: "调研".into(),
@@ -1601,4 +1623,125 @@ pub struct MemoryRestoreResult {
     pub bank: String,
     pub restored_from: MemoryBackup,
     pub safety_backup: Option<MemoryBackup>,
+}
+// ---------------------------------------------------------------------------
+// model_bench (CONTRACT §20)
+// ---------------------------------------------------------------------------
+
+/// `model_bench_run` 返回 / `model_bench_history` 条目：两次 bench 探针合成的一轮。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchRound {
+    /// 本轮开始时间（ISO-8601 UTC 毫秒）。
+    pub at: String,
+    /// 原样 selector（含 `:thinking`）。
+    pub selector: String,
+    /// 请求总数（正常 8）。
+    pub total: u64,
+    /// 成功数。
+    pub ok: u64,
+    /// 成功请求 ttftMs 的 p50 / p95（最近秩法）；无样本为 null。
+    pub ttft_p50_ms: Option<f64>,
+    pub ttft_p95_ms: Option<f64>,
+    /// 成功请求 generationTps 的 p50；无样本为 null。
+    pub tps_p50: Option<f64>,
+    /// generationTps 的变异系数（总体标准差/均值）；样本少于 2 时为 null。
+    pub tps_cv: Option<f64>,
+    /// 成功请求 cost 之和（美元），缺失按 0。
+    pub cost: f64,
+    /// 失败请求的错误文本：去重，每条截到 200 字符，最多 5 条。
+    pub errors: Vec<String>,
+}
+
+/// `model_perf_list` 条目：omp 日常实测统计（只读聚合）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPerf {
+    /// omp 侧模型键。
+    pub selector: String,
+    /// 样本数（`round(samples)`）。
+    pub samples: i64,
+    /// 平均 TTFT 毫秒（`ttft_ms/ttft_samples`，无样本为 null）。
+    pub ttft_ms: Option<f64>,
+    /// 生成速度 tok/s（`output_tokens/(gen_ms/1000)`，无计时为 null）。
+    pub tps: Option<f64>,
+    /// omp 侧更新时间（ISO-8601 UTC 毫秒）。
+    pub updated_at: String,
+}
+
+// ---------------------------------------------------------------------------
+// 模型规格编辑（CONTRACT §21：§4.54–§4.55）
+// ---------------------------------------------------------------------------
+
+/// 单个模型的规格快照：只含非凭据字段。`selector` 为 `provider/id`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpec {
+    pub provider: String,
+    pub id: String,
+    pub selector: String,
+    pub name: Option<String>,
+    pub context_window: Option<u64>,
+    pub max_tokens: Option<u64>,
+    pub reasoning: Option<bool>,
+    pub input: Option<Vec<String>>,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
+    pub cost_cache_write: Option<f64>,
+    /// cost 块含嵌套分层价（如 longContext）：读侧四费用为 None，写侧整模型拒改。
+    #[serde(default)]
+    pub cost_tiered: bool,
+}
+
+/// `get_model_specs` 返回（`available=false` 为正常空状态）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpecsResult {
+    pub path: String,
+    pub available: bool,
+    pub revision: String,
+    pub specs: Vec<ModelSpec>,
+    pub error: Option<String>,
+}
+
+/// 费用整体替换（必须四个数字齐全，见 CONTRACT §21）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCostPatch {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
+}
+
+/// 规格补丁：`None` 字段不触碰。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpecPatch {
+    pub name: Option<String>,
+    pub context_window: Option<u64>,
+    pub max_tokens: Option<u64>,
+    pub reasoning: Option<bool>,
+    pub input: Option<Vec<String>>,
+    pub cost: Option<ModelCostPatch>,
+}
+
+/// `update_model_spec` 请求：`expected_revision` 为文件字节 SHA256。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpecPatchRequest {
+    pub provider: String,
+    pub id: String,
+    pub patch: ModelSpecPatch,
+    pub expected_revision: String,
+}
+
+/// `update_model_spec` 返回：新 revision + 写后规格 + 备份路径。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpecUpdateResult {
+    pub revision: String,
+    pub spec: ModelSpec,
+    pub backup_path: String,
 }

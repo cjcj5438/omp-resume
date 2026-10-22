@@ -220,6 +220,12 @@ pub fn parse_models_json(output: &str) -> Result<Vec<ModelInfo>, String> {
                 .unwrap_or_default()
                 .to_owned()
         };
+        let cost = |field: &str| {
+            model
+                .get("cost")
+                .and_then(|cost| cost.get(field))
+                .and_then(Value::as_f64)
+        };
         list.push(ModelInfo {
             selector: selector.to_owned(),
             provider: text("provider"),
@@ -237,18 +243,26 @@ pub fn parse_models_json(output: &str) -> Result<Vec<ModelInfo>, String> {
                 })
                 .unwrap_or_default(),
             context_window: model.get("contextWindow").and_then(Value::as_u64),
+            max_tokens: model.get("maxTokens").and_then(Value::as_u64),
             reasoning: model
                 .get("reasoning")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-            cost_input: model
-                .get("cost")
-                .and_then(|cost| cost.get("input"))
-                .and_then(Value::as_f64),
-            cost_output: model
-                .get("cost")
-                .and_then(|cost| cost.get("output"))
-                .and_then(Value::as_f64),
+            input: model
+                .get("input")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            cost_input: cost("input"),
+            cost_output: cost("output"),
+            cost_cache_read: cost("cacheRead"),
+            cost_cache_write: cost("cacheWrite"),
         });
     }
     Ok(list)
@@ -913,14 +927,22 @@ exit 1"#,
         assert_eq!(models[0].selector, "p1/m1");
         assert_eq!(models[0].thinking_levels, vec!["low", "high"]);
         assert_eq!(models[0].context_window, Some(1000));
+        assert_eq!(models[0].max_tokens, Some(100));
         assert!(models[0].reasoning);
+        assert_eq!(models[0].input, vec!["text"]);
         assert_eq!(models[0].cost_input, Some(0.3));
         assert_eq!(models[0].cost_output, Some(1.2));
+        assert_eq!(models[0].cost_cache_read, Some(0.006));
+        assert_eq!(models[0].cost_cache_write, Some(0.0));
         // 缺字段容忍：不猜、不报错。
         assert_eq!(models[1].thinking_levels, Vec::<String>::new());
         assert_eq!(models[1].context_window, None);
+        assert_eq!(models[1].max_tokens, None);
         assert!(!models[1].reasoning);
+        assert!(models[1].input.is_empty());
         assert_eq!(models[1].cost_input, None);
+        assert_eq!(models[1].cost_cache_read, None);
+        assert_eq!(models[1].cost_cache_write, None);
         assert!(parse_models_json("{\"oops\":1}").is_err());
         assert!(parse_models_json("not json").is_err());
     }
