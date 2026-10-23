@@ -3,7 +3,7 @@
  * 剪贴板用 navigator.clipboard 桩，不触碰系统剪贴板。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { OMP_COMMANDS, OMP_VERSION } from "../ompCommands";
 import { OMP_CLI_COMMANDS } from "../ompCliCommands";
 import { OMP_COMBOS } from "../ompCombos";
@@ -141,15 +141,21 @@ describe("常用分组", () => {
   it("空查询时顶部显示常用分组，过滤时隐藏且不重复行", () => {
     renderDialog();
     gotoCommands();
-    const titles = [...document.querySelectorAll(".cheatsheet-group-title")].map((el) => el.textContent ?? "");
-    expect(titles.length).toBeGreaterThan(1);
-    expect(titles[0]).toMatch(/^常用/);
-    // 置顶行与原分组行重复出现
-    expect(screen.getAllByRole("button", { name: "复制 /compact" })).toHaveLength(2);
+    const groups = [...document.querySelectorAll(".cheatsheet-group")];
+    expect(groups.length).toBeGreaterThan(1);
+    expect(groups[0].querySelector(".cheatsheet-group-title")?.textContent).toMatch(/^常用/);
+    // 置顶行与原分组行重复出现（全局 getAllByRole 要遍历数千节点，用 aria-label 属性查询替代，约快 100 倍）
+    const copyButtons = (root: ParentNode): number =>
+      root.querySelectorAll('button[aria-label="复制 /compact"]').length;
+    expect(copyButtons(document)).toBe(2);
+    expect(copyButtons(groups[0])).toBe(1);
 
-    fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "compact" } });
+    // 过滤框在工具栏内：限定 within 范围，避免对数千节点做可访问性遍历
+    const toolbar = document.querySelector(".cheatsheet-toolbar");
+    if (!(toolbar instanceof HTMLElement)) throw new Error("找不到工具栏");
+    fireEvent.change(within(toolbar).getByLabelText("过滤命令"), { target: { value: "compact" } });
     expect(screen.queryByText(/^常用/, { selector: ".cheatsheet-group-title" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "复制 /compact" })).toHaveLength(1);
+    expect(copyButtons(document)).toBe(1);
   });
 });
 
