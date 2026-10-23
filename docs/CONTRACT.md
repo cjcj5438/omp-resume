@@ -34,8 +34,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
   `$HOME/.omp/run/session-owners`。
 - `memoryDir`：环境变量 `OMP_RESUME_MEMORY_DIR` >
   `$HOME/.omp/agent/memories/mnemopi/banks`（记忆库 bank 根目录，见 §18）。
-- `get_config() -> { sessionsDir, ownersDir }` 返回解析后的绝对路径。
-- 启动参数由 `main.rs` 解析后存入 Tauri `State`（实现细节，后续 worker 定）。
+- 启动参数由 `lib.rs` 解析后存入 Tauri `State`（实现细节，后续 worker 定）。
 - omp 二进制：存在的 `OMP_RESUME_OMP_BIN` 环境变量路径 >
   `$HOME/.local/bin/omp` > `/opt/homebrew/bin/omp` > `/usr/local/bin/omp` >
   `$HOME/.bun/bin/omp`；逐项检查存在性，不依赖 GUI 进程的 PATH 查找。
@@ -223,10 +222,9 @@ assistant 与 toolResult 之间，不跳过它们树会断裂。
 
 ## 4. 命令
 
-### 4.1 `get_config() -> { sessionsDir, ownersDir }`
+### 4.1 `get_config`（已删除）
 
-返回 §1 解析后的绝对路径。无参数，不失败（目录不存在也不报错，
-由各命令在实际访问时报 `IO`/`NOT_FOUND`）。
+（已删除：`get_config` 命令已移除，编号保留。）
 
 ### 4.2 `list_sessions() -> { sessionsDir, hiddenEmpty, groups }`
 
@@ -621,24 +619,34 @@ header `.title`、每个 `title_change` 的 `.title`。
 | `TIMEOUT` | omp 执行超过期限；已杀进程并回收，附部分输出末尾 |
 | `INVALID_INPUT` | 用户输入不合法 |
 | `CONFLICT` | 文件已被外部修改 |
+| `META_CORRUPT` | 应用侧 `meta.json` 解析失败或版本不兼容（§15.3；绝不覆盖，UI 禁用保存） |
+| `INVALID_KEY` | 配置键不在模型配置白名单内（§16.1；仅 `update_model_config` 产生，绝不调用 omp） |
 | `UNKNOWN` | **仅前端**：传输层或未预期失败的归一化（后端永不产生） |
 
 `AppError { code, message }`；`message` 为中文人类可读。
 
 ## 8. 类型文件
 
-- `src-tauri/src/model.rs`：serde 权威定义（含 `AppResult<T>` 与 4 个
+- `src-tauri/src/model.rs`：serde 权威定义（含 `AppResult<T>` 与 8 个
   序列化单测）。`Option` 字段序列化为 null（不明缺省，保持全字段）。
 - `src/types.ts`：逐字段镜像（`Option<T>` → `T | null`，
   `u64/usize` → `number`，`Value` → `unknown`）。
 - `src/api.ts`：每命令一函数 + `normalizeError`。
   后端 `invoke` 拒绝值即 `AppError` 形状；未知形状降级 `UNKNOWN`。
-- 后端模块布局（`src-tauri/src/`）：`config.rs`（配置解析 + 路径校验）、
-  `lock.rs`（顶层，flock 占用探测）、`occupant.rs`（占用归属识别）、
-  `sessions/`（`parse` 解析 + 树索引、`list` / `conversation` / `tree`）、
-  `ops/`（删除 / 标记 / iTerm）、`omp_cli.rs`（omp 路径解析 / 安全 runner /
-  版本与更新）、`omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
-  `mcp_config.rs`（MCP 原生配置读写）、`memory/`（记忆库浏览 + 备份/删除/恢复，见 §18）。
+- 后端模块布局（`src-tauri/src/`）：`util.rs`（共享小工具）、
+  `config.rs`（配置解析 + 路径校验）、`lock.rs`（flock 占用探测）、
+  `occupant.rs`（占用归属识别）、`sessions/`（`parse` 解析 + 树索引、
+  `list` / `conversation` / `tree`）、`ops/`（删除 / 标记 / iTerm /
+  目录选择）、`omp_cli.rs`（omp 路径解析 / 安全 runner / 版本与更新）、
+  `omp_plugins.rs`（用户级插件 / marketplace / registry 技能）、
+  `omp_models.rs`（模型与 Agent 白名单配置）、`history.rs`（recap /
+  提示词历史只读）、`cleanup.rs`（清理候选）、`meta.rs`（别名/标签/备注）、
+  `menubar/`（托盘菜单 / 检测 / 聚焦 / 通知 / 设置）、`mcp_config.rs`
+  （MCP 原生配置读写）、`memory/`（记忆库浏览 + 备份/删除/恢复，见 §18）、
+  `model_bench.rs`（模型测速与历史）、`model_specs/`（`mod` / `yaml` /
+  `validate` / `io` / `tests`，规格编辑，见 §21）、`usage/`（`mod` /
+  `cache` / `parse` / `window` / `stats` / `health` / `redact` / `tests`，
+  用量与运行看板，见 §12）。
 
 ## 9. 常量
 
@@ -669,119 +677,14 @@ header `.title`、每个 `title_change` 的 `.title`。
   发布后必须在 `.app` 的 Info.plist 里验证。
 - `npm run tauri build`（不签名）产物
   `src-tauri/target/release/bundle/macos/omp-resume.app` 可启动。
+- 打包目标 `targets: ["app","dmg"]`（`bundle.targets`）。
+  CSP（`app.security.csp`）：`default-src 'self' customprotocol:; script-src 'self'; style-src 'self'
+  'unsafe-inline'; img-src 'self' asset: data: https: http:; font-src 'self' data:; connect-src ipc:
+  http://ipc.localhost`（dev 另有 `devCsp` 放行 localhost，见 `tauri.conf.json`）。
 
 ## 11. 纯前端功能（无后端命令）
 
-- **置顶**（`src/pins.ts`）：项目（cwd）与会话（id）两级置顶，仅存 WebView
-  `localStorage`（键 `omp-resume:pins:v1`），不修改会话文件，不经过后端。
-  项目置顶仍在所属项目组内上浮；会话置顶**跨项目聚合**为列表顶部「置顶」区：
-  可折叠、按 modifiedAt 新→旧、行内显示所属项目名，置顶会话从原项目组移出，
-  全列表只出现一次。存储格式不变（`pins.sessions` 仍是全局会话 id 数组）。
-  `listUtils.applyPins(groups, pins) -> PinnedSplit { pinnedSessions, groups }`
-  （组内被掏空时保留空组壳，由 Sidebar 展示占位）。
-  过滤（文本 + 标签）与置顶区联动：置顶区只显示匹配项，无匹配时整区隐藏。
-  置顶视觉：区头强调色 📌 +「置顶」标签 + 数量徽章；置顶行仅左侧 3px 强调色竖条
-  （不再染 `accent-soft` 底色，与普通行同一底色）；置顶按钮 `pin-toggle-on` 常亮实心，
-  未置顶仅 hover/focus 显示。
-  详情头按钮同理：已置顶 `btn-accent` +「已置顶」（aria-pressed），未置顶「置顶」。
-- **空项目组占位**：组内会话全被置顶时保留组壳——组头（项目置顶按钮与
-  「在此项目新会话」+）照常渲染，组内一行「该项目的会话均已置顶」；
-  隐藏数量徽章与「目录不存在」徽章，不渲染组头三态复选框。
-- **批量选择**：搜索行右侧「多选」图标按钮（aria-label/title「多选」，`aria-pressed`，
-  开启态 `accent-soft` + 强调色描边）是批量入口，状态为 Sidebar 本地 UI 状态：
-  开启后侧栏加 `is-selecting`（全部行/组头勾选框常显），选择条常驻（0 选中也显示
-  「已选 0 项」+「全选当前列表」）；关闭即 `onClearChecks()` 清空并退出。
-  有任何勾选时开关自动呈按下态（`selecting = multiMode || checked.size > 0`）。
-  项目组头三态复选框（`checkState`：none/some/all，aria-label
-  「选择项目 X 的全部会话」）对该组**当前可见**（已过滤、含已折叠）的全部会话
-  批量勾选/取消；置顶区头同构（「选择全部置顶会话」）。行内与组头勾选框平时
-  `opacity: 0` 占位隐藏（DOM 保留、可聚焦，hover 行/组头、键盘聚焦、已勾选或
-  `is-selecting` 时显示），因此列表扫读时左缘没有成排勾选框。选择条：
-  「已选 N 项」+（未选满时）「全选当前列表」+（N>0 时）「清除选择」；
-  全选范围 = 置顶区 + 各组当前可见会话（置顶已从原组移出，不重复）。
-  批量删除流程语义不变。
-  `listUtils` 另导出 `checkState` / `filterSessions` / `filterSessionsByTags`；
-  `Sidebar` 新增 props `pinnedSessions` / `onToggleChecks(paths, on)` / `onClearChecks()`。
-- **omp 更新日志**（`src/format.ts`）：常量 `OMP_CHANGELOG_URL` =
-  `https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/CHANGELOG.md`
-  （链到文件顶部，不拼版本锚点）；`openOmpChangelog()` 用系统浏览器打开，
-  失败仅在非 Tauri 环境（浏览器 mock / 测试）回退 `window.open`；打包应用内不回退
-  （`window.open` 可能落到应用内窗口）。入口在侧栏 omp 版本行的「更新日志」小链接与
-  OmpUpdateDialog 的「查看更新日志」；capabilities 无需扩展
-  （`opener:default` 已允许 https）。
-- **命令速查**（`src/ompCommands.ts` / `src/ompCommandDetails.ts`（+ `commandDetails/part1..4.ts`）/
-  `src/ompCliCommands.ts` / `src/ompCombos.ts` / `src/ompLearningPaths.ts` / `CheatSheetDialog.tsx`，
-  纯前端静态数据，无后端命令）：
-  - 基准 `OMP_VERSION = "18.12.6"`，共 **87 条**内置命令（分组 + 英文参数提示 +
-    手写中文一句话说明 + 别名 + 1–3 条可粘贴示例）。18.12.3 → 18.12.6 无内置命令
-    新增/更名/移除。另加一组「扩展命令」，收录随包发布的 `/review`、`/green`、
-    `/annotate`（上游 `custom-commands/bundled/`，RPC 里 `source` 为 custom）；
-    其余自定义命令、技能（`/skill:xxx`）与插件命令不收录，实时补全以 omp 内输入 `/` 为准。
-  - **示例不变量**（`ompCommands.test.ts` 单测锁定）：每条命令 1–3 条示例；首个
-    token 必须能被 `findOmpCommand` 解析回该命令本身；`args` 非空的命令至少一条带参数；
-    无参数命令的示例只有命令本身（不臆造子命令）。
-  - **复核方法**（表头注释同样记录，改表后需按此抽查）：`omp` 没有
-    `--list-commands`；用 `omp --mode rpc` 发 `get_available_commands` 取机器可读的
-    `{name, description, input.hint, aliases, subcommands}`（18.12.6 下 52 条非 skill
-    命令，仅 RPC 可执行子集；`--no-extensions`/`--no-skills` 可剥离扩展与技能命令），
-    再与 TUI 补全列表及逐条按 Tab 后的参数 ghost hint、上游 tag 源码
-    `packages/coding-agent/src/slash-commands/builtin-*.ts`（统一内置注册表本身）
-    三方交叉核对，得到全部内置命令与参数提示。
-  - `filterOmpCommands(groups, query)`：大小写不敏感子串，去掉查询前导 `/`；
-    匹配 name / 别名 / 参数提示 / 中文说明 / 意图关键词（`OMP_INTENT_KEYWORDS`，
-    如 排队→`/queue`、协作→`/collab`、预算→`/goal`），只保留有命中的分组。
-    另匹配命令的 `examples`；`findOmpCommand(name)` 按命令名或别名精确查找（含别名，供组合校验）。
-  - **版本提示**：`CheatSheetDialog` 可选 prop `installedVersion`（App 传入
-    `ompVersion`）；纯函数 `versionMismatch(installed)` **只做相等判断**
-    （不做 semver 比较），已安装版本为空/未知时不提示；不一致时显示
-    「你安装的是 X，速查基于 18.12.6，个别命令可能有差异」。
-  - **详解数据**（`OmpCommandDetail`：`when` / `cautions?` / `params?` / `related?`）：87 条内置
-    命令 + 3 条扩展命令逐条覆盖，按分组拆成 `commandDetails/part1..4.ts`。不变量（`ompCommandDetails.test.ts`）：
-    键集合与 `OMP_COMMANDS` 完全一致；`params[].token` 必须逐字出现在该命令 `args` 里，`args` 为空则
-    不写 `params`；`related` 只能引用真实存在的命令名/别名。
-  - **四个视图**（顶部分段 [入门路径 | 全部命令 | 组合用法 | 终端命令]，默认「入门路径」，过滤框共用、
-    切换视图保留查询）：
-    - 入门路径（`OMP_LEARNING_PATHS`，6 条）：按学习顺序串起命令，每条路径有目标、可选的「建议先学」
-      前置、以及每步的「为什么排在这里」+「现在就试」命令行；点命令名跳到「全部命令」并过滤到它。
-      不变量：路径 id 唯一、`after` 指向存在的路径、每步 `cmd` 能解析回该命令、`tryIt` 首 token 是 `/命令`。
-    - 全部命令：按分组列出 `/name`、别名、参数提示、中文说明，以及详解块（何时用 / 参数逐项 /
-      注意 / 相关命令，相关命令可点进该命令）；分组标题在滚动容器内吸顶并带条数；空查询时顶部额外显示
-      「常用」分组（`OMP_PINNED_COMMANDS` 引用的命令，不计入总数；复制按钮 key 带分组名前缀，
-      与原分组行互不干扰），过滤时隐藏。头部显示
-      「基于 omp 18.12.6 · 共 90 条斜杠命令（内置 87 + 扩展 3）」，过滤中显示
-      「匹配 X / 90 条」。
-      行内一键复制：主按钮复制 `/name`；有参数时另有「参数」按钮复制
-      `/name <args 原样>` 模板（不替换占位符）；每个示例下方另有「复制示例 <原文>」按钮。
-      行布局是两层：上排（命令 / 中文说明 / 复制按钮）、下排整宽示例列表。复制成功按钮变「已复制 ✓」1.5 秒，
-      失败在弹窗内可见提示「复制失败：剪贴板不可用，请手动选择文本复制」4 秒后消失；
-      复制经 `src/clipboard.ts` 的 `copyText`（返回 boolean，绝不抛异常）。
-      按钮在行 hover 或键盘聚焦时出现，`@media (hover: none)` 触屏常显。
-    - 终端命令（`OMP_CLI_COMMANDS`，单一分组、按 name 字母序，共 **51** 个）：
-      数据取自 `omp --help` 的 COMMANDS 清单（不含顶层 flags，也不含 Available Tools
-      里同名工具），每条含参数提示与手写中文说明，示例一律以 `omp ` 开头、第二个
-      token 就是该子命令本身，参数只用 `omp <name> --help` 里真实出现的形式（无法
-      确认时只写 `omp <name> --help`）。头部显示「基于 omp 18.12.6 · 共 51 个终端
-      子命令」或「匹配 X / 51 个」。行布局与「全部命令」一致（上排命令/说明/复制，
-      下排整宽示例），另可复制 `omp <name>` 与 `omp <name> <args>` 模板。
-    - 组合用法：12 张「场景 → 命令序列」卡片（`OMP_COMBOS`），每张含标题、
-      「何时使用」、有序步骤（命令 + 一句话说明）；每步可单独复制，卡片头
-      「复制全部」把各步命令**每步一行换行拼接**。带参数的步骤写成
-      `<占位符>` 模板（说明里注明需替换）。过滤匹配场景标题、何时使用、
-      每步命令与说明。
-  - **组合数据不变量**（`ompCombos.test.ts` 单测锁定）：每个组合 ≥2 步；
-    每步命令必须存在于 `OMP_COMMANDS`（含别名，经 `findUnknownComboStep`
-    校验）；`id` 与标题唯一；组合总数 8–12（当前 12）。其中 `memory` 组合按
-    mnemopi 后端编写（view → stats → diagnose → enqueue）：`queue` 仅 sharpshooter
-    后端实现（其余后端报 not available），`mm …` 仅 hindsight 后端可用，
-    mnemopi 下 `clear` 会删除整个作用域的记忆库 DB 文件（故组合内不收录 `clear`）。
-  - 终端子命令不变量（`ompCommands.test.ts` 单测锁定）：名称唯一、按字母序、
-    每条至少 1 条示例且示例第二个 token 等于子命令名；`OMP_CLI_VERSION` 与
-    `OMP_VERSION` 相等。
-  - 样式集中在 `src/components/CheatSheet.css`（`.cheatsheet-*`，只用 App.css
-    语义变量，浅色/深色主题共用）。
-- **复制会话 ID**（`src/clipboard.ts`）：详情头 ID 按钮写入剪贴板，纯前端。
-- **全部更新**：前端按序调用 §4.18 → §4.17 → §4.22 → §4.10，首个失败即停；
-  有新版 omp 时只打开更新对话框，不自动执行 `omp update`。无独立命令。
+（已删除：以代码为准）
 
 ## 附录 A. 真实条目示例（节选，已脱敏截断）
 
@@ -835,15 +738,7 @@ bashExecution（无 content 数组）与 developer：
 
 ## 附录 B. 未验证 / 待实现注意
 
-- `compaction` / `branch_summary` / `label` / `session_init` /
-  `ttsr_injection` 本机无实例，形状与挂载语义以 omp 文档为准；
-  首次遇到真实数据时以后端单测锁定。
-- `custom_message` 在全量 162 行中均有 `id`（早期抽样疑似缺 id 系长行截断误读），
-  但解析仍须容忍无 id 行（跳过，不计坏行）。
-- 锁文件名后缀 `.lock` 以本机磁盘为准；omp 文档写作无后缀，
-  如遇上游变更以后端探测单测为准。
-- `open_in_iterm` 用 bare `omp`（走 PATH）；若用户 PATH 无 omp，
-  后续 worker 可在 CONTRACT 修订中改用 `~/.local/bin/omp` 兜底。
+已移至 DECISIONS.md D1
 
 ## 12. 用量与花费统计（只读，omp 18.11.1）
 
@@ -1020,31 +915,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 12.6 真实数据只读调查（2026-10-16）
 
-方法：只遍历 ~/.omp/agent/sessions 的顶层与 sibling 目录 JSONL，逐行解析，
-按 entry id 收集「文件、行号、type、原文规范化内容」；分别比较同文件重复、跨文件完全复制、
-跨无关文件同 id 不同内容；再对照 header.parentSession 与 previousSessionFiles，未读任何模型凭据。
-
-- 首次快照：68 顶层 + 269 嵌套（相较简报 264，运行中会继续增加），无坏行。
-- 顶层有 173 种重复 entry id，均为唯一 fork 父子复制，**103 次 message id 重复全部来自这对 fork**：
-  48 assistant、51 toolResult、4 user；其余重复为 custom/配置等类型及 3 条 model_usage。
-  父会话 `01a134a7-…` → 子会话 `01a134fa-…`，复制条目内容完全一致；没有同文件内重复。
-- 全部顶层 + 嵌套另发现 **1 个跨无关 advisor 文件真实撞 id：a417d51d**，
-  分别为不同 owner 会话 advisor 中的 user 与 toolResult，时间/内容不同，无 fork 血缘；
-  **不去重**。单测还覆盖两个无关 advisor 即使 id/时间/用量完全相同也分别计费。
-- previousSessionFiles 仅 1 个迁移记录，不建立去重关系；嵌套 parentSession 也有指向 owner 的正常情况，
-  不据此合并不相同条目。
-- task 核实方法：检查所有 toolName=task 的 toolResult.details 中递归 numeric cost，
-  并与 sibling JSONL 的 assistant/model_usage 对照。首次快照有 47 条带 cost 字样的 task toolResult，
-  74 个 cost 数值均为 progress.*.cost=0，results=[]（async 状态），并非新增账单；
-  这些状态不参与花费提取，嵌套 usage 单独求和，杜绝后续非零转述与嵌套重复入账。
-- fork 复制涉及主对话 $0.27746302、后台 $0.00673590，去重后总账相应扣除。
-  首次 Python 只读粗合计（去重前）：主 $124.66452912、顶层后台 $8.89896352、
-  嵌套 assistant $25.29857611、嵌套后台 $0.24156056；与简报的出入来自运行中的追加与嵌套后台纳入。
-
-- Rust 实现只读回归（同日稍后，debug 构建）：337 文件 = 68 顶层 + 269 嵌套；
-  去重后主对话 **$124.49429938**、后台（含嵌套）**$9.35127952**、子代理 **$26.77144350**，
-  总计 **$160.61702240**，Token **2,131,166,844**；冷扫描 **2.244 秒**，缓存再扫描 **75.94 毫秒**。
-  比首次快照仍有少量增量，来自同时运行的会话追加；上述两次计时均只读、不改写原始数据。
+已移至 DECISIONS.md D2
 
 ## 13. 新开会话与会话概要 / 提示词历史（本次追加）
 
@@ -1090,13 +961,14 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 前端：`RecapBlock.tsx` 挂载在详情页会话头（DetailPane 内一行）；
   无 recap 不渲染；默认折叠 3 行（CSS line-clamp），可展开 / 收起。
 
-### 13.2 `search_prompt_history { query?, limit? = 200 } -> PromptHistoryEntry[]`
+### 13.2 `search_prompt_history { query? } -> PromptHistoryEntry[]`
 
 - `PromptHistoryEntry { id: i64, prompt: string, cwd: string|null,
   sessionId: string|null, createdAt: string, useCount: i64 }`（JSON camelCase）。
   `cwd` / `sessionId` 为空串或 NULL → `null`；`createdAt` 为 ISO-8601 UTC 毫秒
   （由 `history.created_at` 秒级 epoch 转换，§0 时间约定）。
-- 排序：`created_at DESC, id DESC`。`limit` 默认 200。
+- 排序：`created_at DESC, id DESC`。返回上限固定 200（`history.rs` 的
+  `DEFAULT_SEARCH_LIMIT`，无 `limit` 参数）。
 - `query`：**大小写不敏感 LIKE 子串**匹配（空白 / 缺省 = 不过滤），
   转义 `\` `%` `_` 并配 `ESCAPE '\'`。**不使用 `history_fts`**
   （FTS5 默认分词器不切 CJK；约 425 行规模 LIKE 足够）。
@@ -1175,15 +1047,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 14.5 真实数据只读回归（2026-10-16）
 
-`cargo test --lib real_data_cleanup -- --ignored --nocapture`（只读，不改写 `~/.omp`）：
-
-- 68 个顶层会话，**18 个候选**：`empty` 4、`cwd_missing` 4、`large` 10、`stale` 0；
-  占用中 3、占用未知 0；可释放合计约 **271–273 MB**（两次运行间隔内仍在增长的线上会话会抬高该值）；
-  耗时约 **0.4 秒**。
-- 最大候选 73 MB（jsonl 2.49 MB + sibling 附件目录约 71 MB），与 `du` 核对一致
-  ——印证体积必须把附件算进去。
-- 与立项时快照（68 个会话、附件 965 文件/53 MB）相比，sessions 目录已增长到
-  约 325 MB（附件 1181 文件），故「可释放合计」远大于快照值。
+已移至 DECISIONS.md D3
 
 ## 15. 会话别名 / 标签 / 备注（应用侧 meta.json）
 
@@ -1248,16 +1112,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 15.5 实测记录（2026-10-16，macOS arm64）
 
-- 后端单测 13 项（往返、revision 冲突、损坏不覆盖、0600、校验边界、
-  全空删除条目、无操作幂等、孤儿保留、删除联动清理、清理失败不影响删除、
-  数据目录覆盖）全部通过。
-- 前端单测 26 项（filterGroups 命中 alias/tag/note、标签 AND 过滤、
-  标签计数、别名行内展示、标签过滤条、编辑器脏态/冲突/损坏）全部通过。
-- `npm run dev + ?mock=1` 真实浏览器冒烟：编辑别名/标签/备注并保存，
-  列表行显示别名 + 原标题灰字 + 标签徽章，标签过滤条按 AND 过滤，
-  详情编辑器 dirty/保存/还原行为正确。
-- 后端真实读写冒烟（`OMP_RESUME_DATA_DIR=/tmp/...`）：写入 meta.json
-  权限 0600，删除会话后条目被联动清除。
+已移至 DECISIONS.md D4
 
 ## 16. 模型与 Agent 配置（§4.36–§4.38，追加章节）
 
@@ -1374,192 +1229,17 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 16.6 前端形态（无新命令；2026-10-16 重设计，2026-10-21 拆分为「模型」「Agent」两页）
 
-- 「模型」标签页为**默认页**（`ModelsTab`），自上而下：页头（一句话说明 + 状态 chips +
-  「刷新模型」）→「模型库」（`ModelLibrary`，只读一览表：搜索 + 上下文/最大输出/
-  目录价/思考/用途列（名下 muted selector 次行、紧凑数字 `1M` / `393,216` / `$0.3 / $1.2`、
-  思考档位以 `·` 连接）+ 「加入测试」/「测试 ▶」/「规格」入口）→「测试」（内嵌 bench，
-  见 §20.5）→「角色分配」（`ModelsSection`：下述「主要模型」+「其他模型的兜底」，
-  bench 推荐回填到这里的角色草稿）。「Agent」标签页（`AgentsTab`）自上而下：导语 +
-  状态 chips（编排器 / 子代理数 / 停用 / 顾问 / Vibe 两档）+ 模型列表/兜底状态条
-  （`ModelDraftStatus`，两页共用）→ 可交互编排流程图 → 下述「Agent」区块。
-  两页各持一份 `useModelDraft` 草稿（含自己页的刷新与保存条），互不干扰；
-  旧 `ModelsAgentsPanel.tsx`  wrapper 已删除，拆分为 `ModelsSection` / `AgentsSection`，
-  其测试现为 `ModelSections.test.tsx`。
-- 「主要模型」（`ModelsSection` 上半）：下述角色卡 / 紧凑行 / 更多角色。
-- **角色卡**（每角色一张卡）：角色中文名 + 一句话用途 + 主模型选择
-  （provider 分组、可搜索、友好名 + provider 徽章 + 上下文/价格提示；
-  另有「未设置」= 保存时删除该键）+ thinking 分段控件（取所选模型的
-  `thinkingLevels`，另有「默认」= 无后缀；当前后缀不在档位表时原样保留为
-  额外选项）+ **同卡内的有序「兜底模型」**（chain key = 角色名的那条）：
-  ①②③ 顺序 chip（名称 + provider 徽章 + 档位徽章 + ↑↓✕ 小图标按钮，
-  aria-label + title，hover/聚焦增强），读作「主模型出错时，按顺序改用」。
-  provider 徽章一律取 `ModelInfo.provider`（omp 的 `name` 只对部分 provider
-  自带「(账号)」后缀，不解析、不依赖它判断供应商；未知 selector 无此徽章）；
-  档位徽章对带 `:thinking` 条目显示后缀、对裸条目与通配显示「继承」
-  （语义见 §16.8，title 说明），不再省略。添加入口是每区一个
-  「＋ 添加兜底模型」小按钮，点开面板：ModelPicker 弹层选模型 → 思考强度
-  分段（默认「继承」）→ 添加；「使用自定义值…」承载手动输入 / 通配 key
-  （如 `p1/*`）；空链拒绝保存（点名，不发请求）。
-- **按模型的兜底融合**：chain key 与角色当前主模型 base 一致（忽略
-  `:thinking` 后缀）或为命中主模型 provider 的 `provider/*` 通配时，
-  吸附进该角色卡，标题「「<模型名>」的兜底」，说明
-  「不管哪个角色在用这个模型，出错时都按顺序改用（优先于上面的按角色兜底）」。
-  没被任何角色收走的 chain（含没被吸附的按模型 key、不认识的角色 key）在
-  「其他模型的兜底」折叠区列出，同样可编辑；不认识的角色 key 附说明
-  「没有同名的模型角色，omp 可能不会使用这条配置（原样保留）」。
-  **所有 chain 无损保留与可编辑**。
-- 角色集合 = 已配置的 `modelRoles` 键（default 首位、其余保持配置原顺序）
-  + 有 chain 的常见角色（主模型待配）；**未配置且无兜底的常见角色显示为一行
-  紧凑行**「角色名 key 未单独设置，实际使用：<回退解析结果>（<来源角色>角色）」
-  +「设置」按钮，点开原地展开成完整卡（干净卡可「收起」回去）；回退解析按
-  §16.8 的角色回退链（advisor→slow、memory→tiny→smol→default），
-  解析不到显示「omp 内置默认」。能力类角色（image/web/speech/dictation/
-  vision/judge）默认折叠在「更多角色」里（已配置的成卡、未配置的紧凑行）。
-- **Vibe 工作会话卡**（「Agent」页 Agent 区块顶部，`VibeCard`）：omp 的 `/vibe` 模式中档位
-  `fast` → 内置 agent `sonic`，`good` → `task`；两行各自可改模型（ModelPicker，
-  含「不改用」）与 thinking 分段，写入的仍是既有键
-  `task.agentModelOverrides.sonic` / `.task`，**不新增任何配置键**；与同名 Agent 行
-  **共享同一份草稿与吸底保存条**，天然同步。`@角色` 别名解析到底层模型后展示
-  （保存时不被展开改写）；未知值原样保留。卡片另只读展示指挥者模型
-  （「主对话」角色 `default`，按本页草稿重算；主对话模型去「模型」页改）与三行各自的兜底（只读 chip，
-  编辑仍去「模型」页角色卡/「其他模型的兜底」）：指挥者 = `default` 角色链 +
-  吸附到主对话主模型的链（条目与主对话角色卡一致，空链不展示）；good = `task` 角色链
-  （「子任务」是模型角色）+ 吸附到该行生效模型的链；fast 只看吸附到生效模型的链
-  （agent 名 `sonic` 不是模型角色，按 §16.8 匹配代码不会命中以 agent 名为键的链（未验证），不展示），
-  并注明这两档与「机械处理（sonic）」「通用执行（task）」普通子代理**共用模型**，
-  修改会同时影响普通子代理；指挥者不属于 worker。
-- **Agent 编排流程图**（纯前端；不写配置、不加后端命令）：「Agent」页状态条下方、
-  Vibe 卡上方，一张手绘 SVG 流程图（`AgentFlow.tsx`，不引图表库，viewBox 宽度固定、
-  高度随 agent 数；配色走主题变量）——左「主代理（编排器）」显示 default 角色的当前
-  模型（未配置显示「omp 内置默认」），派发总线指向右侧每个 agent 节点；节点 =
-  中文标签 +「当前使用：<模型> · <档位>」+ 状态 pill（已停用 = 虚线描边 /
-  顾问开 / 顾问关 / 自定义）；底部虚线「结果回传」回到主代理；节点 `<title>`
-  悬停给完整职责与来源。**可交互**：点节点滚动到对应的 Agent 行并短暂高亮
-  （1.6 秒后自动清除）。**中文职责表 `AGENT_INFO`**（roleCards.ts）：内置
-  6 个（task/sonic/scout/reviewer/security-reviewer/seance）是 omp 英文
-  description 的意译；自定义 agent 用 frontmatter 的 description 原文
-  （标签回退「自定义」/「内置」）。不解析 `spawns`/`tools`（语义未验证，
-  不展示）。
-- **Agent 行**：名称（自定义标「自定义」）+ 说明（内置走 `AGENT_INFO`
-  中文职责，`title` 保留原文）+ 「当前使用」（行内：
-  覆盖模型 / 内置默认解析结果 / 跟随当前会话模型；`@角色` 别名解析成
-  该角色的当前模型，如「内置默认 @smol → 轻快任务角色」；未知值标
-  「未知值 · 保留」）+ 改用模型（「不改用」= 保存时删除覆盖条目）+
-  thinking 分段 + 停用开关 + 顾问三态（默认 = 删键 / 开 / 关）。
-  不在 agent 列表中的旧覆盖 / 禁用 / advisor 条目原样保留。
-- 全局兜底状态行（只读）：`retry.modelFallback` / `retry.fallbackOn` /
-  `retry.fallbackRevertPolicy` 译成人话（枚举值见 §16.8）；
-  总开关关闭时显示醒目提示「兜底已关闭，下面的兜底配置不会生效」。
-- 值格式 `provider/model[:thinking]`：仅末段为 `[A-Za-z0-9_-]+` 才拆为
-  thinking 后缀，否则 selector 原样保留。手动输入支持通配 key（如 `p1/*`）。
-- **草稿视角**：Agent 页的「当前使用」/ Vibe 指挥者与两档模型 / 兜底吸附展示，
-  都按 `configFromDraft` 由未保存草稿重算（picker 一改就更新，不必等保存）；
-  未配置角色紧凑行的回退解析仍读已保存配置。
-- 保存：**分区吸底保存条**（区块内有未保存修改时出现
-  「N 处未保存修改 ｜ 还原 ｜ 保存…」，无修改时不占位；主要模型区块一次可写
-  `modelRoles` 与 `retry.fallbackChains` 两个 key；Agent 区块最多写 3 个 key；
-  其他兜底写 `retry.fallbackChains`），
-  逐 key CONFLICT 复读比对 + 写后复读校验 + `OmpBusy` 单写门禁；
-  **「还原」只还原本区块**（`revertBlock`）：角色块还原角色行（含展示顺序）+
-  全部 chain 草稿（两者一起保存）；Agent 块还原覆盖 + 停用 + 顾问；
-  其他块只还原当前在 others 列表里的 chain；其他区块的草稿原样保留。
-  新增的 key（草稿有、配置无）还原即删除，删掉的 key 还原即恢复。
-  **前一个 key 已写、后一个失败**时提示「「<已保存键>」已保存，但「<失败键>」
-  保存失败：<原因>（已重新载入最新配置，请检查后重试）」并重新载入，
-  不假装成功也不回滚。CONFLICT 提示「配置已被外部修改，请刷新」并重新载入。
-  页脚提示：「新开的 omp 会话使用新配置；已运行的会话可能需重启后生效」。
-- `?mock=1` 下 `dev/mockBackend.ts` 实现三个命令：白名单外 `INVALID_KEY`、
-  expected 不匹配 `CONFLICT`、`?conflict=update_model_config` 强制冲突、
-  `?fallback=off` 模拟兜底总开关关闭、`?fail=` / `?latency=` 沿用。
+（已删除：以代码为准）
 
 ### 16.7 实测记录（omp 18.11.1，2026-10-16）
 
-- `omp models --json`：65 个模型，10.3 秒；字段与 §16.3 一致，无凭据；
-  `thinking` 档位集合有 `minimal/low/medium/high/xhigh/max` 的多种组合。
-- `omp config get <key> --json` → `{"key","value","type","description"}`；
-  5 个 key 的 type 分别为 record/record/array/record/record。
-  `omp config set <key> <json>`：不支持点号子键；只校验外层对象/数组，
-  内层垃圾值（数字、伪 on/off、链条目非数组）会静默写入 → 由本应用 §16.2 拦截。
-- `omp agents unpack --dir <不存在的目录> --json` 会自建目录并写 5 个内置
-  md（task/sonic/scout/reviewer/security-reviewer），frontmatter 含
-  name/description/model/thinkingLevel（如 `model:\n  - "@task"`、
-  `model: "@smol"`；security-reviewer 无 model 与 thinkingLevel）。
-- 沙箱冒烟（`cargo test --test models_sandbox -- --ignored --nocapture`，
-  单测试串行）：真实 HOME 只读 `get_model_config` 仅打印条数（roles 10、
-  overrides 5、disabled 0、advisor 2、chains 9）与 5 个内置 agent 名；
-  随后 `HOME=<临时目录>` 用真实 omp 对 5 个 key 各 set 一遍（含
-  `modelRoles` 的 `:thinking` 后缀、`retry.fallbackChains` 数组值、
-  `task.disabledAgents` 数组），断言 `$HOME/.omp/agent/config.yml` 落盘内容
-  与复读结果一致，并验证旧 expected 写入报 `CONFLICT`。
-- 已知限制：一个 chain 里存在脏值（非字符串条目）时该 chain 保存会被
-  `INVALID_INPUT` 拒绝（点名，需在 omp 侧手动修复）；新增角色只能来自
-  常见角色列表；`provider/*` 通配 key 可经手动输入新建（与旧限制不同）。
-- （2026-10-18，omp 18.12.2，只读 `omp models --json`）120 条模型、6 个
-  provider：`name` 只对**部分账号**自带「(账号)」后缀（本机 10 条带、其余
-  不带；个别条目的括号里是产品名而非账号，如「… (New)」），不能靠 `name`
-  判断供应商；另有 4 条 `thinking: null`，档位表为空。据此 chip 一律显示
-  `ModelInfo.provider` 徽章，档位徽章不再省略（§16.6）。同版本
-  `omp agents unpack` 实测内置 agent 为 6 个（新增 seance，含
-  `spawns`/`tools` frontmatter；§16.6 流程图与 `AGENT_INFO` 只覆盖
-  name/description，不解析 spawns/tools）。
+已移至 DECISIONS.md D5
 
 ### 16.8 兜底语义调研（2026-10-16，omp 18.11.2；UI 文案依据）
 
-> 方法：`omp config get <key> --json` 读白名单 key 的完整 description 与值
-> （只读；未运行 `omp config list`、未读 models.yml/models.json）；
-> 从 omp 二进制字符串（`strings`）反编译出配置 schema 与
-> `retry-fallback-chains.ts` 的匹配逻辑；`HOME=<临时目录>` + 真实 omp 验证
-> 枚举值校验。**不修改用户真实配置。**
-
-**已验证：**
-
-- **角色清单**（模型浏览器固定列表）：`default / smol / slow / vision / plan /
-  commit / tiny / memory / task / advisor`（对话类）+ `image / web / speech /
-  dictation / judge`（能力类，需专用模型）。内置中文名与用途：
-  主对话（平时主力）、轻快任务（提交信息/标题等轻量活）、深度思考、图片理解、
-  方案设计（plan，Architect）、提交信息（commit，生成 git 提交信息）、极简任务
-  （tiny，标题生成等）、记忆助手（memory）、子任务（task，子代理未指定模型时）、
-  顾问（advisor，每轮被动评审）；能力类：图片生成 / 联网搜索 / 语音合成 /
-  语音听写 / 裁判（judge）。
-- **别名**：`@role[:thinking]` / `pi/role[:thinking]` 解析到角色的 `modelRoles`
-  值；未配置时按角色回退链（advisor→slow→default、memory→tiny→smol→…、
-  tiny→smol→default，源码 `abe` 表）或内置默认（如 smol 的内置候选表）。
-  `@smol` 等值不在模型列表时 UI 原样保留显示。
-- **`retry.fallbackChains` 的 key** 三种（description 原文 + 匹配代码）：
-  ① 角色名（无 `/`）——该角色的模型出错时用；② 模型 selector
-  （`provider/model`，匹配忽略 `:thinking` 后缀）——**不管哪个角色在用**，
-  该模型出错时用；③ provider 通配（`provider/*` 或 `id/prefix/*`）——保留出错
-  模型的 id 换 provider，`a/b/*` 只匹配 `a` 下 `b/` 开头的 id。
-- **匹配优先级**（源码 `Qv`）：模型 key 精确（含 thinking）→ 模型 key base
-  （忽略 thinking）→ 通配 key（长 id 前缀优先）→ 会话钉住的角色 →
-  角色 key（仅「effort 不同」的弱匹配，能完全匹配直接命中）→ `default`。
-  一个失败回合可能同时挂多条链：钉住的角色链在前、解析出的角色链在后。
-- **`:thinking` 后缀**：chain **key** 匹配时忽略（base 比较）；chain **条目**
-  带后缀（`:low/:high/:max/:off`）显式指定档位，裸条目继承出错回合的档位；
-  通配条目恒继承。§16.7 曾记「thinking level 不同则链被跳过」的 bug 已被
-  omp 修复（changelog #13789），匹配照常。
-- **`retry.fallbackOn`** 枚举（沙箱 set 有效值 + 非法值被拒并列出全集）：
-  `any`（任何错误都切换，默认）/ `usage-limit`（仅用尽额度时切换）/
-  `except-usage-limit`（除用尽额度外都切换）。
-- **`retry.fallbackRevertPolicy`** 枚举（同上验证）：`cooldown-expiry`
-  （主模型抑制窗口结束后自动切回，默认）/ `never`（切走后不自动切回）。
-- **`retry.modelFallback`**（boolean，默认 true）：兜底总开关，关掉后
-  `retry.fallbackChains` 全部不生效（changelog #15636 明确）。
-  `retry.usageAwareFallback`（boolean，默认 false）：额度感知兜底，
-  本 UI 不展示（另有 `usageReservePct/Policy` 相关设置，超出本页范围）。
-
-**未验证（UI 用保守措辞）：**
-
-- agent 名（如 `task`/`sonic`）作为 chain key 的行为：按匹配代码，非角色名的
-  key 无法命中（`getModelRole(name)` 为空则不匹配），但子代理带 roleHint（如
-  `@task`）时按角色 key 处理；UI 对「没有同名角色的 key」只提示
-  「omp 可能不会使用这条配置」，原样保留。
-- `default` 链的「自动补全」语义（`wL`：default 链会临时补给没有链的
-  常见角色）只在运行时验证过方向、未做端到端实验。
-- 压制/冷却窗口的具体时长（`suppressSelector` 默认 5 分钟或按错误类型）未逐一验证。
-
-> 已知限制见 §16.7。注意：通配 key 可经「使用自定义值…」手动输入新建，
-> 本节不保留旧的「无法新建通配 key」说法。
+规则摘要：`retry.fallbackChains` 的 key 有角色名、模型 selector（匹配时忽略 `:thinking` 后缀）、
+provider 通配三种；`retry.modelFallback`（默认 true）是兜底总开关，关闭后全部链不生效。
+已移至 DECISIONS.md D6
 
 ## 17. macOS 菜单栏：运行中 omp 会话（本次追加）
 
@@ -1696,7 +1376,7 @@ classify:
   即按 episode 一次）。正文只含会话标题（截断 60 字）与状态，**不含对话内容**。
   设置「完成时通知」关闭时不发。
 - 发送：优先 `tauri-plugin-notification`（2.7.0；Rust 侧 `NotificationExt` 直接
-  发送，不需要前端权限调用，capabilities 仍加 `notification:default`）；
+  发送，不需要前端权限调用；`default.json` 不声明通知权限）；
   点击通知（`tap`）聚焦对应 iTerm 标签（汇总/失败类通知点击打开主窗口）。
   插件发送失败退回 `osascript display notification`（只展示、不可点击；
   标题/正文经 `applescript_escape` 转义）。
@@ -1747,18 +1427,7 @@ classify:
 
 ### 17.8 实测记录（2026-10-16，macOS arm64）
 
-（真机验证数据见下节补充；以下为探针数据）
-- flock 全量探测 362 把锁约 5ms；`lsof` 批量查持有者约 0.1–0.35s（T1 仅变化时跑）；
-  T2 首轮全文件种子约 180ms（4 个会话），增量轮 1–2ms；
-  T3 osascript 批量取标题约 10–30ms（单次实测 0.17s 冷启，热轮更低）。
-- 真实环境判定（详见报告）：11 把被持有锁 → 4 个顶层会话（其余为子代理锁，
-  计入未归属）；3 个「空闲」（iTerm 标题 `>`、数小时无有意义记录），
-- 图标点击（2026-10-16 复测）：**左键与右键都能弹出下拉菜单**
-  （`show_menu_on_left_click(true)` 生效）。此前「左键不弹」的结论是
-  合成点击（CGEventPost 之外的注入路径）打不到 `TaoTrayTarget` 覆盖层的
-  测试假象；硬件级事件（`CGEventCreateMouseEvent` + `CGEventPost(kCGHIDEventTap)`，
-  先 mouseMoved 再 Down/Up）实测左键正常弹出，对照组（系统菜单栏 Apple 菜单）
-  同一手段可弹。
+已移至 DECISIONS.md D7
 
 ### 17.9 Dock 图标（点击 / 角标 / 跳动 / 右键菜单）
 
@@ -1885,9 +1554,9 @@ MemoryDetail = MemoryItem & { content: string; truncated: boolean; embedText: st
 
 ### 18.7 LIKE-not-FTS 决策与证据
 
-- 搜索用 `LIKE`（转义 `%`/`_`/`\` + `ESCAPE '\'`），不用 FTS5：FTS5 默认分词把连续 CJK 切成一个 token，
-  `MATCH` 要求 token 边界对齐，而搜索框语义是子串。证据（2026-10-20 真实库只读）：CJK 长串内部 2 字为查询，
-  三 bank 均 `MATCH`=0、`LIKE`=1。
+规则摘要：记忆搜索用 `LIKE`（转义 `%`/`_`/`\` + `ESCAPE '\'`），不用 FTS5——
+FTS5 默认分词把连续 CJK 切成一个 token，而搜索框语义是子串匹配。
+已移至 DECISIONS.md D8
 
 ### 18.8 写操作（§4.43–§4.49，第 2 轮）
 
@@ -1983,56 +1652,7 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
 
 ### 18.9 前端（记忆库标签页）
 
-- 入口：`ManageView` 第六个标签页「记忆库」；`loadedSessionIds` / `onOpenSession` 由 `App.tsx`
-  传入（来源跳转回会话视图并选中）。
-- 组件（`src/components/`）：`MemoryPanel.tsx`（总览、健康卡、图表与列表容器）、
-  `MemoryBanks.tsx`（排名条形图 + 选中库操作条 + 无效库清理对话框）、`Drawer.tsx`（右侧抽屉容器）、`MemoryList.tsx`
-  （搜索 / 过滤 / 分页 / 详情 / 多选）、`MemoryDeleteDialog.tsx`、`MemoryBackupsDialog.tsx`、
-  `useMemoryMaintenance.tsx`（上限、错误文案、`useBankStatus`、门禁提示，单文件导出）。
-  无 props 插槽；`MemoryPanel.css` 只用既有语义变量（浅/深色均验证）。
-- 布局：左列 = ① 头条（后端 / 库数 / 记忆数 / 磁盘 + 备份与恢复、刷新）→ ② 健康卡 4 张（总数、
-  未召回占比（占总条数）、未合并占比（**占工作记忆**，§18.1）、磁盘；占比 > 50% `--warn-soft`，
-  分母 0 显示「—」）→ ③ 项目库图表；右列 = 选中库抽屉（`Drawer` 内联形态，`role="complementary"`，
-  面板宽度 ≤800px 时按容器查询改为覆盖层，另以窗口 ≤720px 兜底）。未选中时右列不渲染，左列下方显示「点上面的项目库，在右侧查看其中的记忆」。
-  抽屉：`Drawer.tsx` + `Drawer.css`（`inline` 时作为父级 flex 右列，`width: clamp(360px, 44%, 620px)`）；
-  标题 = 库名 + 路径，右上「关闭」；Esc 分三级消费：页面有 `.modal-overlay` 时让模态框先关 → 关系图有选中卡时
-  由 `MemoryGraph` 的 svg `onKeyDown` `stopPropagation` 只清选中（无选中则不拦，让 Esc 继续上浮）→ 最后才关抽屉；
-  打开时 140ms 右滑淡入（`prefers-reduced-motion: reduce` 禁用）。抽屉内顺序：④ 选中库操作条
-  → 列表/关系图切换 → ⑤ 记忆列表或关系图；关系图在抽屉内改上下布局（画布整宽 + 选中卡在下）。
-- 项目库图表（替代原表格）：每行一个 `<button>`（`aria-pressed`，键盘可选中，无行内按钮），
-  **单一 grid**（名称/条形/条数）对齐；条形 = 工作（accent）+ 情节（`--badge-label-bg`）按比例
-  堆叠，宽度按最大库归一、非零至少 4px；下方 3px 细条 = 未召回（占总数）与未合并（占工作记忆）。
-  排序：记忆数 → 最近记忆 → 库名；可按项目名/路径过滤。无效库 = `cwdExists=false` / 空库 /
-  `readable=false`，条纹 + 徽章，仍可选中查看错误。
-- 无效库清理：「只看无效库（N）」开关；「清理无效库…」对话框（打开时快照）逐个
-  `memory_bank_status` 探测：使用中 / 探测失败复选框禁用并写原因，不可读禁用（后端会拒）。
-  默认全选可移除项，显示合计与「会先备份并移到备份区，可在『备份与恢复』还原」。确认后按序
-  `memory_delete_bank` **逐个**执行（失败继续），每行 `✔ 已移除（已备份）` / `✘ 无法移除：…`，
-  结束时 toast 汇总并刷新总览。
-- 选中库操作条（`MemoryBankHeader`）：名称 / 路径 / 徽章 / 工作·情节·事实 / 大小 / 最近记忆 /
-  未召回·未合并；「备份与恢复」（预选该库）与「移除此库…」。移除确认含条数与「会先备份并移到备份区，
-  可在『备份与恢复』还原」，占用门禁可重试；确认钮在 `status` 未返回 / `inUse` / `probeFailed` /
-  加载失败时禁用（**首帧不可点**）。「使用中」只在该库选中时查一次。`readable=false` 不给移除入口。
-- 记忆列表：搜索（200ms 防抖 + seq 丢弃过期响应）、类型/chips/排序、50 条/页、详情折叠
-  （>12 行才显示展开）、`truncated` 标注、facts/summaryOf、来源跳转三态门禁（仅已加载会话可点）。
-- 多选：行内复选框 + 选择条，上限 500（其余复选框禁用并说明），只在同库同筛选内跨页保持，
-  切库 / 改筛选 / 刷新 / 删除成功即清空；「选中当前筛选的全部结果」以 `limit=200` 翻页收集，
-  到 500 即停并 toast，收集期间相关操作禁用。
-- 删除确认框：并行 `memory_delete_preview` + `memory_bank_status`；显示将删条数、级联
-  （事实/向量/标注/关联边/其他）、跳过说明、`citedBySummaries` 琥珀提示、「删除前会自动备份整库」；
-  确认钮「备份并删除 N 条」仅在 ids 非空、预览与门禁已返回且无 `inUse`/`probeFailed`、`deletable>0`
-  时可用；提交中 ref 防重入，空 ids 不发请求，`deletable=0` 禁用并列出原因；失败文案见
-  `memoryWriteErrorText`，失败留在框内不刷新。单条删除只在详情操作行。
-- 备份与恢复：列表按时间倒序（项目 / 类型 / 时间 / 大小 / 数量），可预选库；恢复现存库先建安全备份
-  并做占用门禁，已移除库跳过门禁；永久删除备份需二次确认。
-- DEV mock：默认 5 个合成 bank（大库 120 条含 `%`/`_` 与 30KB/210KB 条目、普通库、空库、cwd 已删、
-  不可读）。参数：`?memory=off`、`?memoryBackend`、`?memoryInUse`、`?memoryProbe=fail`、`?memoryBanks=37`。
-- 测试：`MemoryMaintenance.test.tsx` 一套 harness 覆盖面板与维护——健康卡口径与除零、不可用态、
-  图表排序/筛选/选中、请求参数、防抖与过期响应、分页、来源三态、详情折叠、列表失败 toast、
-  多选跨页与 500 上限、删除确认的预览/门禁首帧/错误码/防重入、单条删除、单库移除门禁、
-  无效库清理（禁用原因、失败继续、结果与汇总）、备份恢复与永久删除；`memory.test.ts` 覆盖
-  mock 的数据集（含 `?memoryBanks=37`）、不可读、通配符、分页排序、200KB 截断与写操作语义。
-- 取舍：图表用 grid 而非 table（避开 `td` 内 `display:flex` 的错列/溢出）。
+（已删除：以代码为准）
 
 ### 18.10 `memory_graph { bank } -> MemoryGraph`（§4.50，只读关系图）
 
@@ -2073,30 +1693,7 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 
 ## 19. 悬浮反馈与动效约定（全应用统一）
 
-只做视觉反馈，不改交互语义、不引入依赖。目的：鼠标扫过任何可点/可聚焦的表面都能看出
-「这里能点」，且变化是渐变的而不是硬切。
-
-- **动效令牌**：`App.css` `:root` 的 `--motion: 120ms`，所有过渡只写
-  `transition: <prop> var(--motion) ease`。缺省值写法（`var(--motion, 120ms)`）只用于
-  独立组件 CSS，避免被别的样式表单独引入时变量缺失。
-- **减少动态**：`@media (prefers-reduced-motion: reduce)` 在 `App.css` 里全局
-  `*, *::before, *::after { transition-duration: 0ms !important }`；组件自带的入场动画
-  （抽屉）同样在该媒体查询下置 `animation: none`。
-- **颜色只用语义变量**：hover 底色 `--bg-hover`，选中/强调 `--accent-soft` / `--accent`，
-  危险 `--danger-soft`，边框 `--border`。禁止字面色值。深色 / 浅色 × 6 强调色组合必须都可读。
-- **交互面必须有 hover**：行（`.row` / `.tree-row` / `.mem-bank-row` / `.mem-item` /
-  `.mcp-row` / `.manage-table tbody tr` / `.err-row` / `.cheatsheet-row`）、按钮
-  （`.btn` 家族、`.tab`、`.view-nav-btn`、分段控件、图标按钮）、输入（`.filter-input`、
-  `.mcp-input`、meta 编辑器输入框）、卡片（`.kpi-card` / `.health-card` / `.mem-card`）。
-- **激活态也要有 hover 反应**：`aria-pressed="true"` / `.row-selected` / `.tree-row-active` /
-  `.tag-chip-on` / `.tab-active` / `.segment-item-active` 的 hover 规则必须写在 active 规则
-  **之后**，用内圈 `box-shadow: inset 0 0 0 1px var(--accent)` 或保留原底色，不能塌回
-  `--bg-hover` 而看不出「已选中」。
-- **禁用不发反馈**：所有新 hover 规则带 `:not(:disabled)`（或对应禁用态）。
-- **图表悬停**（`UsageCharts.tsx` 的 `ChartBucket`）：见 §12.4——虚线参考线 + 热区高亮
-  + 柱/圆点放大，全部 `--motion` 过渡，提示文字走全局 `ChartTip`。
-- **抽屉**（`Drawer.tsx`）：见 §18.9——140ms 右滑淡入，`prefers-reduced-motion` 关闭。
-- **鼠标指针**：桌面应用惯例，交互元素保持 `cursor: default`，不引入手指指针。
+（已删除：以代码为准）
 
 ## 20. 模型测试器（§4.51–§4.53、§4.56，管理视图「模型」标签页的「测试」区）
 
@@ -2177,62 +1774,14 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 
 ### 20.5 前端（纯前端状态，不新增配置键）
 
-- 「模型」标签页的「测试」区（`ModelsTab` 中段，`ModelTesterPanel embedded`）：
-  隐藏独立导语、紧凑布局，bench 配置仍存 localStorage `omp-resume:model-tester:v1` 并由
-  `ModelsTab` 受控持有（`{ entries: [{ selector, tags, monitor }], customTags,
-  intervalMin: 0|30|60|360 }`，默认 `{ entries: [], customTags: ["test"], intervalMin: 0 }`，
-  损坏回默认；dev 与 .app 不互通，同 pins）。页头「刷新模型」同时刷新模型列表、
-  规格快照与测试器（`refreshKey`）；窗口重新聚焦时规格快照自动重读，模型列表按 §16.3
-  的 revision 校验自动更新。
-- **列表** = `entries` ∪ 当前 `modelRoles` 里对话类角色的普通 selector（`@别名`、逗号列表跳过；
-  `judge` / `image` 等非对话角色不纳入）。被角色占用的模型自动带该角色标签且不能删除。
-  selector（含 `:thinking`）即身份，同模型不同思考强度算两条。添加/编辑走宽对话框
-  `ModelEntryModal`（`ModelPicker` + 思考强度分段 + 标签多选 + 实时规格预览，
-  有 yml 规格时可跳「编辑规格…」；编辑时沿用条目已有标签；「已加入」徽章按 base 归一）。
-- **标签 = omp 角色名**（候选池）：内置对话角色（default/task/plan/slow/smol/commit/advisor/memory/tiny，
-  中文名取 `roleCards`）∪ `modelRoles` 中其他对话类键 ∪ `customTags`（`^[a-z][a-z0-9_-]{0,23}$`，
-  chip 行 ✕ 可删除；删除时从 `customTags` 移除并剥掉所有 `entries[].tags` 里的该标签）。
-  非内置标签若没有任何 `agentOverrides` 值或 agent `defaultModel` 以 `@名` 引用，标「未使用」，
-  提示在「Agent」页把 agent 设为 `@名` 后生效。模型好坏由用户打标签决定，测试器只在候选里比速度与稳定性。
-- **主模型** = `modelRoles.default`，置顶标「基线」；其余行显示 `tpsP50 / 主模型 tpsP50` 倍率
-  （≥1.1× 成功色、≤0.9× 警示色），只展示，不做推荐门槛。
-- **统计窗口**：最近 24h 全部轮次的成功率 Σok/Σtotal 与样本数；TTFT / tok/s / CV 取最近一轮；
-  24h 内无轮次用最近一轮；从未测试显示「未测试」沉底。
+（已删除：以代码为准；以下两项保留）
+- bench 测试器配置存 localStorage `omp-resume:model-tester:v1`（损坏回默认；dev 与 .app 不互通）。
 - **综合分**（0–100，仅排序与推荐）：`round(100 × (0.5·成功率 + 0.3·tps/全表最大tps
   + 0.2·全表最小ttftP50/ttftP50))`，缺项按 0。
-- **运行器**（模块单例，手动与监控共用）：同 provider 串行，跨 provider 并行最多 3 个，
-  已排队/运行中的 selector 不重复入队；`OMP_FAILED` 等错误记在行上，不写历史。
-- **定时监控**：`intervalMin > 0` 时在 `App` 级把 `monitor=true` 的模型按间隔入队，应用开着才跑。
-- **省钱护栏**：探针输出上限固定 100 / 600 token；「测试全部」显示本轮预估
-  （每模型 800 输入 + 2300 输出 token × `ModelInfo` 单价），监控旁显示每日预估；单价未知不计入。
-- **错误分类**（展示）：超时 / 限流（429、rate limit）/ 鉴权（401、403、auth、forbidden、
-  unauthorized）/ 空响应 / 其他。
-- **保存闭环**（只改 `modelRoles`，不写回退链）：嵌入模式下测试区**没有自己的保存条**——
-  抽屉「设为 <标签>」与「一键推荐」都经 `onApplyRoles` 回填进下方「角色分配」的角色草稿，
-  在 §16.6 角色块的吸底保存条里统一保存（`update_model_config { key: "modelRoles",
-  value: {...当前, ...改动}, expected: 当前 }`；`CONFLICT` 提示并重载）。
-  一键推荐：每个标签在候选（带该标签的模型 + 当前分配给该角色的模型）中，
-  取 24h 样本 ≥5 且成功率 ≥95% 的最高综合分者，与当前值不同才加入；无候选时提示门槛。
-  已开的 omp 窗口不切换，新会话生效。（`BenchSavebar` 本地「待保存」底栏只在非嵌入用法下渲染。）
-- **抽屉**（复用 `Drawer`）：标签开关、监控开关、「设为 <标签>」、编辑（被角色占用时禁用并说明）、
-  删除测试条目（被角色占用时禁用并说明；**不删记录**）、24h / 7d 切换、4 个 KPI
-  （成功率 / TTFT p50 / tok/s / 花费）、成功率柱状图 + tok/s 折线（复用 `UsageCharts` 的
-  `ChartBucket` 与 `ChartTip`）、「测试记录」（`BenchRecords`：按 `at` 倒序列出每轮
-  时间 / 成功率 / TTFT / tok/s / 花费，逐轮可删，「清空记录…」二次确认后删该 selector
-  全部轮次，删除走 §20.4 并在成功后重载历史）、最近错误。动效与悬浮遵守 §19。
-- **表格排版**：数值列（成功率 / TTFT / tok/s / 对比基线 / 日常实测）右对齐且
-  `font-variant-numeric: tabular-nums`（选择器需带 `.bench-table` 前缀压过
-  `.manage-table` 的 `text-align: left`）；表头 `position: sticky` 在
-  `.bench-table-wrap`（`overflow: auto; max-height: 62vh`）内吸顶；工具条成条
-  （边框 + 卡底 + 两端对齐）；标签列 110px 且允许换行；行 `cursor: pointer`。
 
 ### 20.6 实测记录（omp 18.12.3，2026-10-20）
 
-- `amr-link/deepseek-v4.1-flash:max` 按 §20.1 两次探针实跑：短探针 32.5s、长探针 11.5s，
-  共 $0.0022；短探针 tok/s 34–168，长探针 163–168（据此定 tok/s 只取长探针）。
-- 免费档 `opencode-zen/*-free` 实跑：`{"ok":false,"error":"403 … FreeTierError"}`、退出码 1、
-  JSON 照常输出、无回退替换。
-- 对真实 `agent.db` 执行 `model_perf_list`：读前读后 `agent.db` / `-wal` / `-shm` 的大小与 mtime 均不变。
+已移至 DECISIONS.md D9
 
 ## 21. 模型规格编辑（§4.54–§4.55，models.yml 行级编辑）
 
@@ -2297,7 +1846,7 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 - 流程（整体持有 `OmpBusy`，多余报 `BUSY`）：
   1. 校验 `provider` / `id`（非空、≤200 字符、无换行、不含 `/`）与补丁值
      （name 非空 ≤200 字符无换行无控制字符；窗口/输出 > 0 且 ≤ 2^53-1；
-     input 非空 ≤8 个、仅 `text` / `image`、不重复；费用四数非负有限
+     input 非空、≤8 个、每项 1–32 位 `[A-Za-z0-9_-]`、不重复；费用四数非负有限
      ≤ 1e9 且精度 ≥ 1e-6）→ 不符 `INVALID_INPUT`；
   2. `expectedRevision` 与文件字节 SHA256 比对，不一致 → `CONFLICT`
      「模型规格文件已被外部修改，请刷新后重试」，不写入；
@@ -2373,31 +1922,10 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 
 ### 21.8 前端与 mock
 
+（已删除：以代码为准；类型引用保留）
 - `src/types.ts` 镜像 §21.2–§21.3 类型；`src/api.ts` 封装 `getModelSpecs()` /
   `updateModelSpec(req)`（参数透传 `provider/id/patch/expectedRevision`）。
-- `?mock=1` 下 `dev/mockBackend.ts` 实现两命令：9 个 `MOCK_MODELS` 的内存规格
-  （haiku 行缺 `maxTokens`/`input`/`costCacheRead` 演示 null，且标 `costTiered`
-  演示分层价拒改），可编辑，
-  revision 为 `mock-rev-N` 自增，`?conflict=update_model_spec` 强制冲突；
-  mock 永不读真实文件。
-- 规格抽屉：`costTiered` 为 true 时显示「分层价格，暂不支持编辑」，
-  隐藏四价格输入，保存按钮整单禁用。
-- 规格抽屉只发最小补丁：补丁 = 用户碰过的字段 ∩ 与加载基线语义不同
-  （`cost` 四子键视为一个整体）；空白/写法差异的 no-op 不发请求并提示
-  「没有改动」；保存成功即用返回的 revision 重拍基线并清空已碰字段；
-  `CONFLICT` 时保留表单与已碰字段，重试只重发碰过的字段。
 
 ## 22. 管理视图信息架构（`ManageView` 六个标签页）
 
-| 标签页 | 组件 | 内容 |
-|---|---|---|
-| 模型（默认页） | `ModelsTab` | 模型库（`ModelLibrary`）→ 测试（`ModelTesterPanel embedded`，§20）→ 角色分配（`ModelsSection`，§16.6）；规格抽屉（`ModelSpecDrawer`，§21） |
-| Agent | `AgentsTab` | 状态 chips + 可交互 `AgentFlow` + `AgentsSection`（`VibeCard` / Agent 行，§16.6） |
-| 插件 | `PluginsPanel` | §4.12–§4.22 用户级插件 / marketplace |
-| Skills | `SkillsPanel` | §4.12–§4.22 registry 技能 |
-| MCP | `McpPanel` | §4.30–§4.35 原生配置读写 |
-| 记忆库 | `MemoryPanel` | §18 浏览与维护 |
-
-- `ModelDraftStatus`（模型列表/兜底状态条）由「模型」「Agent」两页共用；
-  两页各持一份 `useModelDraft` 草稿，刷新与保存互不干扰。
-- 旧「模型与 Agent」页已拆分为「模型」与「Agent」，旧「模型测试」页已并入「模型」页的「测试」区。
+（已删除：以代码为准）
