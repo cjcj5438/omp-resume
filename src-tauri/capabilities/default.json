@@ -6,9 +6,10 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",
-    "opener:default",
-    "updater:default",
-    "process:allow-restart",
-    "notification:default"
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+    "process:allow-restart"
   ]
 }

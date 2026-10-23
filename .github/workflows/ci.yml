@@ -1,0 +1,61 @@
+name: CI
+
+# 每次推送 main 与每个 PR 都跑一遍全部门禁：类型、单测、格式、clippy、Rust 测试、生产构建。
+# macOS 专用项目，runner 与 release.yml 一致。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: 'clippy, rustfmt'
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Check versions
+        run: node scripts/check-versions.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Frontend tests
+        run: npx vitest run
+
+      - name: Rust format
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Rust clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build
+        run: npm run build
+
+      # 防止开发期 mock 后端被打进生产产物。
+      - name: No dev mock in dist
+        run: '! grep -rqE "installMockBackend|__OMP_RESUME_FIXTURE_ONLY__" dist/'
