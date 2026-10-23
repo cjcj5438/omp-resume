@@ -13,11 +13,11 @@
 //! 静态锁让两条路径共享同一把锁且不改删除命令签名。
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions, Permissions};
-use std::io::{ErrorKind, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs;
+use std::io::ErrorKind;
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use chrono::{SecondsFormat, Utc};
@@ -43,7 +43,6 @@ pub const DATA_DIR_ENV: &str = "OMP_RESUME_DATA_DIR";
 
 /// 进程级写锁：覆盖重读、revision 比对、修改与原子写入。
 static META_LOCK: Mutex<()> = Mutex::new(());
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// 磁盘文件形状（与 `MetaSnapshot` 相比多一个 `version`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,10 +73,6 @@ fn lock_poisoned() -> AppError {
     io("备注写入锁不可用")
 }
 
-fn join_error(e: impl std::fmt::Display) -> AppError {
-    AppError::new(ErrorCode::Io, format!("后台任务失败：{e}"))
-}
-
 /// 解析数据目录：`OMP_RESUME_DATA_DIR`（非空即用）>
 /// `$HOME/Library/Application Support/omp-resume`。
 pub fn data_dir() -> AppResult<PathBuf> {
@@ -87,11 +82,7 @@ pub fn data_dir() -> AppResult<PathBuf> {
     {
         return Ok(dir);
     }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|home| home.is_absolute())
-        .map(|home| home.join("Library/Application Support/omp-resume"))
-        .ok_or_else(|| io("无法确定 HOME 目录"))
+    crate::util::home_dir_strict().map(|h| h.join("Library/Application Support/omp-resume"))
 }
 
 fn meta_path(data_dir: &Path) -> PathBuf {
@@ -196,45 +187,26 @@ fn normalize_session_id(session_id: &str) -> AppResult<String> {
     Ok(trimmed.to_owned())
 }
 
-struct PendingFile(PathBuf);
-
-impl Drop for PendingFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 /// 原子写入：同目录独占创建临时文件（0600）→ 写 → 同步 →
 /// 复检 revision（收窄跨进程竞态窗口）→ rename。
 /// `expected_revision` 为本次修改所基于的 revision；复检不一致报 `CONFLICT`。
 fn atomic_write(data_dir: &Path, file: &MetaFile, expected_revision: u64) -> AppResult<()> {
+    use crate::util::AtomicStage;
     let path = meta_path(data_dir);
     fs::create_dir_all(data_dir).map_err(|error| io(format!("无法创建备注目录：{error}")))?;
     let existing_permissions = fs::metadata(&path).ok().map(|md| md.permissions());
     let mut bytes =
         serde_json::to_vec_pretty(file).map_err(|error| io(format!("无法序列化备注：{error}")))?;
     bytes.push(b'\n');
-    let (mut tmp, pending) = loop {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let candidate = data_dir.join(format!(".meta.json.{}.{sequence}.tmp", std::process::id()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&candidate)
-        {
-            Ok(file) => break (file, PendingFile(candidate)),
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(io(format!("无法创建备注临时文件：{error}"))),
-        }
-    };
-    tmp.write_all(&bytes)
-        .map_err(|error| io(format!("无法写入备注：{error}")))?;
-    tmp.set_permissions(existing_permissions.unwrap_or_else(|| Permissions::from_mode(0o600)))
-        .map_err(|error| io(format!("无法设置备注文件权限：{error}")))?;
-    tmp.sync_all()
-        .map_err(|error| io(format!("无法同步备注文件：{error}")))?;
-    drop(tmp);
+    let pending =
+        crate::util::PendingAtomic::stage(&path, &bytes, "meta.json", existing_permissions)
+            .map_err(|(stage, error)| match stage {
+                AtomicStage::Create => io(format!("无法创建备注临时文件：{error}")),
+                AtomicStage::Write => io(format!("无法写入备注：{error}")),
+                AtomicStage::Chmod => io(format!("无法设置备注文件权限：{error}")),
+                AtomicStage::Sync => io(format!("无法同步备注文件：{error}")),
+                AtomicStage::Rename => io(format!("无法原子替换备注文件：{error}")),
+            })?;
     // 最终复检：锁外（另一进程）发生的写入会导致 revision 变化，此时放弃覆盖。
     match read_bytes(&path)? {
         Some(current) => {
@@ -246,10 +218,9 @@ fn atomic_write(data_dir: &Path, file: &MetaFile, expected_revision: u64) -> App
         None if expected_revision == 0 => {}
         None => return Err(conflict()),
     }
-    fs::rename(&pending.0, &path).map_err(|error| io(format!("无法原子替换备注文件：{error}")))?;
-    // rename 后临时路径已不存在；正常释放也不留垃圾。
-    std::mem::forget(pending);
-    Ok(())
+    pending
+        .commit(&path)
+        .map_err(|(_, error)| io(format!("无法原子替换备注文件：{error}")))
 }
 
 /// 读取全量快照。文件不存在 = revision 0 空快照；损坏/版本不兼容 =
@@ -368,9 +339,7 @@ fn prune_session_in_dir(data_dir: &Path, session_id: &str) -> AppResult<bool> {
 /// 返回全量快照（文件不存在 = revision 0 空快照）。
 #[tauri::command]
 pub async fn get_meta() -> AppResult<MetaSnapshot> {
-    tauri::async_runtime::spawn_blocking(|| get_meta_impl(&data_dir()?))
-        .await
-        .map_err(join_error)?
+    crate::blocking(|| get_meta_impl(&data_dir()?)).await
 }
 
 /// 设置单个会话条目并返回完整新快照。
@@ -380,11 +349,10 @@ pub async fn set_session_meta(
     meta: Option<SessionMetaInput>,
     expected_revision: u64,
 ) -> AppResult<MetaSnapshot> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         set_session_meta_impl(&data_dir()?, &session_id, meta, expected_revision)
     })
     .await
-    .map_err(join_error)?
 }
 
 #[cfg(test)]

@@ -11,15 +11,16 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::Connection;
 
 use super::{
-    col_or_null, io, iso_millis_opt, like_pattern, make_snippet, metadata_field, metadata_object,
-    not_found, open_readonly, parse_memory_ts, scan_session_uuids, table_schema, truncate_bytes,
-    unreadable_reason, validate_bank, TableSchema, CONTENT_CAP_BYTES, DB_FILENAME,
-    DETAIL_FACTS_LIMIT, LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX, SNIPPET_SQL_PREFIX,
+    col_or_null, io, iso_millis_opt, make_snippet, metadata_field, metadata_object, not_found,
+    open_readonly, parse_memory_ts, scan_session_uuids, table_schema, unreadable_reason,
+    validate_bank, TableSchema, CONTENT_CAP_BYTES, DB_FILENAME, DETAIL_FACTS_LIMIT,
+    LIST_LIMIT_DEFAULT, LIST_LIMIT_MAX, SNIPPET_SQL_PREFIX,
 };
 use crate::model::{
     AppError, MemoryDetail, MemoryFact, MemoryItem, MemoryKind, MemoryKindFilter, MemoryPage,
     MemorySort,
 };
+use crate::util::{like_pattern, truncate_bytes};
 
 /// `memory_list` 参数（`Default` 即全部缺省）。
 pub struct ListParams {
@@ -520,9 +521,9 @@ pub fn detail_impl(
     let now = Utc::now();
     let content_full = row.content.unwrap_or_default();
     let content_chars = content_full.chars().count() as u64;
-    let (content, truncated) = truncate_bytes(&content_full, CONTENT_CAP_BYTES);
+    let (content, truncated) = truncate_bytes(&content_full, CONTENT_CAP_BYTES, "");
     let embed_text = match row.embed_text {
-        Some(e) if e != content_full => Some(truncate_bytes(&e, CONTENT_CAP_BYTES).0),
+        Some(e) if e != content_full => Some(truncate_bytes(&e, CONTENT_CAP_BYTES, "").0),
         _ => None,
     };
     let source_session_id = metadata_field(row.metadata.as_deref(), "session_id");

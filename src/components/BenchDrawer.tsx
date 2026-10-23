@@ -4,15 +4,12 @@
  */
 import { useState, type ReactNode } from "react";
 import type { BenchRound, ModelInfo } from "../types";
+import { formatMs, formatRate, formatTps, formatUsd } from "../format";
 import {
   BENCH_ERROR_LABEL,
   removeFromBench,
   bucketizeRounds,
   classifyBenchError,
-  formatMs,
-  formatRate,
-  formatTps,
-  formatUsd,
   rangeStats,
   type BenchBucketUnit,
   type BenchConfig,
@@ -33,8 +30,6 @@ export interface BenchDrawerProps {
   tags: BenchTag[];
   config: BenchConfig;
   roles: Record<string, unknown>;
-  /** 受控保存模式：设为角色的 toast 指向「角色分配」。 */
-  applyHint?: boolean;
   onClose: () => void;
   onUpdateConfig: (c: BenchConfig) => void;
   onStage: (tag: string) => void;
@@ -46,7 +41,7 @@ export interface BenchDrawerProps {
 }
 
 export function BenchDrawer(props: BenchDrawerProps): ReactNode {
-  const { row, models, rounds, tags, config, roles, applyHint = false, onClose, onUpdateConfig, onStage, onToast, onAddTag, onEdit, onRecordsChanged } = props;
+  const { row, models, rounds, tags, config, roles, onClose, onUpdateConfig, onStage, onToast, onAddTag, onEdit, onRecordsChanged } = props;
   const [unit, setUnit] = useState<BenchBucketUnit>("hour");
   const { model } = row;
   const entry = config.entries.find((e) => e.selector === model.selector) ?? null;
@@ -137,10 +132,10 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
                 type="button"
                 className="btn btn-small"
                 disabled={roles[t] === model.selector}
-                title={roles[t] === model.selector ? "已经是该角色的模型" : applyHint ? `加入「角色分配」的待保存：${tagLabel(t)} → ${model.selector}` : `把待保存改成 ${tagLabel(t)} → ${model.selector}`}
+                title={roles[t] === model.selector ? "已经是该角色的模型" : `加入「角色分配」的待保存：${tagLabel(t)} → ${model.selector}`}
                 onClick={() => {
                   onStage(t);
-                  onToast(applyHint ? "已加入「角色分配」的待保存修改" : `已加入待保存：${tagLabel(t)} → ${model.selector}`, "info");
+                  onToast("已加入「角色分配」的待保存修改", "info");
                 }}
               >
                 设为 {tagLabel(t)}
@@ -175,7 +170,7 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
       </div>
 
       <div className="bench-drawer-block">
-        <div className="segment bench-segment" role="radiogroup" aria-label="统计范围">
+        <div className="bench-segment" role="radiogroup" aria-label="统计范围">
           {(["hour", "day"] as const).map((u) => (
             <button
               key={u}

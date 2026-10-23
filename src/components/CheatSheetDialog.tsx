@@ -18,6 +18,7 @@ import { OMP_LEARNING_PATHS } from "../ompLearningPaths";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
 import { Modal } from "./ui";
+import { useAlive } from "./useOmpOp";
 import "./CheatSheet.css";
 
 interface CheatSheetDialogProps {
@@ -45,6 +46,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
   const [copied, setCopied] = useState<string | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const feedbackTimer = useRef<number | null>(null);
+  const alive = useAlive();
 
   useEffect(
     () => () => {
@@ -55,6 +57,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
 
   async function copy(key: string, text: string) {
     const ok = await copyText(text);
+    if (!alive.current) return;
     if (feedbackTimer.current !== null) window.clearTimeout(feedbackTimer.current);
     if (!ok) {
       setCopied(null);
@@ -272,11 +275,8 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                   <li className="cheatsheet-row" key={c.name}>
                     <div className="cheatsheet-line">
                       <div className="cheatsheet-main">
-                        <div className="cheatsheet-name">
-                          <span className="mono cheatsheet-cmd">omp {c.name}</span>
-                        </div>
-                        {c.args ? <div className="mono cheatsheet-args">{c.args}</div> : null}
-                        <p className="cheatsheet-zh">{c.zh}</p>
+                        <span className="mono cheatsheet-cmd">omp {c.name}</span>
+                        <span className="cheatsheet-zh">{c.zh}</span>
                       </div>
                       <span className="cheatsheet-actions">
                         {copyButton(`clicmd:${c.name}`, `omp ${c.name}`, "复制", `复制 omp ${c.name}`)}
@@ -290,14 +290,33 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
                           : null}
                       </span>
                     </div>
-                    <ul className="cheatsheet-examples">
-                      {c.examples.map((ex, i) => (
-                        <li className="cheatsheet-example" key={`${c.name}:${i}`}>
-                          <span className="mono">{ex}</span>
-                          {copyButton(`cli:${c.name}:${i}`, ex, "复制", `复制示例 ${ex}`)}
-                        </li>
-                      ))}
-                    </ul>
+                    {c.args || c.examples.length > 0 ? (
+                      <dl className="cheatsheet-detail">
+                        {c.args ? (
+                          <>
+                            <dt className="cheatsheet-label">用法</dt>
+                            <dd className="mono cheatsheet-sig">
+                              omp {c.name} {c.args}
+                            </dd>
+                          </>
+                        ) : null}
+                        {c.examples.length > 0 ? (
+                          <>
+                            <dt className="cheatsheet-label">示例</dt>
+                            <dd>
+                              <ul className="cheatsheet-examples">
+                                {c.examples.map((ex, i) => (
+                                  <li className="cheatsheet-example" key={`${c.name}:${i}`}>
+                                    <span className="mono">{ex}</span>
+                                    {copyButton(`cli:${c.name}:${i}`, ex, "复制", `复制示例 ${ex}`)}
+                                  </li>
+                                ))}
+                              </ul>
+                            </dd>
+                          </>
+                        ) : null}
+                      </dl>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -350,21 +369,25 @@ interface CommandRowProps {
   onJump: (name: string) => void;
 }
 
-/** 一条命令：命令名 + 参数提示 + 一句话 + 详解（何时用 / 参数 / 注意）+ 示例 + 相关命令。 */
+/** 一条命令：摘要行（命令 + 一句话 + 复制）+ 两列定义网格详情（用法/别名/何时用/参数/注意/示例/相关）。 */
 function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps): ReactNode {
   const detail = findOmpDetail(c.name);
+  const cmdKey = `cmd:${group}:${c.name}`;
+  const tplKey = `tpl:${group}:${c.name}`;
+  const hasDetail =
+    c.args !== "" ||
+    c.aliases.length > 0 ||
+    detail?.when !== undefined ||
+    (detail?.params !== undefined && detail.params.length > 0) ||
+    (detail?.cautions !== undefined && detail.cautions.length > 0) ||
+    c.examples.length > 0 ||
+    (detail?.related !== undefined && detail.related.length > 0);
   return (
     <li className="cheatsheet-row" key={c.name}>
       <div className="cheatsheet-line">
         <div className="cheatsheet-main">
-          <div className="cheatsheet-name">
-            <span className="mono cheatsheet-cmd">/{c.name}</span>
-            {c.aliases.length > 0 ? (
-              <span className="cheatsheet-alias">别名 {c.aliases.join("、")}</span>
-            ) : null}
-          </div>
-          {c.args ? <div className="mono cheatsheet-args">{c.args}</div> : null}
-          <p className="cheatsheet-zh">{c.zh}</p>
+          <span className="mono cheatsheet-cmd">/{c.name}</span>
+          <span className="cheatsheet-zh">{c.zh}</span>
         </div>
         <span className="cheatsheet-actions">
           <button
@@ -372,9 +395,9 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
             className="cheatsheet-copy"
             aria-label={`复制 /${c.name}`}
             title={`复制 /${c.name}`}
-            onClick={() => void copy(`cmd:${group}:${c.name}`, `/${c.name}`)}
+            onClick={() => void copy(cmdKey, `/${c.name}`)}
           >
-            {copied === `cmd:${group}:${c.name}` ? "已复制 ✓" : "复制"}
+            {copied === cmdKey ? "已复制 ✓" : "复制"}
           </button>
           {c.args ? (
             <button
@@ -382,75 +405,112 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
               className="cheatsheet-copy"
               aria-label={`复制 /${c.name} 的含参数模板`}
               title={`复制 /${c.name} ${c.args}`}
-              onClick={() => void copy(`tpl:${group}:${c.name}`, `/${c.name} ${c.args}`)}
+              onClick={() => void copy(tplKey, `/${c.name} ${c.args}`)}
             >
-              {copied === `tpl:${group}:${c.name}` ? "已复制 ✓" : "参数"}
+              {copied === tplKey ? "已复制 ✓" : "参数"}
             </button>
           ) : null}
         </span>
       </div>
-      {detail?.when !== undefined ? (
-        <p className="cheatsheet-when">
-          <span className="cheatsheet-label">何时用</span>
-          {detail.when}
-        </p>
-      ) : null}
-      {detail?.params !== undefined && detail.params.length > 0 ? (
-        <dl className="cheatsheet-params">
-          <dt className="cheatsheet-label">参数</dt>
-          {detail.params.map((p) => (
-            <dd key={p.token}>
-              <code className="mono">{p.token}</code>
-              <span>{p.zh}</span>
-            </dd>
-          ))}
+      {hasDetail ? (
+        <dl className="cheatsheet-detail">
+          {c.args ? (
+            <>
+              <dt className="cheatsheet-label">用法</dt>
+              <dd className="mono cheatsheet-sig">
+                /{c.name} {c.args}
+              </dd>
+            </>
+          ) : null}
+          {c.aliases.length > 0 ? (
+            <>
+              <dt className="cheatsheet-label">别名</dt>
+              <dd className="cheatsheet-alias">{c.aliases.join("、")}</dd>
+            </>
+          ) : null}
+          {detail?.when !== undefined ? (
+            <>
+              <dt className="cheatsheet-label">何时用</dt>
+              <dd className="cheatsheet-when">{detail.when}</dd>
+            </>
+          ) : null}
+          {detail?.params !== undefined && detail.params.length > 0 ? (
+            <>
+              <dt className="cheatsheet-label">参数</dt>
+              <dd>
+                <dl className="cheatsheet-params">
+                  {detail.params.map((p) => (
+                    <div className="cheatsheet-param" key={p.token}>
+                      <dt>
+                        <code className="mono">{p.token}</code>
+                      </dt>
+                      <dd>{p.zh}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </dd>
+            </>
+          ) : null}
+          {detail?.cautions !== undefined && detail.cautions.length > 0 ? (
+            <>
+              <dt className="cheatsheet-label">注意</dt>
+              <dd>
+                <ul className="cheatsheet-cautions">
+                  {detail.cautions.map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </dd>
+            </>
+          ) : null}
+          {c.examples.length > 0 ? (
+            <>
+              <dt className="cheatsheet-label">示例</dt>
+              <dd>
+                <ul className="cheatsheet-examples">
+                  {c.examples.map((ex, i) => (
+                    <li className="cheatsheet-example" key={`${c.name}:${i}`}>
+                      <span className="mono">{ex}</span>
+                      <button
+                        type="button"
+                        className="cheatsheet-copy"
+                        aria-label={`复制示例 ${ex}`}
+                        title={`复制示例 ${ex}`}
+                        onClick={() => void copy(`ex:${group}:${c.name}:${i}`, ex)}
+                      >
+                        {copied === `ex:${group}:${c.name}:${i}` ? "已复制 ✓" : "复制"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </>
+          ) : null}
+          {detail?.related !== undefined && detail.related.length > 0 ? (
+            <>
+              <dt className="cheatsheet-label">相关</dt>
+              <dd>
+                <span className="cheatsheet-related">
+                  {detail.related.map((r) => {
+                    const target = findOmpCommand(r);
+                    if (target === undefined) return null;
+                    return (
+                      <button
+                        key={r}
+                        type="button"
+                        className="cheatsheet-link mono"
+                        title={`查看 /${target.name} 的完整说明`}
+                        onClick={() => onJump(target.name)}
+                      >
+                        /{target.name}
+                      </button>
+                    );
+                  })}
+                </span>
+              </dd>
+            </>
+          ) : null}
         </dl>
-      ) : null}
-      {detail?.cautions !== undefined && detail.cautions.length > 0 ? (
-        <ul className="cheatsheet-cautions">
-          {detail.cautions.map((x) => (
-            <li key={x}>
-              <span className="cheatsheet-label">注意</span>
-              {x}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <ul className="cheatsheet-examples">
-        {c.examples.map((ex, i) => (
-          <li className="cheatsheet-example" key={`${c.name}:${i}`}>
-            <span className="mono">{ex}</span>
-            <button
-              type="button"
-              className="cheatsheet-copy"
-              aria-label={`复制示例 ${ex}`}
-              title={`复制示例 ${ex}`}
-              onClick={() => void copy(`ex:${group}:${c.name}:${i}`, ex)}
-            >
-              {copied === `ex:${group}:${c.name}:${i}` ? "已复制 ✓" : "复制"}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {detail?.related !== undefined && detail.related.length > 0 ? (
-        <p className="cheatsheet-related">
-          <span className="cheatsheet-label">相关</span>
-          {detail.related.map((r) => {
-            const target = findOmpCommand(r);
-            if (target === undefined) return null;
-            return (
-              <button
-                key={r}
-                type="button"
-                className="cheatsheet-link mono"
-                title={`查看 /${target.name} 的完整说明`}
-                onClick={() => onJump(target.name)}
-              >
-                /{target.name}
-              </button>
-            );
-          })}
-        </p>
       ) : null}
     </li>
   );

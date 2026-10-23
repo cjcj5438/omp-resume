@@ -28,11 +28,6 @@ export interface AppError {
   message: string;
 }
 
-export interface GetConfigResult {
-  sessionsDir: string;
-  ownersDir: string;
-}
-
 export interface ListSessionsResult {
   sessionsDir: string;
   hiddenEmpty: number;

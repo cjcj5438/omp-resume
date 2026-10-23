@@ -8,7 +8,8 @@
  * 3. 无法确认参数时只写 `omp <name> --help` 作为保守示例。
  * 改动本表后请用同样方式抽查：`--help` 的 USAGE 行必须能容纳示例里的每个 token。
  */
-export const OMP_CLI_VERSION = "18.12.6";
+import { OMP_VERSION } from "./ompCommands";
+export const OMP_CLI_VERSION: string = OMP_VERSION;
 
 export interface OmpCliCommand {
   /** 子命令名，如 "bench"。 */

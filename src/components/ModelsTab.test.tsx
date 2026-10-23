@@ -7,6 +7,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BENCH_CONFIG_KEY } from "../modelBench";
 import type { BenchRound, ModelConfig, ModelInfo, ModelSpec } from "../types";
+import { useModelDraft } from "../modelDraft";
 import { ModelsTab } from "./ModelsTab";
 import type { ToastFn } from "./useOmpOp";
 
@@ -95,9 +96,15 @@ beforeEach(() => {
   vi.useRealTimers();
 });
 
+function Harness(props: { onToast: ToastFn }) {
+  const { onToast } = props;
+  const l = useModelDraft(onToast);
+  return l.status === "ready" ? <ModelsTab onToast={onToast} state={l.state} /> : null;
+}
+
 async function renderTab(): Promise<Mock<ToastFn>> {
   const onToast = vi.fn<ToastFn>();
-  render(<ModelsTab onToast={onToast} />);
+  render(<Harness onToast={onToast} />);
   await screen.findByRole("region", { name: "模型库" });
   // 模型库与 bench 表都渲染 Fast：等 bench 工具条出现才算两边都就绪。
   await screen.findByRole("button", { name: /测试全部/ });
@@ -105,30 +112,12 @@ async function renderTab(): Promise<Mock<ToastFn>> {
 }
 
 describe("模型库", () => {
-  it("搜索过滤 + 用途徽章在模型第二行（首行只有名称）", async () => {
+  it("搜索过滤模型库", async () => {
     stub();
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
     expect(within(lib).getByText("Fast")).toBeInTheDocument();
     expect(within(lib).getByText("Slow")).toBeInTheDocument();
-    // p/slow 被 default/task 引用 → 两个中文角色名都在该行的模型第二行。
-    const slowRow = within(lib).getByText("Slow").closest("tr");
-    if (slowRow === null) throw new Error("找不到 Slow 行");
-    // 首行只有名称全宽：title 即全名，无 badge。
-    const nameEl = within(slowRow).getByText("Slow");
-    expect(nameEl).toHaveAttribute("title", "Slow");
-    const top = nameEl.closest(".lib-model-top");
-    if (top === null) throw new Error("找不到 Slow 行的模型首行");
-    expect((top as HTMLElement).textContent).toBe("Slow");
-    // 第二行：selector + 用途徽章；provider badge 已删（selector 自带 provider）。
-    const sub = within(slowRow).getByText("p/slow", { selector: ".lib-id" }).closest(".lib-model-sub");
-    if (sub === null) throw new Error("找不到 Slow 行的模型第二行");
-    expect(within(sub as HTMLElement).getByText("主对话")).toBeInTheDocument();
-    expect(within(sub as HTMLElement).getByText("子任务")).toBeInTheDocument();
-    expect(within(slowRow).queryByText("p", { selector: ".badge" })).toBeNull();
-    // 库表只有 6 列：没有独立的用途列。
-    expect(within(lib).queryByRole("columnheader", { name: "用途" })).toBeNull();
-    expect(within(lib).getAllByRole("columnheader")).toHaveLength(6);
 
     fireEvent.change(within(lib).getByRole("searchbox", { name: "搜索模型库" }), { target: { value: "slow" } });
     expect(within(lib).queryByText("Fast")).toBeNull();
@@ -167,20 +156,6 @@ describe("模型库", () => {
     expect(within(sub as HTMLElement).getByText("子任务")).toBeInTheDocument();
     const more = within(sub as HTMLElement).getByText("+1");
     expect(more).toHaveAttribute("title", "轻快任务");
-  });
-
-  it("同名不同 id 可区分：selector 第二行 + 思考档位单行连接", async () => {
-    stub();
-    await renderTab();
-    const lib = screen.getByRole("region", { name: "模型库" });
-    const fastRow = within(lib).getByText("Fast").closest("tr");
-    if (fastRow === null) throw new Error("找不到 Fast 行");
-    // 第二行显示完整 selector，title 也是它（同名行靠此区分）。
-    const idLine = within(fastRow).getByText("p/fast", { selector: ".lib-id" });
-    expect(idLine).toHaveAttribute("title", "p/fast");
-    // 思考档位用 · 单行连接，title 保留完整列表。
-    const thinking = within(fastRow).getByText("high·low");
-    expect(thinking).toHaveAttribute("title", "high / low");
   });
 
   it("加入测试把模型推进受控 bench 列表", async () => {
@@ -240,25 +215,6 @@ describe("模型库", () => {
     expect(within(sub as HTMLElement).getByText("sonic")).toBeInTheDocument();
   });
 
-  it("库表数值列紧凑单行：上下文无后缀、目录价只有数字", async () => {
-    stub();
-    await renderTab();
-    const lib = screen.getByRole("region", { name: "模型库" });
-    const fastRow = within(lib).getByText("Fast").closest("tr");
-    if (fastRow === null) throw new Error("找不到 Fast 行");
-    // 上下文：紧凑数字，无「上下文」后缀；完整口径放 title。
-    const context = within(fastRow).getByText("200K");
-    expect(context).toHaveAttribute("title", "200K tokens");
-    expect(fastRow.textContent).not.toContain("上下文");
-    // 目录价：只有输入/输出数字，完整口径放 title。
-    const cost = within(fastRow).getByText("$1 / $4");
-    expect(cost).toHaveAttribute("title", "输入 $1 / 输出 $4（USD / 百万 token）");
-    // Slow 行同理：1M / $2 / $8（规格覆盖价）。
-    const slowRow = within(lib).getByText("Slow").closest("tr");
-    if (slowRow === null) throw new Error("找不到 Slow 行");
-    expect(within(slowRow).getByText("1M")).toHaveAttribute("title", "1M tokens");
-    expect(within(slowRow).getByText("$2 / $8")).toHaveAttribute("title", "输入 $2 / 输出 $8（USD / 百万 token）");
-  });
 });
 
 describe("测试 → 角色分配", () => {

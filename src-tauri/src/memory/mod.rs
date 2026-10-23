@@ -45,9 +45,7 @@ pub fn resolve_bank_root_with(env: impl Fn(&str) -> Option<String>, home: &Path)
 }
 
 pub fn resolve_bank_root() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
+    let home = crate::util::home_dir();
     resolve_bank_root_with(
         |k| std::env::var_os(k).map(|v| v.to_string_lossy().into_owned()),
         &home,
@@ -270,22 +268,6 @@ pub fn iso_millis_opt(raw: Option<&str>) -> Option<String> {
         .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
-/// `LIKE` 转义（`%`/`_`/`\`），配合 `ESCAPE '\'`。
-pub(crate) fn escape_like(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// 用户输入 → `LIKE` 子串模式（两端加 `%`，同 `history.rs`）。
-pub(crate) fn like_pattern(query: &str) -> String {
-    format!("%{}%", escape_like(query))
-}
 /// 列表 snippet：空白折叠后取前 [`SNIPPET_CHARS`] 字符，超长尾加 `…`。
 pub fn make_snippet(prefix: &str, total_chars: u64) -> String {
     make_snippet_with(prefix, total_chars, SNIPPET_CHARS)
@@ -307,18 +289,6 @@ pub fn make_snippet_with(prefix: &str, total_chars: u64, limit: usize) -> String
     let mut out: String = folded.chars().take(limit).collect();
     out.push('…');
     out
-}
-
-/// 按 UTF-8 字节上限截断（字符边界安全），返回（截断后文本，是否截断）。
-pub fn truncate_bytes(text: &str, cap: usize) -> (String, bool) {
-    if text.len() <= cap {
-        return (text.to_owned(), false);
-    }
-    let mut end = cap;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (text[..end].to_owned(), true)
 }
 
 /// 取 `metadata_json` 的字符串字段（缺失/非字符串/空串 ⇒ `None`）。
@@ -388,24 +358,11 @@ pub(crate) fn memory_backend() -> Option<String> {
         .map(str::to_owned)
 }
 
-fn join_error(e: impl std::fmt::Display) -> AppError {
-    io(format!("后台任务失败：{e}"))
-}
-
-/// 阻塞 IO 统一包 `spawn_blocking`。
-async fn blocking<T: Send + 'static>(
-    job: impl FnOnce() -> Result<T, AppError> + Send + 'static,
-) -> Result<T, AppError> {
-    tauri::async_runtime::spawn_blocking(job)
-        .await
-        .map_err(join_error)?
-}
-
 /// CONTRACT §18.1：bank 总览。
 #[tauri::command]
 pub async fn memory_overview(cfg: tauri::State<'_, Config>) -> Result<MemoryOverview, AppError> {
     let sessions_dir = cfg.sessions_dir.clone();
-    blocking(move || overview_impl(&resolve_bank_root(), &sessions_dir)).await
+    crate::blocking(move || overview_impl(&resolve_bank_root(), &sessions_dir)).await
 }
 
 /// CONTRACT §18.2：bank 内分页列表 + 搜索。
@@ -435,7 +392,7 @@ pub async fn memory_list(
         limit: limit.unwrap_or(LIST_LIMIT_DEFAULT),
         offset: offset.unwrap_or(0),
     };
-    blocking(move || rows::list_impl(&resolve_bank_root(), &sessions_dir, &params)).await
+    crate::blocking(move || rows::list_impl(&resolve_bank_root(), &sessions_dir, &params)).await
 }
 
 /// CONTRACT §18.3：单条记忆详情。
@@ -446,20 +403,21 @@ pub async fn memory_detail(
     id: String,
 ) -> Result<MemoryDetail, AppError> {
     let sessions_dir = cfg.sessions_dir.clone();
-    blocking(move || rows::detail_impl(&resolve_bank_root(), &sessions_dir, &bank, &id)).await
+    crate::blocking(move || rows::detail_impl(&resolve_bank_root(), &sessions_dir, &bank, &id))
+        .await
 }
 
 /// CONTRACT §18.10：选中 bank 的引用关系图（只读）。
 #[tauri::command]
 pub async fn memory_graph(bank: String) -> Result<MemoryGraph, AppError> {
-    blocking(move || graph::graph_impl(&resolve_bank_root(), &bank)).await
+    crate::blocking(move || graph::graph_impl(&resolve_bank_root(), &bank)).await
 }
 
 /// CONTRACT §4.43：bank 状态（lsof 失败 ⇒ probe_failed，非错误）。
 #[tauri::command]
 pub async fn memory_bank_status(bank: String) -> Result<MemoryBankStatus, AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || {
+    crate::blocking(move || {
         delete::status_impl_with(
             &resolve_bank_root(),
             &data_dir,
@@ -474,7 +432,7 @@ pub async fn memory_bank_status(bank: String) -> Result<MemoryBankStatus, AppErr
 #[tauri::command]
 pub async fn memory_backups(bank: Option<String>) -> Result<Vec<MemoryBackup>, AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || Ok(delete::backups_impl(&data_dir, bank.as_deref()))).await
+    crate::blocking(move || Ok(delete::backups_impl(&data_dir, bank.as_deref()))).await
 }
 
 /// CONTRACT §4.45：删除预览（纯只读，不设门禁）。
@@ -483,7 +441,7 @@ pub async fn memory_delete_preview(
     bank: String,
     ids: Vec<String>,
 ) -> Result<MemoryDeletePreview, AppError> {
-    blocking(move || delete::preview_impl(&resolve_bank_root(), &bank, &ids)).await
+    crate::blocking(move || delete::preview_impl(&resolve_bank_root(), &bank, &ids)).await
 }
 
 /// CONTRACT §4.46：删除选中记忆（门禁 → 备份 → 复检 → 事务）。
@@ -493,7 +451,7 @@ pub async fn memory_delete_items(
     ids: Vec<String>,
 ) -> Result<MemoryDeleteResult, AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || {
+    crate::blocking(move || {
         delete::delete_items_impl_with(
             &resolve_bank_root(),
             &data_dir,
@@ -509,7 +467,7 @@ pub async fn memory_delete_items(
 #[tauri::command]
 pub async fn memory_delete_bank(bank: String) -> Result<MemoryBackup, AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || {
+    crate::blocking(move || {
         delete::delete_bank_impl_with(
             &resolve_bank_root(),
             &data_dir,
@@ -524,7 +482,7 @@ pub async fn memory_delete_bank(bank: String) -> Result<MemoryBackup, AppError> 
 #[tauri::command]
 pub async fn memory_restore(backup_id: String) -> Result<MemoryRestoreResult, AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || {
+    crate::blocking(move || {
         delete::restore_impl_with(
             &resolve_bank_root(),
             &data_dir,
@@ -539,7 +497,7 @@ pub async fn memory_restore(backup_id: String) -> Result<MemoryRestoreResult, Ap
 #[tauri::command]
 pub async fn memory_delete_backup(backup_id: String) -> Result<(), AppError> {
     let data_dir = crate::meta::data_dir()?;
-    blocking(move || delete::delete_backup_impl(&data_dir, &backup_id)).await
+    crate::blocking(move || delete::delete_backup_impl(&data_dir, &backup_id)).await
 }
 
 /// 单表轻量行（overview 只取时间戳与元数据，不读正文）。

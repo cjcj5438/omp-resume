@@ -17,14 +17,14 @@ use super::backup::{
 };
 use super::gate::{bank_files, holders_for_files_with, in_use_message, ProbeFailed};
 use super::{
-    escape_like, invalid, io, open_readonly, outside, table_schema, validate_bank, TableSchema,
-    DB_FILENAME,
+    invalid, io, open_readonly, outside, table_schema, validate_bank, TableSchema, DB_FILENAME,
 };
 use crate::model::{
     AppError, ErrorCode, MemoryBackup, MemoryBackupKind, MemoryBankStatus, MemoryDeleteCascade,
     MemoryDeleteDeletable, MemoryDeletePreview, MemoryDeleteResult, MemoryRestoreResult,
     MemorySkipReason, MemorySkipped,
 };
+use crate::util::escape_like;
 
 /// 单次删除 id 上限（去重后计数）。
 pub const DELETE_IDS_MAX: usize = 500;

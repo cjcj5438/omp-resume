@@ -89,3 +89,33 @@ export async function openOmpChangelog(): Promise<void> {
     }
   }
 }
+
+// ---- 展示格式（用法/统计/bench 多处共用，口径锁死） ----
+
+export const usageNumber = (value: number) => value.toLocaleString("zh-CN");
+export const usageMoney = (value: number) => `$${value.toFixed(2)}`;
+
+export function formatRate(value: number | null): string {
+  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+export function formatTps(value: number | null): string {
+  return value === null ? "—" : value.toFixed(1);
+}
+
+export function formatMs(value: number | null): string {
+  if (value === null) return "—";
+  return value < 1000 ? `${Math.round(value)}ms` : `${(value / 1000).toFixed(1)}s`;
+}
+
+/** USD 人话：≥$0.01 两位小数，更小显示 4 位（bench 单轮常不足 1 分钱）。 */
+export function formatUsd(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return value > 0 && value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+/** 最近列表时间：本地 "M月D日 HH:MM"。 */
+export function formatClock(time: number): string {
+  const d = new Date(time);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}

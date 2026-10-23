@@ -3,7 +3,8 @@
  * 从 ModelTesterPanel.tsx 逐字拆出，无行为变化。
  */
 import type { ReactNode } from "react";
-import { benchRunner, formatUsd, type BenchConfig, type BenchIntervalMin } from "../modelBench";
+import { formatUsd } from "../format";
+import { benchRunner, type BenchConfig, type BenchIntervalMin } from "../modelBench";
 
 const INTERVAL_OPTIONS: { value: BenchIntervalMin; label: string }[] = [
   { value: 0, label: "关" },
@@ -41,7 +42,7 @@ export function BenchToolbar(props: BenchToolbarProps): ReactNode {
       </div>
       <div className="bench-monitor">
         <span className="muted">监控</span>
-        <div className="segment bench-segment" role="radiogroup" aria-label="监控间隔">
+        <div className="bench-segment" role="radiogroup" aria-label="监控间隔">
           {INTERVAL_OPTIONS.map((opt) => (
             <button
               key={opt.value}

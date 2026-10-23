@@ -154,6 +154,18 @@ pub fn open_in_iterm_impl(
             format!("记录的工作目录不存在：{cwd}"),
         ));
     }
+    if cwd.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "目录路径含控制字符，拒绝在 iTerm 中打开",
+        ));
+    }
+    if valid.to_string_lossy().chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "会话路径含控制字符，拒绝在 iTerm 中打开",
+        ));
+    }
     // 只读打开不占租约：IN_USE 拒绝，PROBE_FAILED 允许继续（CONTRACT §4.8）。
     let p = crate::lock::probe(&cfg.owners_dir, &info.id);
     if p.in_use {

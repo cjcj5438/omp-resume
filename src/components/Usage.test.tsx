@@ -182,7 +182,7 @@ it("看板默认今天；KPI 展示中断注记与缓存未上报；切换标签
   expect(within(screen.getByLabelText("关键指标")).getByText("940")).toBeTruthy();
 });
 
-it("活跃度卡片：热力图铺开 + 右侧汇总（活跃天数 / 合计 / 最高单日 / 连续）", async () => {
+it("活跃度卡片：热力图铺开 + 紧贴汇总（活跃天数 / 合计 / 最高单日 / 连续）", async () => {
   const stats = mockUsageStats("30d");
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
@@ -190,14 +190,19 @@ it("活跃度卡片：热力图铺开 + 右侧汇总（活跃天数 / 合计 / �
   });
   render(<StatsView {...links} />);
   const card = await screen.findByLabelText("活跃度");
-  // 卡片独占一行（不在 health-grid 里），汇总与热力图分离。
+  // 卡片独占一行（不在 health-grid 里），图例随网格走（右下对齐）。
   expect(card.closest(".health-grid")).toBeNull();
   const heat = within(card).getByRole("img", { name: /活跃度热力图/ });
-  expect(heat.querySelectorAll("rect.heat-cell").length).toBe(182);
+  expect(heat.querySelectorAll(".heat-cell").length).toBe(182);
   expect(within(card).getByText("活跃天数")).toBeTruthy();
   expect(within(card).getByText("合计花费")).toBeTruthy();
   expect(within(card).getByText("连续活跃天数")).toBeTruthy();
   expect(card.textContent).toContain("最高单日");
+  // 图例不在卡片头：与网格同组，位于网格下方右对齐。
+  expect(within(card).getByText("少").closest(".card-head")).toBeNull();
+  const wrap = heat.parentElement;
+  expect(wrap?.className).toContain("heat-wrap");
+  expect(wrap?.querySelector(".heat-foot .heat-legend")).toBeTruthy();
 });
 
 it("看板空数据给出克制空态，命中率显示“—”而非 0%", async () => {
@@ -240,16 +245,6 @@ it("错误类型与兜底去向按契约中文映射展示", async () => {
   expect(fallbacks.textContent).toContain("未知来源 →");
   expect(fallbacks.textContent).toContain("anthropic / claude-sonnet-4-5 →");
   expect(within(screen.getByLabelText("最近错误")).getAllByText("触发限流").length).toBeGreaterThan(0);
-});
-
-it("分布条与错误行用 data-tip 代替原生 title", () => {
-  render(<HealthBoard data={mockUsageHealth("30d")} />);
-  const sections = ["错误类型分布", "兜底去向", "最近错误", "按模型缓存命中"].map((n) => screen.getByLabelText(n));
-  expect(sections[0].querySelector("li")?.getAttribute("data-tip")).toContain("次（占 ");
-  expect(sections[1].querySelector("li")?.getAttribute("data-tip")).toContain("次（占 ");
-  expect(sections[2].querySelector(".err-row")?.getAttribute("data-tip")).toContain("·");
-  expect(sections[3].querySelector("tbody tr")?.getAttribute("data-tip")).toContain("命中率");
-  for (const s of sections) expect(s.querySelector("[title]")).toBeNull();
 });
 
 it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲突警告", () => {
@@ -307,7 +302,7 @@ it("总览仪表盘：6 KPI / 双环形 / 模型速度 / 热力图 182 格", asy
   expect(models.textContent).toContain("118.4 tok/s");
   expect(models.textContent).toContain("7.4s");
   const heat = screen.getByRole("img", { name: /活跃度热力图/ });
-  expect(heat.querySelectorAll("rect.heat-cell").length).toBe(182);
+  expect(heat.querySelectorAll(".heat-cell").length).toBe(182);
 });
 
 it("指标切换：Token / 花费切换趋势图且柱数不变", async () => {

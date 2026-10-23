@@ -1,8 +1,8 @@
 /**
  * ModelSections 测试：角色卡融合、Agent 实际使用、其他兜底、未知值保留、
  * 部分失败与冲突。保存载荷断言用直连 mockIPC 桩。
- * Harness 用 useModelDraft + ModelDraftStatus + ModelsSection + AgentsSection
- * 拼出与旧 ModelsAgentsPanel 相同的 DOM（旧 wrapper 已删除）。
+ * Harness 用 useModelDraft + ModelDraftStatus + ModelsSection + AgentFlow
+ * + AgentsSection 拼出与旧 ModelsAgentsPanel 相同的 DOM（旧 wrapper 已删除）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -10,6 +10,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
 import { useModelDraft } from "../modelDraft";
 import { AgentsSection } from "./AgentsSection";
+import { AgentFlow, agentFlowNodes } from "./AgentFlow";
 import { ModelDraftStatus } from "./ModelDraftStatus";
 import { ModelsSection } from "./ModelsSection";
 import type { ToastFn } from "./useOmpOp";
@@ -34,6 +35,7 @@ function Harness(props: { onToast: ToastFn }) {
     <div className="manage-section">
       <ModelDraftStatus state={s} />
       <ModelsSection state={s} />
+      <AgentFlow nodes={agentFlowNodes(s)} orchestratorText={s.orchestratorText} />
       <AgentsSection state={s} />
       <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
     </div>
@@ -295,7 +297,7 @@ describe("主要模型（角色卡融合）", () => {
     expect(saves).toHaveLength(0);
   });
 
-  it("前一个 key 已写、后一个失败：点名已保存并重载", async () => {
+  it("前一个 key 已写、后一个失败：草稿保留、重试只写失败的 key", async () => {
     const saves: SaveCall[] = [];
     const stub = stubConfig(saves, { failKeys: ["retry.fallbackChains"] });
     const onToast = vi.fn();
@@ -314,10 +316,18 @@ describe("主要模型（角色卡融合）", () => {
     );
 
     expect(await screen.findByText(/「主模型」已保存/)).toHaveTextContent("兜底");
+    expect(await screen.findByText(/草稿已保留/)).toBeInTheDocument();
     expect(saves.map((s) => s.key)).toEqual(["modelRoles", "retry.fallbackChains"]);
-    // 失败后重新载入（首次 + 失败后）。
+    // 失败后只重读基线（首次 + 失败后），草稿不清。
     await waitFor(() => expect(stub.configReads).toBeGreaterThanOrEqual(2));
     expect(onToast).not.toHaveBeenCalledWith(expect.stringContaining("已保存"), "info");
+    // 草稿保留：judge 的选择还在，保存条仍在。
+    expect(within(roleCard("judge")).getByRole("button", { name: "裁判的主模型" })).toHaveTextContent("GPT-6.1 Sol");
+    expect(within(blockOf("主要模型")).getByRole("button", { name: "保存兜底" })).toBeInTheDocument();
+    // 重试只写失败的那个 key（modelRoles 已成功，其 touched 已清）。
+    fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存兜底" }));
+    await waitFor(() => expect(saves).toHaveLength(3));
+    expect(saves[2].key).toBe("retry.fallbackChains");
   });
 });
 
@@ -475,7 +485,7 @@ describe("兜底总开关与冲突", () => {
     expect(screen.getByText(/兜底：关/)).toHaveTextContent("仅用尽额度时切换");
   });
 
-  it("CONFLICT 提示并重新载入最新配置", async () => {
+  it("CONFLICT 提示并保留草稿与保存条", async () => {
     const saves: SaveCall[] = [];
     const stub = stubConfig(saves, { conflictFirst: true });
     render(<Harness onToast={vi.fn()} />);
@@ -486,14 +496,11 @@ describe("兜底总开关与冲突", () => {
     fireEvent.click(screen.getByRole("button", { name: /GPT-6\.1 Sol/ }));
     fireEvent.click(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" }));
 
-    expect(await screen.findByText(/配置已被外部修改/)).toBeInTheDocument();
+    expect(await screen.findByText(/配置已被外部修改/)).toHaveTextContent("草稿已保留");
     await waitFor(() => expect(stub.configReads).toBeGreaterThanOrEqual(2));
-    // 冲突后重新载入：草稿还原，吸底保存条消失。
-    await waitFor(() =>
-      expect(
-        within(blockOf("主要模型")).queryByRole("button", { name: "保存主模型" }),
-      ).not.toBeInTheDocument(),
-    );
+    // 冲突后只重读基线：草稿保留，吸底保存条仍在。
+    expect(within(roleCard("vision")).getByRole("button", { name: "图片理解的主模型" })).toHaveTextContent("GPT-6.1 Sol");
+    expect(within(blockOf("主要模型")).getByRole("button", { name: "保存主模型" })).toBeInTheDocument();
   });
 });
 

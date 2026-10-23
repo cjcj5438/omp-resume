@@ -9,8 +9,8 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use super::{
-    GRAPH_NODE_CAP, GRAPH_SNIPPET_CHARS, col_or_null, io, iso_millis_opt, make_snippet_with,
-    open_readonly, parse_memory_ts, table_schema, validate_bank, DB_FILENAME,
+    col_or_null, io, iso_millis_opt, make_snippet_with, open_readonly, parse_memory_ts,
+    table_schema, validate_bank, DB_FILENAME, GRAPH_NODE_CAP, GRAPH_SNIPPET_CHARS,
 };
 use crate::model::{
     AppError, MemoryGraph, MemoryGraphEdge, MemoryGraphEdgeKind, MemoryGraphNode, MemoryKind,

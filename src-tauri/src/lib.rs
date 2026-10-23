@@ -37,6 +37,7 @@ pub mod omp_plugins;
 pub mod ops;
 pub mod sessions;
 pub mod usage;
+pub mod util;
 
 use crate::model::{AppError, ErrorCode};
 use tauri::Manager;
@@ -59,15 +60,13 @@ fn io_join_error(e: impl std::fmt::Display) -> AppError {
     AppError::new(ErrorCode::Io, format!("后台任务失败：{e}"))
 }
 
-/// CONTRACT §4.1：返回解析后的实际目录。
-#[tauri::command]
-async fn get_config(
-    cfg: tauri::State<'_, config::Config>,
-) -> Result<model::GetConfigResult, model::AppError> {
-    Ok(model::GetConfigResult {
-        sessions_dir: cfg.sessions_dir.to_string_lossy().into_owned(),
-        owners_dir: cfg.owners_dir.to_string_lossy().into_owned(),
-    })
+/// spawn_blocking 统一入口；Join 失败 → io_join_error（Io，「后台任务失败：{e}」）。
+pub(crate) async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, model::AppError> + Send + 'static,
+) -> Result<T, model::AppError> {
+    tauri::async_runtime::spawn_blocking(job)
+        .await
+        .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.2：会话列表（阻塞 IO 在后台线程）。
@@ -76,9 +75,7 @@ async fn list_sessions(
     cfg: tauri::State<'_, config::Config>,
 ) -> Result<model::ListSessionsResult, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || sessions::list::list_sessions(&cfg))
-        .await
-        .map_err(io_join_error)?
+    blocking(move || sessions::list::list_sessions(&cfg)).await
 }
 
 /// CONTRACT §4.3：只读会话预览。
@@ -89,12 +86,11 @@ async fn get_conversation(
     node_id: Option<String>,
 ) -> Result<model::Conversation, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         let valid = config::validate_session_path(&cfg, &path)?;
         sessions::conversation::get_conversation(&valid, node_id.as_deref())
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.4：树数据。
@@ -104,12 +100,11 @@ async fn get_tree(
     path: String,
 ) -> Result<model::TreeData, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         let valid = config::validate_session_path(&cfg, &path)?;
         sessions::tree::get_tree(&valid)
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.5：占用探测。
@@ -119,12 +114,11 @@ async fn check_session(
     path: String,
 ) -> Result<model::CheckSessionResult, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         let valid = config::validate_session_path(&cfg, &path)?;
         sessions::check_session(&valid, &cfg)
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.6：批量删除（逐路径独立结果，阻塞 IO 在后台线程）。
@@ -134,9 +128,8 @@ async fn delete_sessions(
     paths: Vec<String>,
 ) -> Result<Vec<model::DeleteResult>, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || ops::commands::delete_sessions_impl(&cfg, &paths))
+    blocking(move || Ok::<_, model::AppError>(ops::commands::delete_sessions_impl(&cfg, &paths)))
         .await
-        .map_err(io_join_error)
 }
 
 /// CONTRACT §14：只读清理候选（阻塞 IO 在后台线程；不删除任何文件）。
@@ -147,11 +140,10 @@ async fn list_cleanup_candidates(
     top_n: u32,
 ) -> Result<Vec<model::CleanupCandidate>, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         cleanup::list_candidates(&cfg, std::time::SystemTime::now(), older_than_days, top_n)
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.7：从树节点续聊（追加 marker 行）。
@@ -162,11 +154,7 @@ async fn append_branch_marker(
     node_id: String,
 ) -> Result<model::AppendBranchMarkerResult, model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        ops::commands::append_branch_marker_impl(&cfg, &path, &node_id)
-    })
-    .await
-    .map_err(io_join_error)?
+    blocking(move || ops::commands::append_branch_marker_impl(&cfg, &path, &node_id)).await
 }
 
 /// CONTRACT §4.8：在 iTerm 开新 tab 续聊。
@@ -176,79 +164,58 @@ async fn open_in_iterm(
     path: String,
 ) -> Result<(), model::AppError> {
     let cfg = cfg.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab)
-    })
-    .await
-    .map_err(io_join_error)?
+    blocking(move || ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab)).await
 }
 
 /// 在 iTerm 新开 omp 会话（`cd '<cwd>' && omp`，无参数、不带 prompt）。
 #[tauri::command]
 async fn new_session_in_iterm(cwd: String) -> Result<(), model::AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        ops::commands::new_session_in_iterm_impl(&cwd, &ops::iterm::open_tab)
-    })
-    .await
-    .map_err(io_join_error)?
+    blocking(move || ops::commands::new_session_in_iterm_impl(&cwd, &ops::iterm::open_tab)).await
 }
 
 /// 原生选择项目目录；用户取消返回 null。
 #[tauri::command]
 async fn choose_directory() -> Result<Option<String>, model::AppError> {
-    tauri::async_runtime::spawn_blocking(ops::picker::choose_directory)
-        .await
-        .map_err(io_join_error)?
+    blocking(ops::picker::choose_directory).await
 }
 
 /// CONTRACT §13.1：会话最新 recap（只读；库缺失或失败静默为 null）。
 #[tauri::command]
 async fn get_session_recap(session_id: String) -> Result<Option<String>, model::AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         Ok::<_, model::AppError>(history::session_recap(
             &history::resolve_db_path(),
             &session_id,
         ))
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §13.2：提示词历史搜索（只读；库缺失或失败静默为空列表）。
 #[tauri::command]
 async fn search_prompt_history(
     query: Option<String>,
-    limit: Option<u32>,
 ) -> Result<Vec<model::PromptHistoryEntry>, model::AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         Ok::<_, model::AppError>(history::search_prompts(
             &history::resolve_db_path(),
             query.as_deref(),
-            limit.unwrap_or(history::DEFAULT_SEARCH_LIMIT),
+            history::DEFAULT_SEARCH_LIMIT,
         ))
     })
     .await
-    .map_err(io_join_error)?
 }
 
 /// CONTRACT §4.9：本地 omp 版本，不占写操作门禁。
 #[tauri::command]
 async fn omp_version() -> Result<model::OmpVersion, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
-        omp_cli::omp_version_impl(omp_cli::resolve_omp().as_deref())
-    })
-    .await
-    .map_err(io_join_error)?
+    blocking(|| omp_cli::omp_version_impl(omp_cli::resolve_omp().as_deref())).await
 }
 
 /// CONTRACT §4.10：只检查 omp 更新，不安装。
 #[tauri::command]
 async fn omp_update_check() -> Result<model::OmpUpdateCheck, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
-        omp_cli::omp_update_check_impl(omp_cli::resolve_omp().as_deref())
-    })
-    .await
-    .map_err(io_join_error)?
+    blocking(|| omp_cli::omp_update_check_impl(omp_cli::resolve_omp().as_deref())).await
 }
 
 /// CONTRACT §4.11：持有全局门禁，逐行推送实际更新日志。
@@ -257,7 +224,7 @@ async fn omp_update_run(
     app: tauri::AppHandle,
     on_line: tauri::ipc::Channel<String>,
 ) -> Result<model::OmpUpdateResult, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         use tauri::Manager;
         let busy = app.state::<omp_cli::OmpBusy>();
         // 门禁留在阻塞任务内，调用方离开也不会提前释放。
@@ -268,7 +235,6 @@ async fn omp_update_run(
         })
     })
     .await
-    .map_err(io_join_error)?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -329,7 +295,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            get_config,
             list_sessions,
             usage::get_session_usage,
             usage::get_usage_stats,

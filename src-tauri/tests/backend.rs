@@ -1,25 +1,14 @@
 //! 后端集成测试：fixture 会话树（tempdir），覆盖 CONTRACT §4.2–§4.5、§5、§6。
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
+use common::{cfg, header, msg, write_lines};
 use omp_resume_lib::config::{self, Config};
 use omp_resume_lib::model::ErrorCode;
-use omp_resume_lib::sessions::{self, MARKER_CUSTOM_TYPE};
+use omp_resume_lib::sessions;
 use serde_json::{json, Value};
-
-fn cfg(root: &Path) -> Config {
-    Config {
-        sessions_dir: root.to_path_buf(),
-        owners_dir: root.join("owners"),
-    }
-}
-
-fn write_lines(dir: &Path, name: &str, lines: &[String]) -> PathBuf {
-    std::fs::create_dir_all(dir).unwrap();
-    let p = dir.join(name);
-    std::fs::write(&p, lines.join("\n") + "\n").unwrap();
-    p
-}
 
 fn set_mtime(p: &Path, secs: u64) {
     let t = filetime::FileTime::from_unix_time(secs as i64, 0);
@@ -28,15 +17,6 @@ fn set_mtime(p: &Path, secs: u64) {
 
 fn title_line(title: &str) -> String {
     json!({"type":"title","v":1,"title":title,"source":"auto","updatedAt":"2026-10-14T00:00:00.000Z","pad":"   "}).to_string()
-}
-
-fn header(id: &str, cwd: &str) -> String {
-    json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":cwd})
-        .to_string()
-}
-
-fn msg(id: &str, parent: Option<&str>, message: Value) -> String {
-    json!({"type":"message","id":id,"parentId":parent,"timestamp":"2026-10-14T00:00:01.000Z","message":message}).to_string()
 }
 
 const TS_U: i64 = 1_791_790_685_211;
@@ -513,7 +493,10 @@ fn header_and_marker_interfaces() {
     assert!(m.all_ids.contains("u3"));
 
     // marker 常量与换行检测（ops worker 用）
-    assert_eq!(MARKER_CUSTOM_TYPE, "omp-resume-branch");
+    assert_eq!(
+        omp_resume_lib::ops::marker::MARKER_CUSTOM_TYPE,
+        "omp-resume-branch"
+    );
     let parsed = sessions::parse::parse_file(&p).unwrap();
     assert!(parsed.ends_with_newline);
     let p2 = dir.join("noeol.jsonl");

@@ -42,9 +42,7 @@ pub fn resolve_omp_with(
 }
 
 pub fn resolve_omp() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
+    let home = crate::util::home_dir();
     let bin = resolve_omp_with(|key| std::env::var(key).ok(), &home, Path::exists)?;
     if bin.is_absolute() {
         Some(bin)
@@ -166,17 +164,24 @@ struct Line {
     newline: bool,
 }
 
+enum PipeMsg {
+    Line(Line),
+    Capped,
+    Failed(std::io::Error),
+}
+
 fn read_lines(
     pipe: impl Read + AsRawFd,
-    sender: mpsc::Sender<std::io::Result<Line>>,
+    sender: mpsc::Sender<PipeMsg>,
     stop: Arc<AtomicBool>,
+    cap: Option<usize>,
 ) {
     // 继承管道的后代即使脱离进程组，也不能让 reader 无限等待 EOF。
     let flags = unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_GETFL) };
     if flags == -1
         || unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
     {
-        let _ = sender.send(Err(std::io::Error::last_os_error()));
+        let _ = sender.send(PipeMsg::Failed(std::io::Error::last_os_error()));
         return;
     }
     let send = |bytes: &[u8]| {
@@ -184,24 +189,37 @@ fn read_lines(
         let bytes = bytes.strip_suffix(b"\n").unwrap_or(bytes);
         let bytes = bytes.strip_suffix(b"\r").unwrap_or(bytes);
         sender
-            .send(Ok(Line {
+            .send(PipeMsg::Line(Line {
                 text: strip_ansi(&String::from_utf8_lossy(bytes)),
                 newline,
             }))
             .is_ok()
     };
+    // 已发送字节与未换行缓冲都计入上限。
+    let over_cap =
+        |sent: usize, buffered: usize| cap.is_some_and(|cap| sent.saturating_add(buffered) > cap);
     let mut reader = BufReader::new(pipe);
     let mut bytes = Vec::new();
+    let mut sent: usize = 0;
     loop {
         match reader.read_until(b'\n', &mut bytes) {
             Ok(0) => break,
             Ok(_) => {
+                if over_cap(sent, bytes.len()) {
+                    let _ = sender.send(PipeMsg::Capped);
+                    return;
+                }
                 if !send(&bytes) {
                     return;
                 }
+                sent += bytes.len();
                 bytes.clear();
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if over_cap(sent, bytes.len()) {
+                    let _ = sender.send(PipeMsg::Capped);
+                    return;
+                }
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
@@ -209,12 +227,16 @@ fn read_lines(
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => {
-                let _ = sender.send(Err(e));
+                let _ = sender.send(PipeMsg::Failed(e));
                 return;
             }
         }
     }
     if !bytes.is_empty() {
+        if over_cap(sent, bytes.len()) {
+            let _ = sender.send(PipeMsg::Capped);
+            return;
+        }
         send(&bytes);
     }
 }
@@ -230,6 +252,25 @@ pub fn run_omp(
     args: &[&str],
     timeout: Duration,
     on_line: &mut dyn FnMut(&str),
+) -> Result<RunOutput, AppError> {
+    run_omp_with(bin, args, timeout, on_line, RunOpts::default())
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct RunOpts<'a> {
+    /// 额外环境变量（覆盖继承值），设置在 PATH 之后。
+    pub extra_env: Option<(&'a str, &'a Path)>,
+    /// 单路（stdout/stderr 各自）累计字节上限；None = 不限（现行为）。
+    pub pipe_cap: Option<usize>,
+}
+
+/// `run_omp` 的可配版：见 `RunOpts`。
+pub fn run_omp_with(
+    bin: &Path,
+    args: &[&str],
+    timeout: Duration,
+    on_line: &mut dyn FnMut(&str),
+    opts: RunOpts<'_>,
 ) -> Result<RunOutput, AppError> {
     let mut path = std::ffi::OsString::from("/opt/homebrew/bin:/usr/local/bin:");
     if let Some(home) = std::env::var_os("HOME") {
@@ -251,6 +292,9 @@ pub fn run_omp(
         .stderr(Stdio::piped())
         .env("NO_COLOR", "1")
         .env("PATH", path);
+    if let Some((k, v)) = opts.extra_env {
+        command.env(k, v);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -271,11 +315,13 @@ pub fn run_omp(
     let err_sender = sender.clone();
     let out_stop = Arc::clone(&process.stop_readers);
     let err_stop = Arc::clone(&process.stop_readers);
-    process
-        .readers
-        .push(thread::spawn(move || read_lines(stdout, sender, out_stop)));
+    let out_cap = opts.pipe_cap;
+    let err_cap = opts.pipe_cap;
     process.readers.push(thread::spawn(move || {
-        read_lines(stderr, err_sender, err_stop)
+        read_lines(stdout, sender, out_stop, out_cap)
+    }));
+    process.readers.push(thread::spawn(move || {
+        read_lines(stderr, err_sender, err_stop, err_cap)
     }));
     let started = Instant::now();
     let mut output = String::new();
@@ -285,7 +331,8 @@ pub fn run_omp(
         let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
             process.stop();
             // 杀进程后管道关闭，收下最后未换行的部分输出再生成错误。
-            for line in receiver.try_iter().flatten() {
+            for msg in receiver.try_iter() {
+                let PipeMsg::Line(line) = msg else { continue };
                 on_line(&line.text);
                 output.push_str(&line.text);
                 if line.newline {
@@ -302,14 +349,21 @@ pub fn run_omp(
             thread::sleep(pause);
         } else {
             match receiver.recv_timeout(pause) {
-                Ok(Ok(line)) => {
+                Ok(PipeMsg::Line(line)) => {
                     on_line(&line.text);
                     output.push_str(&line.text);
                     if line.newline {
                         output.push('\n');
                     }
                 }
-                Ok(Err(e)) => {
+                Ok(PipeMsg::Capped) => {
+                    process.stop();
+                    return Err(AppError::new(
+                        ErrorCode::OmpFailed,
+                        "omp 输出超过上限，已终止",
+                    ));
+                }
+                Ok(PipeMsg::Failed(e)) => {
                     return Err(AppError::new(
                         ErrorCode::Io,
                         format!("读取 omp 输出失败：{e}"),
@@ -741,5 +795,53 @@ mod tests {
         let name = Path::new(path.file_name().unwrap());
         let result = run_omp(name, &[], Duration::from_secs(3), &mut |_| {}).unwrap();
         assert_eq!(result.output, "local fake\n");
+    }
+    #[test]
+    fn pipe_cap_overflow_returns_omp_failed() {
+        let _processes = subprocess_test_guard();
+        let (dir, bin) = fake(
+            "echo $$ > \"$0.pid\"\ni=0; while [ $i -lt 2000 ]; do echo '0123456789abcdef0123456789abcdef'; i=$((i+1)); done",
+        );
+        let started = Instant::now();
+        let error = run_omp_with(
+            &bin,
+            &[],
+            Duration::from_secs(10),
+            &mut |_| {},
+            RunOpts {
+                extra_env: None,
+                pipe_cap: Some(1024),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::OmpFailed);
+        assert_eq!(error.message, "omp 输出超过上限，已终止");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let pid: i32 = std::fs::read_to_string(dir.path().join("omp.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    }
+
+    #[test]
+    fn extra_env_is_visible_to_child() {
+        let _processes = subprocess_test_guard();
+        let (_dir, bin) = fake("echo \"$PI_CODING_AGENT_DIR\"");
+        let agent = tempfile::tempdir().unwrap();
+        let result = run_omp_with(
+            &bin,
+            &[],
+            Duration::from_secs(5),
+            &mut |_| {},
+            RunOpts {
+                extra_env: Some(("PI_CODING_AGENT_DIR", agent.path())),
+                pipe_cap: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.code, 0);
+        assert_eq!(result.output, format!("{}\n", agent.path().display()));
     }
 }

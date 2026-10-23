@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { getSessionUsage } from "../api";
+import { usageMoney, usageNumber } from "../format";
 import type { SessionUsage } from "../types";
 import "./Usage.css";
-
-export const usageNumber = (value: number) => value.toLocaleString("zh-CN");
-export const usageMoney = (value: number) => `$${value.toFixed(2)}`;
 
 export function UsageSummary({ path, supported, revision }: { path: string; supported: boolean; revision: string }) {
   const [result, setResult] = useState<{ path: string; revision: string; data: SessionUsage } | null>(null);

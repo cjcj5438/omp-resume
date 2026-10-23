@@ -11,7 +11,7 @@ import {
   findOmpCommand,
   versionMismatch,
 } from "./ompCommands";
-import { OMP_CLI_COMMANDS, OMP_CLI_VERSION } from "./ompCliCommands";
+import { OMP_CLI_COMMANDS } from "./ompCliCommands";
 
 describe("filterOmpCommands", () => {
   it("空查询返回原分组引用", () => {
@@ -174,9 +174,5 @@ describe("终端子命令", () => {
         expect(ex.split(/\s+/)[1], `${c.name}: ${ex}`).toBe(c.name);
       }
     }
-  });
-
-  it("基准版本与斜杠命令表一致", () => {
-    expect(OMP_CLI_VERSION).toBe(OMP_VERSION);
   });
 });

@@ -1,6 +1,7 @@
 /**
- * 「Agent」区块：VibeCard（指挥者 + fast/good 两档）、AgentFlow 编排图、
- * AgentRow 列表与保存条。纯渲染组件，状态全部来自 ModelDraftState。
+ * 「Agent」区块：VibeCard（指挥者 + fast/good 两档）、AgentRow 列表与保存条。
+ * 纯渲染组件，状态全部来自 ModelDraftState。编排图（AgentFlow）由 AgentsTab
+ * 直接渲染（可交互），这里不渲染，只保留 agentNodes 供 AgentRow 列表使用。
  * 与 ModelsSection 同源（见 modelDraft.ts 头注）；组件测试在
  * ModelSections.test.tsx / AgentsTab.test.tsx。
  */
@@ -9,6 +10,7 @@ import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
 import { rawValueText } from "../modelConfig";
 import {
   AGENT_INFO,
+  VIBE_TIERS,
   attachedChainKeys,
   describeRoleFallback,
   friendlyModelName,
@@ -24,24 +26,11 @@ import {
 } from "../roleCards";
 import type { ModelDraftState } from "../modelDraft";
 import { attachedTitle, configFromDraft } from "../modelDraft";
-import { AgentFlow, type AgentFlowNode } from "./AgentFlow";
+import { agentFlowNodes } from "./AgentFlow";
 import { ModelPicker } from "./ModelPicker";
-import { ChainChip, ThinkingSegment } from "./ModelsSection";
+import { ChainChip, ThinkingSegment } from "./ModelDraftWidgets";
 
-/** AgentFlow 与 AgentRow 共用的节点数据（草稿视角的「当前使用」+ 草稿状态）。 */
-export function agentFlowNodes(state: ModelDraftState): AgentFlowNode[] {
-  const { config, draft, modelsList } = state;
-  const view = configFromDraft(config, draft);
-  return config.agents.map((agent) => ({
-    agent,
-    effective: resolveAgentEffective(agent, view.agentOverrides[agent.name], view.roles, modelsList),
-    disabled: draft.disabled.has(agent.name),
-    advisor: draft.advisor.get(agent.name) ?? "default",
-  }));
-}
-
-export function AgentsSection(props: { state: ModelDraftState; showFlow?: boolean }) {
-  const showFlow = props.showFlow ?? true;
+export function AgentsSection(props: { state: ModelDraftState }) {
   const s = props.state;
   const { config, draft, modelsList } = s;
   // 「当前使用」按草稿视角重算：picker 一改就更新，不必等保存。
@@ -74,9 +63,6 @@ export function AgentsSection(props: { state: ModelDraftState; showFlow?: boolea
         />
         {config.agents.length === 0 ? (
           <div className="pane-note">没有可配置的 Agent。</div>
-        ) : null}
-        {showFlow && config.agents.length > 0 ? (
-          <AgentFlow nodes={agentNodes} orchestratorText={s.orchestratorText} />
         ) : null}
         {agentNodes.map(({ agent, row, effective, disabled, advisor }) => (
           <AgentRow
@@ -208,7 +194,7 @@ function AgentRow(props: {
       : [];
   return (
     <div className="agent-row" data-testid={`agent-row-${agent.name}`}>
-      <div className="agent-main">
+      <div>
         <div className="agent-head">
           <span className="mono">{agent.name}</span>
           {agent.source === "user" ? <span className="badge badge-fork">自定义</span> : null}
@@ -274,13 +260,6 @@ function AgentRow(props: {
   );
 }
 
-
-/** Vibe 工作会话两档：fast→sonic、good→task（omp `vibe_spawn` 的档位路由）。 */
-const VIBE_TIERS = [
-  // fast 无角色链：`sonic` 是 agent 名而非模型角色，按 §16.8 匹配代码不会命中该 key 的链（未验证）。
-  { tier: "fast", title: "快速工作会话", agent: "sonic", roleKey: null },
-  { tier: "good", title: "强力工作会话", agent: "task", roleKey: "task" },
-] as const;
 
 /**
  * 按名取 Agent 定义；缺失时托底为空默认（只读展示走覆盖或跟随会话，
@@ -392,7 +371,7 @@ function VibeTierRow(props: {
   const label = `Vibe ${title}（${tier}）`;
   return (
     <div className="vibe-tier" data-testid={`vibe-tier-${tier}`}>
-      <div className="agent-main">
+      <div>
         <div className="agent-head">
           <strong>{title}</strong>
           <span className="badge badge-grey">{tier}</span>

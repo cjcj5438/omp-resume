@@ -3,7 +3,7 @@
  * 单操作模型（useOmpOp）在此创建并传入插件与技能面板；模型/Agent/MCP 面板不感知
  * omp 操作，用 fieldset 在忙时禁用其内部按钮（结构保持不变，不重挂载）。
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   checkOmpUpdate,
   normalizeError,
@@ -12,6 +12,7 @@ import {
   upgradeOmpPlugins,
 } from "../api";
 import { errorText } from "../format";
+import { useModelDraft, type ModelDraftState } from "../modelDraft";
 import type { OmpUpdateCheck, PluginUpgradeChange } from "../types";
 import { McpPanel } from "./McpPanel";
 import { MemoryPanel } from "./MemoryPanel";
@@ -56,6 +57,7 @@ const TABS: { key: ManageTab; label: string }[] = [
 
 export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessionIds, onOpenSession }: ManageViewProps) {
   const op = useOmpOp();
+  const draftLoad = useModelDraft(onToast);
   const alive = useAlive();
   const [tab, setTab] = useState<ManageTab>("models");
   const [refreshToken, setRefreshToken] = useState(0);
@@ -142,6 +144,15 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
       if (latest !== null) onCheckOmp();
     }
   }
+  /** 模型/Agent 共用一份草稿：加载与错误外壳收在这里，两页只渲染 ready 态。 */
+  const draftPanel = (render: (state: ModelDraftState) => ReactNode): ReactNode =>
+    draftLoad.status === "loading" ? <div className="pane-note">正在读取模型配置…</div>
+    : draftLoad.status === "error" ? (
+      <div className="manage-section"><div className="banner banner-error" role="alert">
+        <div>{draftLoad.loadError ?? "读取模型配置失败"}</div>
+        <button type="button" className="btn btn-small" onClick={() => void draftLoad.loadConfig()}>重试</button>
+      </div></div>)
+    : render(draftLoad.state);
 
   return (
     <main className="detail manage">
@@ -166,7 +177,7 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
       {summary !== null ? (
         <ul className="manage-summary" aria-label="全部更新结果">
           {summary.map((s) => (
-            <li key={s.name} className={s.ok ? "manage-step-ok" : "manage-step-fail"}>
+            <li key={s.name} className={s.ok ? undefined : "manage-step-fail"}>
               {s.ok ? "✔" : "✘"} {s.name}：{s.detail}
             </li>
           ))}
@@ -197,11 +208,11 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
         {tab === "models" ? (
           <fieldset disabled={busy} className="manage-fieldset">
             {/* 忙时整页禁用是故意的：bench 虽不占单写锁，但全部更新期间避免一切中途编辑。 */}
-            <ModelsTab onToast={onToast} />
+            {draftPanel((s) => <ModelsTab onToast={onToast} state={s} />)}
           </fieldset>
         ) : tab === "agents" ? (
           <fieldset disabled={busy} className="manage-fieldset">
-            <AgentsTab onToast={onToast} />
+            {draftPanel((s) => <AgentsTab state={s} />)}
           </fieldset>
         ) : tab === "plugins" ? (
           <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} />

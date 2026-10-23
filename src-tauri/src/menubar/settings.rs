@@ -6,8 +6,8 @@
 //!   可重选，备注丢了不行）；
 //! - 无 revision：唯一写者是托盘菜单勾选（主线程串行），不做跨进程协同。
 
-use std::fs::OpenOptions;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -84,30 +84,10 @@ pub fn save(data_dir: &Path, settings: &Settings) -> std::io::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(&file)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     bytes.push(b'\n');
-
-    let tmp_path = data_dir.join(format!(".settings.json.{}.tmp", std::process::id()));
-    // 同进程串行（菜单主线程），不同进程撞名概率极低：撞了就先删再建。
-    let _ = std::fs::remove_file(&tmp_path);
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true).mode(0o600);
-    let mut tmp = opts.open(&tmp_path)?;
-    struct Guard(PathBuf);
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let guard = Guard(tmp_path.clone());
-    use std::io::Write;
-    tmp.write_all(&bytes)?;
-    tmp.set_permissions(
-        existing_permissions.unwrap_or_else(|| std::fs::Permissions::from_mode(0o600)),
-    )?;
-    tmp.sync_all()?;
-    drop(tmp);
-    std::fs::rename(&tmp_path, &path)?;
-    std::mem::forget(guard);
-    Ok(())
+    let pending =
+        crate::util::PendingAtomic::stage(&path, &bytes, "settings.json", existing_permissions)
+            .map_err(|(_, e)| e)?;
+    pending.commit(&path).map_err(|(_, e)| e)
 }
 
 #[cfg(test)]

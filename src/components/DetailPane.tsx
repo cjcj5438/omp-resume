@@ -1,10 +1,11 @@
 /** 详情面板：会话头、工具栏（在 iTerm 继续 / 删除）、对话/树两个标签页。 */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getConversation } from "../api";
-import type { AppError, Conversation, MetaSnapshot, SessionMeta, SessionSummary } from "../types";
+import type { AppError, MetaSnapshot, SessionMeta, SessionSummary } from "../types";
 import { displayCwd, formatFullTime, formatSize } from "../format";
 import type { ContinueOutcome } from "../flows";
 import { copyText } from "../clipboard";
+import { useAsyncData } from "./useAsyncData";
 import { ConversationView } from "./ConversationView";
 import { TreeView } from "./TreeView";
 import { SessionBadges } from "./ui";
@@ -51,36 +52,14 @@ export function DetailPane({
   onMetaSnapshot,
 }: DetailPaneProps) {
   const [tab, setTab] = useState<Tab>("conv");
-  const [conv, setConv] = useState<{
-    data: Conversation | null;
-    loading: boolean;
-    error: AppError | null;
-  }>({ data: null, loading: false, error: null });
-
-  const loadConv = useCallback(async (path: string) => {
-    setConv((s) => ({ ...s, loading: true }));
-    try {
-      const data = await getConversation({ path });
-      setConv({ data, loading: false, error: null });
-    } catch (e) {
-      setConv({ data: null, loading: false, error: e as AppError });
-    }
-  }, []);
-
   const path = session?.path ?? null;
   const formatSupported = session?.formatSupported ?? true;
+  const conv = useAsyncData(() => getConversation({ path: path! }), [path, formatSupported, refreshKey], { enabled: path !== null && formatSupported });
 
-  // 切换会话：回到对话标签并清空旧内容。
+  // 切换会话：回到对话标签。
   useEffect(() => {
     setTab("conv");
-    setConv({ data: null, loading: false, error: null });
   }, [path]);
-
-  // 加载对话；refreshKey 变化（从节点继续后）同步刷新。
-  useEffect(() => {
-    if (!path || !formatSupported) return;
-    void loadConv(path);
-  }, [path, formatSupported, refreshKey, loadConv]);
 
   // 无会话也允许批量删除（勾选行存在时保留工具栏）。
   const showToolbar = session != null || checkedCount > 0;
@@ -212,7 +191,7 @@ export function DetailPane({
                   conversation={conv.data}
                   loading={conv.loading}
                   error={conv.error}
-                  onRetry={() => void loadConv(session.path)}
+                  onRetry={conv.reload}
                   scrollToBottom
                 />
               )}

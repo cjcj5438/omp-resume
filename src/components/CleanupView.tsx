@@ -50,6 +50,8 @@ export function CleanupView({
   const [days, setDays] = useState(30);
   const [topN, setTopN] = useState(10);
   const [rescan, setRescan] = useState(0);
+  const [daysText, setDaysText] = useState("30");
+  const [topNText, setTopNText] = useState("10");
   const [candidates, setCandidates] = useState<CleanupCandidate[] | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -96,7 +98,7 @@ export function CleanupView({
     selectableCount > 0 && list.filter(isSelectable).every((c) => checked.has(c.path));
 
   return (
-    <main className="detail cleanup-view">
+    <main className="detail">
       <header className="detail-head">
         <div className="detail-title-row">
           <h1 className="detail-title">清理</h1>
@@ -115,14 +117,15 @@ export function CleanupView({
             type="number"
             className="filter-input cleanup-number"
             min={1}
-            value={days}
+            value={daysText}
             aria-label="久未更新的天数"
             onChange={(e) => {
+              setDaysText(e.target.value);
               const n = positiveInt(e.target.value, 1);
               if (n !== null) setDays(n);
             }}
+            onBlur={() => setDaysText(String(days))}
           />
-          天
         </label>
         <label className="cleanup-field">
           体积前
@@ -130,16 +133,17 @@ export function CleanupView({
             type="number"
             className="filter-input cleanup-number"
             min={0}
-            value={topN}
+            value={topNText}
             aria-label="体积前 N 名"
             onChange={(e) => {
+              setTopNText(e.target.value);
               const n = positiveInt(e.target.value, 0);
               if (n !== null) setTopN(n);
             }}
+            onBlur={() => setTopNText(String(topN))}
           />
-          名
         </label>
-        <div className="cleanup-sort" role="group" aria-label="排序方向">
+        <div className="seg" role="group" aria-label="排序方向">
           <button
             type="button"
             className="btn"

@@ -15,7 +15,6 @@ import type {
   DeleteResult,
   DeleteSessionsRequest,
   ErrorCode,
-  GetConfigResult,
   GetConversationRequest,
   GetTreeRequest,
   ListSessionsResult,
@@ -111,10 +110,6 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   } catch (e) {
     throw normalizeError(e);
   }
-}
-
-export function getConfig(): Promise<GetConfigResult> {
-  return call("get_config");
 }
 
 export function listSessions(): Promise<ListSessionsResult> {

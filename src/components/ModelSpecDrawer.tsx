@@ -173,7 +173,6 @@ export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
           setFormError("名称不能换行");
           return null;
         }
-        // eslint-disable-next-line no-control-regex
         if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(trimmedName)) {
           setFormError("名称包含非法字符");
           return null;
@@ -285,7 +284,6 @@ export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
   const specKey = spec === null ? "null" : `${spec.provider}/${spec.id}:${revision}`;
   useEffect(() => {
     setBaseline(baselineFromSpec(spec));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [specKey]);
 
   const saveDisabled = saving || reloading || touched.size === 0 || (spec?.costTiered ?? false);

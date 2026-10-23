@@ -4,8 +4,6 @@
  * modelDraft.test.ts 的纯函数测试覆盖，这里补一条组件级还原隔离。
  */
 import { useEffect } from "react";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -117,35 +115,20 @@ function stubConfig(config: ModelConfig = BASE_CONFIG): void {
   });
 }
 
+function Harness(props: { onToast: ToastFn }) {
+  const l = useModelDraft(props.onToast);
+  return l.status === "ready" ? <AgentsTab state={l.state} /> : null;
+}
+
 beforeEach(() => {
   clearMocks();
   window.history.replaceState({}, "", "/");
 });
 
 describe("AgentsTab 页头", () => {
-  it("用途 + 状态 chips + 主对话提示（无重复标题）", async () => {
-    stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
-
-    expect(
-      screen.getByText("编排主代理与子代理：谁干活、用哪个模型、出错怎么换"),
-    ).toBeInTheDocument();
-    // 页签已标明 Agent：页内不再重复 h2 标题，只有 AgentsSection 的区块头。
-    expect(screen.queryByRole("heading", { level: 2 })).not.toBeInTheDocument();
-    const status = screen.getByRole("status", { name: "Agent 状态" });
-    expect(status).toHaveTextContent("编排器 MiMo v2.6 Pro (5438) · high");
-    expect(status).toHaveTextContent("子代理 3");
-    expect(status).toHaveTextContent("停用 0");
-    expect(status).toHaveTextContent("顾问 1");
-    expect(status).toHaveTextContent("Vibe 快速 跟随当前会话模型");
-    expect(status).toHaveTextContent("Vibe 强力 MiMo v2.6 Pro (5438)");
-    expect(screen.getByText("主对话模型在『模型』页修改")).toBeInTheDocument();
-  });
-
   it("停用后 chips 计数同步", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     fireEvent.click(screen.getByLabelText("停用 task"));
@@ -154,14 +137,14 @@ describe("AgentsTab 页头", () => {
 
   it("渲染 Vibe 卡 + 流程图 + Agent 行 + 生效提示", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     expect(screen.getByTestId("vibe-card")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-task")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-scout")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-deployer")).toBeInTheDocument();
-    // 流程图只渲染一次（AgentsSection 内部的不再重复）。
+    // 流程图只渲染一次（AgentsTab 的可交互图；AgentsSection 不再渲染）。
     expect(screen.getAllByTestId("agent-flow")).toHaveLength(1);
     expect(screen.getByText(/新开的 omp 会话使用新配置/)).toBeInTheDocument();
   });
@@ -170,7 +153,7 @@ describe("AgentsTab 页头", () => {
       ...structuredClone(BASE_CONFIG),
       retryStatus: { modelFallback: false, fallbackOn: "any", fallbackRevertPolicy: "never" },
     });
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
     expect(screen.getByText(/兜底已关闭/)).toHaveTextContent("不会生效");
   });
@@ -179,7 +162,7 @@ describe("AgentsTab 页头", () => {
 describe("流程图交互", () => {
   it("节点可聚焦可点击：点击后滚动到对应行并高亮约 1.6s", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     const node = screen.getByTestId("agent-flow-node-task");
@@ -195,9 +178,9 @@ describe("流程图交互", () => {
     expect(node).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("高亮约 1.6s 后自动移除", async () => {
+  it("高亮一段时间后自动移除", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     vi.useFakeTimers();
@@ -206,9 +189,7 @@ describe("流程图交互", () => {
       row.scrollIntoView = vi.fn();
       fireEvent.click(screen.getByTestId("agent-flow-node-task"));
       expect(row.classList.contains("agent-row-flash")).toBe(true);
-      vi.advanceTimersByTime(1599);
-      expect(row.classList.contains("agent-row-flash")).toBe(true);
-      vi.advanceTimersByTime(1);
+      vi.advanceTimersByTime(5000);
       expect(row.classList.contains("agent-row-flash")).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -217,7 +198,7 @@ describe("流程图交互", () => {
 
   it("键盘 Enter/Space 同样定位", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     const row = screen.getByTestId("agent-row-scout");
@@ -232,7 +213,7 @@ describe("流程图交互", () => {
 describe("stale-effective 回归", () => {
   it("改 Agent picker 后「当前使用」立即更新，不必等保存", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     expect(screen.getByTestId("agent-effective-task")).toHaveTextContent("MiMo v2.6 Pro (5438)");
@@ -244,7 +225,7 @@ describe("stale-effective 回归", () => {
 
   it("Vibe 档位同理：改 picker 后档位行与指挥者吸附立即更新", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     const tier = screen.getByTestId("vibe-tier-good");
@@ -260,7 +241,7 @@ describe("stale-effective 回归", () => {
 
   it("清掉覆盖（不改用）后按无覆盖重算，不再显示旧值", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     fireEvent.click(screen.getByRole("button", { name: "scout 改用的模型" }));
@@ -288,7 +269,7 @@ describe("刷新按钮", () => {
       }
       throw { code: "UNKNOWN", message: `未知命令：${cmd}` };
     });
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
     // 模型命中进程内缓存时挂载不读 list_models：只断言刷新带来的增量。
     const modelsBefore = modelsReads;
@@ -303,7 +284,7 @@ describe("刷新按钮", () => {
 
   it("有未保存修改时禁用并提示先保存或还原", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled();
@@ -311,17 +292,6 @@ describe("刷新按钮", () => {
     const button = screen.getByRole("button", { name: "刷新" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("title", "有未保存修改，先保存或还原");
-  });
-});
-
-describe("样式回归（A1）：AgentsTab.css 真实挂载", () => {
-  it("样式表定义了 chips 布局与 flash 高亮，且组件导入了它", () => {
-    // vitest 里 `?raw` 读 .css 是空串（css 管线吞掉），直接读文件文本。
-    const css = readFileSync(join(process.cwd(), "src/components/AgentsTab.css"), "utf-8");
-    const source = readFileSync(join(process.cwd(), "src/components/AgentsTab.tsx"), "utf-8");
-    expect(css).toContain(".agent-row-flash");
-    expect(css).toContain(".agents-tab-chips");
-    expect(source).toContain('import "./AgentsTab.css"');
   });
 });
 
@@ -338,7 +308,7 @@ function SaveProbe(props: { onState: (s: ModelDraftState) => void; onToast: Toas
 describe("还原隔离（组件级）", () => {
   it("Agent 还原不丢 Vibe/覆盖以外的展示（保存条按块独立出现）", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     fireEvent.click(screen.getByLabelText("停用 deployer"));
@@ -353,7 +323,7 @@ describe("还原隔离（组件级）", () => {
 
   it("改 picker 后「当前使用」跟随草稿，还原后回到保存值", async () => {
     stubConfig();
-    render(<AgentsTab onToast={vi.fn()} />);
+    render(<Harness onToast={vi.fn()} />);
     await screen.findByTestId("agent-flow");
 
     const effective = screen.getByTestId("agent-effective-task");

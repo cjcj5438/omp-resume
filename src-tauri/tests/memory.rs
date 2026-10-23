@@ -530,17 +530,29 @@ fn graph_kinds_and_ordering() {
     assert_eq!(g.unlinked_count, 1);
     assert_eq!(g.edges.len(), 6);
     // 悬挂（ghost）与伪节点（gist_/fact_）端点一律丢弃。
-    assert!(g.edges.iter().all(|e| !e.source.starts_with("gist_") && !e.target.starts_with("gist_")));
-    assert!(g.edges.iter().all(|e| e.source != "ghost" && e.target != "ghost"));
+    assert!(g
+        .edges
+        .iter()
+        .all(|e| !e.source.starts_with("gist_") && !e.target.starts_with("gist_")));
+    assert!(g
+        .edges
+        .iter()
+        .all(|e| e.source != "ghost" && e.target != "ghost"));
     assert!(g.edges.iter().all(|e| !e.target.starts_with("fact_")));
     let kinds: Vec<(&str, &str, &str)> = g
         .edges
         .iter()
-        .map(|e| (e.source.as_str(), e.target.as_str(), match e.kind {
-            omp_resume_lib::model::MemoryGraphEdgeKind::Summary => "summary",
-            omp_resume_lib::model::MemoryGraphEdgeKind::Related => "related",
-            omp_resume_lib::model::MemoryGraphEdgeKind::Context => "context",
-        }))
+        .map(|e| {
+            (
+                e.source.as_str(),
+                e.target.as_str(),
+                match e.kind {
+                    omp_resume_lib::model::MemoryGraphEdgeKind::Summary => "summary",
+                    omp_resume_lib::model::MemoryGraphEdgeKind::Related => "related",
+                    omp_resume_lib::model::MemoryGraphEdgeKind::Context => "context",
+                },
+            )
+        })
         .collect();
     assert!(kinds.contains(&("e1", "w1", "summary")));
     assert!(kinds.contains(&("e1", "w2", "summary")));
@@ -553,7 +565,10 @@ fn graph_kinds_and_ordering() {
     assert_eq!(ids, vec!["e1", "w2", "w3", "w1", "e2"]);
     assert_eq!(g.nodes[0].degree, 4);
     assert!(g.nodes.iter().all(|n| n.snippet.chars().count() <= 80));
-    assert_eq!(g.nodes[0].created_at.as_deref(), Some("2026-10-05T10:00:00.000Z"));
+    assert_eq!(
+        g.nodes[0].created_at.as_deref(),
+        Some("2026-10-05T10:00:00.000Z")
+    );
     assert_eq!(g.nodes[3].recall_count, 3);
     // 空库：空图而非报错。
     let empty = f.bank("b-empty-graph");
@@ -591,7 +606,10 @@ fn graph_truncation_caps_nodes() {
     assert!(g.nodes.iter().any(|n| n.id == "e0"));
     assert!(g.nodes.iter().all(|n| n.id != "w-alone"));
     let kept: std::collections::HashSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
-    assert!(g.edges.iter().all(|e| kept.contains(e.source.as_str()) && kept.contains(e.target.as_str())));
+    assert!(g
+        .edges
+        .iter()
+        .all(|e| kept.contains(e.source.as_str()) && kept.contains(e.target.as_str())));
     assert_eq!(g.edges.len(), 199);
 }
 

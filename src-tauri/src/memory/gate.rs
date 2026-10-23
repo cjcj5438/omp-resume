@@ -57,7 +57,6 @@ pub(crate) fn parse_holders(output: &str) -> BTreeMap<u32, String> {
     holders
 }
 
-/// 查 `files` 的持有者（`lsof` 路径与超时可注入，供测试）。
 pub(crate) fn holders_for_files_with(
     files: &[PathBuf],
     lsof_bin: &Path,
@@ -66,37 +65,13 @@ pub(crate) fn holders_for_files_with(
     if files.is_empty() {
         return Ok(Vec::new());
     }
-    let mut cmd = std::process::Command::new(lsof_bin);
-    cmd.args(["-nP", "-F", "pcn", "--"]);
-    for file in files {
-        cmd.arg(file);
-    }
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::null());
-    let mut child = cmd.spawn().map_err(|_| ProbeFailed)?;
-    // 硬超时等待（同 `occupant.rs`：轮询 try_wait，超时则 kill）。
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ProbeFailed);
-            }
-        }
-    }
-    let output = child.wait_with_output().map_err(|_| ProbeFailed)?;
+    let output = crate::occupant::run_lsof(lsof_bin, "pcn", files, timeout).ok_or(ProbeFailed)?;
     // exit 0 = 有命中，1 = 无命中；其余 ⇒ 失败。
-    match output.status.code() {
+    match output.code {
         Some(0) | Some(1) => {}
         _ => return Err(ProbeFailed),
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = output.stdout;
     let holders = parse_holders(&text);
     if !holders.is_empty() {
         return Ok(holders

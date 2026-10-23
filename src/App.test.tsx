@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import App from "./App";
 import { FIXTURE_SESSIONS, buildListResult } from "./dev/fixtures";
 import { installMockBackend } from "./dev/mockBackend";
+import type { ListSessionsResult } from "./types";
 
 const S1 = "🎛️ DEMO: 构建可视化配置桌面应用";
 const S2 = "🏠 DEMO4: 修复示例代理连接失败";
@@ -618,5 +619,54 @@ describe("记忆库跳转来源会话", () => {
 
     expect(screen.queryByRole("heading", { name: "管理" })).toBeNull();
     expect(document.querySelector(".detail-head")).not.toBeNull();
+  });
+});
+
+describe("并发 load 与 toast 上限", () => {
+  it("删除时与进行中的 load 并发，删除后列表反映删除", async () => {
+    const gate = Promise.withResolvers<ListSessionsResult>();
+    let lists = 0;
+    let deleted = false;
+    mockIPC(async (cmd: string) => {
+      if (cmd === "list_sessions") {
+        lists += 1;
+        if (lists === 1) return gate.promise;
+        return buildListResult(deleted ? FIXTURE_SESSIONS.slice(1) : FIXTURE_SESSIONS);
+      }
+      if (cmd === "delete_sessions") {
+        deleted = true;
+        return [{ path: FIXTURE_SESSIONS[0].summary.path, ok: true }];
+      }
+      if (cmd === "get_meta") return { revision: 0, sessions: {} };
+      if (cmd === "get_conversation") return { path: "x", leafId: null, targetId: "", items: [] };
+      if (cmd === "get_tree") return { path: "x", leafId: null, rootIds: [], activePathIds: [], nodes: [] };
+      if (cmd === "get_omp_version") throw { code: "OMP_NOT_FOUND", message: "未安装" };
+      return null;
+    });
+    render(<App />);
+    // 首个 load 被门住时触发删除：删除内部 await load() 命中 inFlight → rerun。
+    await waitFor(() => expect(lists).toBe(1));
+    gate.resolve(buildListResult(FIXTURE_SESSIONS));
+    await screen.findByText(S1);
+    fireEvent.click(checkOf(S1));
+    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
+    await screen.findByText(/成功删除 1 个会话/);
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(screen.queryByText(S1)).toBeNull());
+  });
+
+  it("toast 超过 5 条丢弃最旧", async () => {
+    window.history.replaceState(null, "", "/?fail=omp_update_check");
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+    const btn = screen.getByRole("button", { name: "检查 omp 更新" });
+    for (let i = 0; i < 6; i += 1) {
+      fireEvent.click(btn);
+      await screen.findAllByText("mock 强制失败：omp_update_check");
+    }
+    expect(document.querySelectorAll(".toast").length).toBeLessThanOrEqual(5);
+    expect(document.querySelectorAll(".toast").length).toBeGreaterThan(1);
   });
 });

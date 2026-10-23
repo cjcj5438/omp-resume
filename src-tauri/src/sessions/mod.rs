@@ -31,26 +31,12 @@ pub const FIRST_USER_MESSAGE_CHARS: usize = 200;
 pub const OTHER_TEXT_CHARS: usize = 2000;
 /// 树节点 preview 截断（字符）。
 pub const TREE_PREVIEW_CHARS: usize = 80;
-/// 分支标记 customType。
-pub const MARKER_CUSTOM_TYPE: &str = "omp-resume-branch";
 /// 无标题兜底。
 pub const UNTITLED: &str = "(无标题)";
 
 // ---------------------------------------------------------------------------
 // 共用小工具
 // ---------------------------------------------------------------------------
-
-/// 按 UTF-8 字节上限截断（字符边界），返回 (文本, 是否截断)。
-pub fn truncate_bytes(s: &str, cap: usize) -> (String, bool) {
-    if s.len() <= cap {
-        return (s.to_string(), false);
-    }
-    let mut end = cap;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    (format!("{}{}", &s[..end], TRUNC_SUFFIX), true)
-}
 
 /// 按字符数截断，超长时保留前 n-1 字 + `…`（总长 ≤ n）。
 pub fn truncate_chars(s: &str, n: usize) -> String {

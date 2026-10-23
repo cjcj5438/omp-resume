@@ -1,5 +1,14 @@
+use super::cache::UsageCache;
+use super::health::{classify_error, health_at};
+use super::redact::sanitize_message;
+use super::stats::{session_usage, stats_at, usage_stats};
+use super::window::{in_window, local_millis, window_at};
 use super::*;
-use chrono::{FixedOffset, MappedLocalTime, NaiveDate, NaiveDateTime, Timelike};
+use crate::model::{ErrorKind, TrendUnit};
+use chrono::{
+    DateTime, Duration, FixedOffset, MappedLocalTime, NaiveDate, NaiveDateTime, TimeZone, Timelike,
+    Utc,
+};
 use serde_json::json;
 use std::fs::{self, File};
 use std::io::Write;
@@ -977,30 +986,46 @@ fn real_usage_readonly() {
     assert!(stats.total.cost.total >= 0.0);
 }
 
-/// 最小 DST 测试时区：`gap_day` 当天本地 `[gap_hour, gap_hour+1)` 不存在
-/// （1 小时缺口）；缺口之前偏移 +00:00，之后 +01:00，
-/// 跳变瞬间 T = gap_day gap_hour:00 UTC。
+/// 最小 DST 测试时区：`day` 当天本地 `[hour, hour+1)` 缺失（gap）或重复（fold）；
+/// 跳变瞬间 T = day hour:00 UTC；T 之前偏移 before，之后 after。
 #[derive(Clone, Copy)]
-struct GapTz {
-    gap_day: NaiveDate,
-    gap_hour: u32,
+struct ShiftTz {
+    day: NaiveDate,
+    hour: u32,
+    before: FixedOffset,
+    after: FixedOffset,
+    gap: bool,
 }
 
-impl GapTz {
-    fn before() -> FixedOffset {
-        FixedOffset::east_opt(0).unwrap()
+impl ShiftTz {
+    /// 春季缺口：本地 `[hour, hour+1)` 不存在，偏移 +00:00 → +01:00。
+    fn gap(day: NaiveDate, hour: u32) -> Self {
+        Self {
+            day,
+            hour,
+            before: FixedOffset::east_opt(0).unwrap(),
+            after: FixedOffset::east_opt(3600).unwrap(),
+            gap: true,
+        }
     }
 
-    fn after() -> FixedOffset {
-        FixedOffset::east_opt(3600).unwrap()
+    /// 秋季回拨：本地 01:00–02:00 出现两次，偏移 +01:00 → +00:00。
+    fn fold(day: NaiveDate) -> Self {
+        Self {
+            day,
+            hour: 1,
+            before: FixedOffset::east_opt(3600).unwrap(),
+            after: FixedOffset::east_opt(0).unwrap(),
+            gap: false,
+        }
     }
 
     fn transition_utc(&self) -> NaiveDateTime {
-        self.gap_day.and_hms_opt(self.gap_hour, 0, 0).unwrap()
+        self.day.and_hms_opt(self.hour, 0, 0).unwrap()
     }
 }
 
-impl TimeZone for GapTz {
+impl TimeZone for ShiftTz {
     type Offset = FixedOffset;
 
     fn from_offset(_offset: &Self::Offset) -> Self {
@@ -1009,39 +1034,40 @@ impl TimeZone for GapTz {
 
     fn offset_from_local_date(&self, local: &NaiveDate) -> MappedLocalTime<FixedOffset> {
         use std::cmp::Ordering::*;
-        match local.cmp(&self.gap_day) {
-            Less => MappedLocalTime::Single(Self::before()),
-            Greater => MappedLocalTime::Single(Self::after()),
-            // 缺口日横跨两个偏移（仅 deprecated 的 from_local_date 用到）。
-            Equal => MappedLocalTime::Ambiguous(Self::before(), Self::after()),
+        match local.cmp(&self.day) {
+            Less => MappedLocalTime::Single(self.before),
+            Greater => MappedLocalTime::Single(self.after),
+            // 跳变日横跨两个偏移（仅 deprecated 的 from_local_date 用到）。
+            Equal => MappedLocalTime::Ambiguous(self.before, self.after),
         }
     }
 
     fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> MappedLocalTime<FixedOffset> {
         use std::cmp::Ordering::*;
-        match local.date().cmp(&self.gap_day) {
-            Less => MappedLocalTime::Single(Self::before()),
-            Greater => MappedLocalTime::Single(Self::after()),
-            Equal if local.hour() < self.gap_hour => MappedLocalTime::Single(Self::before()),
-            Equal if local.hour() > self.gap_hour => MappedLocalTime::Single(Self::after()),
-            // 缺口内的本地时刻不存在。
-            _ => MappedLocalTime::None,
+        match local.date().cmp(&self.day) {
+            Less => MappedLocalTime::Single(self.before),
+            Greater => MappedLocalTime::Single(self.after),
+            Equal if local.hour() < self.hour => MappedLocalTime::Single(self.before),
+            Equal if local.hour() > self.hour => MappedLocalTime::Single(self.after),
+            // 缺口内的本地时刻不存在；回拨的重复小时出现两次。
+            _ if self.gap => MappedLocalTime::None,
+            _ => MappedLocalTime::Ambiguous(self.before, self.after),
         }
     }
 
     fn offset_from_utc_date(&self, utc: &NaiveDate) -> FixedOffset {
-        if *utc < self.gap_day {
-            Self::before()
+        if *utc < self.day {
+            self.before
         } else {
-            Self::after()
+            self.after
         }
     }
 
     fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> FixedOffset {
         if *utc < self.transition_utc() {
-            Self::before()
+            self.before
         } else {
-            Self::after()
+            self.after
         }
     }
 }
@@ -1050,10 +1076,7 @@ impl TimeZone for GapTz {
 fn dst_gap_swallowing_24h_start_keeps_window_bounded() {
     // 缺口：2026-03-29 本地 02:00–03:00 不存在，偏移 +00:00 → +01:00。
     let gap_day = NaiveDate::from_ymd_opt(2026, 3, 29).unwrap();
-    let tz = GapTz {
-        gap_day,
-        gap_hour: 2,
-    };
+    let tz = ShiftTz::gap(gap_day, 2);
     // now UTC 03-30 00:30 = 本地 03-30 01:30；整点 −23h = 本地 03-29 02:00，正落缺口。
     let at = now("2026-03-30T00:30:00Z");
     let gap_naive = gap_day.and_hms_opt(2, 0, 0).unwrap();
@@ -1082,10 +1105,7 @@ fn dst_gap_swallowing_24h_start_keeps_window_bounded() {
 fn dst_gap_swallowing_midnight_keeps_windows_bounded() {
     // 缺口：2026-03-29 本地 00:00–01:00 不存在（午夜跳变），偏移 +00:00 → +01:00。
     let gap_day = NaiveDate::from_ymd_opt(2026, 3, 29).unwrap();
-    let tz = GapTz {
-        gap_day,
-        gap_hour: 0,
-    };
+    let tz = ShiftTz::gap(gap_day, 0);
     let midnight = gap_day.and_hms_opt(0, 0, 0).unwrap();
     assert_eq!(local_millis(&tz, &midnight), None);
 
@@ -1127,77 +1147,11 @@ fn dst_gap_swallowing_midnight_keeps_windows_bounded() {
     }
 }
 
-/// 最小“秋季回拨”测试时区：`fold_day` 当天本地 01:00–02:00 出现两次；
-/// 回拨瞬间 T = fold_day 01:00 UTC：T 之前偏移 +01:00，之后 +00:00。
-#[derive(Clone, Copy)]
-struct FoldTz {
-    fold_day: NaiveDate,
-}
-
-impl FoldTz {
-    fn before() -> FixedOffset {
-        FixedOffset::east_opt(3600).unwrap()
-    }
-
-    fn after() -> FixedOffset {
-        FixedOffset::east_opt(0).unwrap()
-    }
-
-    fn transition_utc(&self) -> NaiveDateTime {
-        self.fold_day.and_hms_opt(1, 0, 0).unwrap()
-    }
-}
-
-impl TimeZone for FoldTz {
-    type Offset = FixedOffset;
-
-    fn from_offset(_offset: &Self::Offset) -> Self {
-        unreachable!("测试路径不经 offset 反查时区");
-    }
-
-    fn offset_from_local_date(&self, local: &NaiveDate) -> MappedLocalTime<FixedOffset> {
-        use std::cmp::Ordering::*;
-        match local.cmp(&self.fold_day) {
-            Less => MappedLocalTime::Single(Self::before()),
-            Greater => MappedLocalTime::Single(Self::after()),
-            Equal => MappedLocalTime::Ambiguous(Self::before(), Self::after()),
-        }
-    }
-
-    fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> MappedLocalTime<FixedOffset> {
-        use std::cmp::Ordering::*;
-        match local.date().cmp(&self.fold_day) {
-            Less => MappedLocalTime::Single(Self::before()),
-            Greater => MappedLocalTime::Single(Self::after()),
-            Equal if local.hour() < 1 => MappedLocalTime::Single(Self::before()),
-            Equal if local.hour() > 1 => MappedLocalTime::Single(Self::after()),
-            // 回拨的重复小时：本地 01:xx 出现两次。
-            _ => MappedLocalTime::Ambiguous(Self::before(), Self::after()),
-        }
-    }
-
-    fn offset_from_utc_date(&self, utc: &NaiveDate) -> FixedOffset {
-        if *utc < self.fold_day {
-            Self::before()
-        } else {
-            Self::after()
-        }
-    }
-
-    fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> FixedOffset {
-        if *utc < self.transition_utc() {
-            Self::before()
-        } else {
-            Self::after()
-        }
-    }
-}
-
 #[test]
 fn dst_fold_second_occurrence_keeps_24h_start_exact() {
     // 回拨：2026-10-25 本地 01:00–02:00 出现两次，偏移 +01:00 → +00:00。
     let fold_day = NaiveDate::from_ymd_opt(2026, 10, 25).unwrap();
-    let tz = FoldTz { fold_day };
+    let tz = ShiftTz::fold(fold_day);
     // now 取在第二次出现：UTC 10-25 01:30 = 本地 01:30（+00:00）。
     let at = now("2026-10-25T01:30:00Z");
     // 前提：整点 naive 经 earliest() 取到第一次出现（UTC 00:00），比 now 所在整点早 1 小时。

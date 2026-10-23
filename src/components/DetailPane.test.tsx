@@ -1,11 +1,11 @@
 /** DetailPane 占用者行单测：有 occupant 显示应用/版本/PID，无则不显示。 */
 import { afterEach, describe, expect, it, beforeEach, vi } from "vitest";
-import { clearMocks } from "@tauri-apps/api/mocks";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DetailPane } from "./DetailPane";
 import { FIXTURE_SESSIONS } from "../dev/fixtures";
 import { installMockBackend } from "../dev/mockBackend";
-
+import type { SessionSummary } from "../types";
 const noop = () => {};
 const noContinue = async () => ({ notice: null });
 
@@ -138,5 +138,62 @@ describe("复制会话 ID", () => {
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith("复制失败，请手动选择复制", "error"),
     );
+  });
+});
+
+describe("快速切换会话", () => {
+  function renderPane(session: SessionSummary) {
+    return render(
+      <DetailPane
+        session={session}
+        gone={false}
+        checkedCount={0}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onDelete={noop}
+        onContinue={noContinue}
+        onToast={noop}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
+      />,
+    );
+  }
+
+  it("快速切换会话只显示最新对话", async () => {
+    const s1 = FIXTURE_SESSIONS[0].summary;
+    const s2 = FIXTURE_SESSIONS[1].summary;
+    const slow = Promise.withResolvers<unknown>();
+    mockIPC((cmd, args) => {
+      if (cmd === "get_conversation" && args && typeof args === "object" && "path" in args && args.path === s1.path) return slow.promise;
+      if (cmd === "get_conversation") return { path: s2.path, leafId: null, targetId: "", items: [{ kind: "user", text: "快会话的对话" }] };
+      if (cmd === "get_session_usage") return { cost: { total: 0, main: 0, background: 0, subagent: 0 }, messages: { user: 0, assistant: 0 }, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, models: [] };
+      throw `no handler for ${cmd}`;
+    });
+    const view = renderPane(s1);
+    view.rerender(
+      <DetailPane
+        session={s2}
+        gone={false}
+        checkedCount={0}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onDelete={noop}
+        onContinue={noContinue}
+        onToast={noop}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
+      />,
+    );
+    expect(await screen.findByText("快会话的对话")).toBeTruthy();
+    slow.resolve({ path: s1.path, leafId: null, targetId: "", items: [{ kind: "user", text: "慢会话的对话" }] });
+    await waitFor(() => expect(screen.queryByText("慢会话的对话")).toBeNull());
   });
 });

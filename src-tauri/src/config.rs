@@ -36,14 +36,8 @@ pub fn resolve_with(
 
 /// 生产入口：从真实进程环境解析。
 pub fn resolve(sessions_dir_arg: Option<String>) -> Config {
-    let home = home_dir();
+    let home = crate::util::home_dir();
     resolve_with(sessions_dir_arg, |k| std::env::var(k).ok(), &home)
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 /// 校验会话路径（CONTRACT §6）：

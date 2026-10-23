@@ -2,36 +2,16 @@
 //!
 //! 独立文件（而非追加到 `tests/backend.rs`），避免与 architect worker 的合并冲突。
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
+use common::{cfg, header, msg, write_lines};
 use omp_resume_lib::config::{self, Config};
 use omp_resume_lib::model::{AppError, ConversationItem, ErrorCode};
 use omp_resume_lib::ops::commands as ops_cmds;
-use omp_resume_lib::sessions::{self, MARKER_CUSTOM_TYPE};
+use omp_resume_lib::sessions;
 use serde_json::{json, Value};
-
-fn cfg(root: &Path) -> Config {
-    Config {
-        sessions_dir: root.to_path_buf(),
-        owners_dir: root.join("owners"),
-    }
-}
-
-fn write_lines(dir: &Path, name: &str, lines: &[String]) -> PathBuf {
-    std::fs::create_dir_all(dir).unwrap();
-    let p = dir.join(name);
-    std::fs::write(&p, lines.join("\n") + "\n").unwrap();
-    p
-}
-
-fn header(id: &str, cwd: &str) -> String {
-    json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":cwd})
-        .to_string()
-}
-
-fn msg(id: &str, parent: Option<&str>, message: Value) -> String {
-    json!({"type":"message","id":id,"parentId":parent,"timestamp":"2026-10-14T00:00:01.000Z","message":message}).to_string()
-}
 
 fn user_msg(text: &str) -> Value {
     json!({"role":"user","content":[{"type":"text","text":text}],"attribution":"user","timestamp":1_791_790_685_211i64})
@@ -179,7 +159,10 @@ fn marker_end_to_end_branch() {
     assert!(last_line.ends_with('\n') && last_line.matches('\n').count() == 1);
     let v: Value = serde_json::from_str(last_line.trim_end()).unwrap();
     assert_eq!(v["type"], "custom");
-    assert_eq!(v["customType"], MARKER_CUSTOM_TYPE);
+    assert_eq!(
+        v["customType"],
+        omp_resume_lib::ops::marker::MARKER_CUSTOM_TYPE
+    );
     assert_eq!(v["id"], mid.as_str());
     assert_eq!(v["parentId"], "u2");
 
@@ -324,6 +307,32 @@ fn iterm_command_string_and_refusals() {
     got.replace(String::new());
     ops_cmds::open_in_iterm_impl(&c3, &bs, &opener).unwrap();
     assert!(!got.borrow().is_empty(), "PROBE_FAILED 应放行");
+
+    // 控制字符拒绝：cwd 含换行（目录真实存在，走到控制字符检查）。
+    let evil_cwd = t.path().join("a\nb");
+    std::fs::create_dir_all(&evil_cwd).unwrap();
+    let evil = branch_session(
+        &proj,
+        "evil.jsonl",
+        "sess-evil",
+        &evil_cwd.display().to_string(),
+    );
+    got.replace(String::new());
+    let e = ops_cmds::open_in_iterm_impl(&c, &evil.display().to_string(), &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(got.borrow().is_empty());
+
+    // 控制字符拒绝：会话文件名含换行。
+    let evil2 = branch_session(
+        &proj,
+        "a\nb.jsonl",
+        "sess-evil2",
+        &cwd.display().to_string(),
+    );
+    got.replace(String::new());
+    let e = ops_cmds::open_in_iterm_impl(&c, &evil2.display().to_string(), &opener).unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(got.borrow().is_empty());
 }
 
 #[test]

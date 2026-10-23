@@ -6,6 +6,7 @@
  * data-theme / data-accent，CSS 以 `:root[data-theme="…"]` 匹配。
  */
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readJson, writeJson } from "./storage";
 
 export const APPEARANCE_STORAGE_KEY = "omp-resume:appearance";
 
@@ -56,15 +57,8 @@ function isAccent(v: unknown): v is AccentName {
   );
 }
 
-function parseAppearance(raw: string | null): Appearance {
+function parseAppearance(data: unknown): Appearance {
   const fallback = defaultAppearance();
-  if (raw == null) return fallback;
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
   if (typeof data !== "object" || data === null) return fallback;
   const obj = data as Record<string, unknown>;
   return {
@@ -75,23 +69,12 @@ function parseAppearance(raw: string | null): Appearance {
 
 /** 读取外观偏好；任何异常都返回有效默认值。 */
 export function loadAppearance(storage?: Storage): Appearance {
-  try {
-    return parseAppearance((storage ?? globalThis.localStorage).getItem(APPEARANCE_STORAGE_KEY));
-  } catch {
-    return defaultAppearance();
-  }
+  return parseAppearance(readJson(APPEARANCE_STORAGE_KEY, storage));
 }
 
 /** 写入外观偏好；存储不可用时静默忽略（本次运行内仍然有效）。 */
 export function saveAppearance(appearance: Appearance, storage?: Storage): void {
-  try {
-    (storage ?? globalThis.localStorage).setItem(
-      APPEARANCE_STORAGE_KEY,
-      JSON.stringify(appearance),
-    );
-  } catch {
-    // 存储不可用：忽略，界面状态仍然有效。
-  }
+  writeJson(APPEARANCE_STORAGE_KEY, appearance, storage);
 }
 
 /** 由（模式, 系统是否深色）解出实际主题。跟随系统时直通系统偏好。 */

@@ -172,8 +172,6 @@
 .mem-note-amber .btn { margin-left: 8px; }
 .mem-note-danger { color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 8px 10px; }
 .mem-note-danger .btn { margin-left: 8px; }
-.modal-wide { width: 760px; }
-
 /* ---- 引用关系图（列表 | 关系图切换 + SVG 图谱 + 选中卡） ---- */
 .mem-view-switch { margin: 0; }
 .mem-graph { display: flex; flex-direction: column; gap: 8px; }

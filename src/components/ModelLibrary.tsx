@@ -150,7 +150,7 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
                     <td className="lib-nowrap">{context === null ? <span className="muted">—</span> : <span title={`${context} tokens`}>{context}</span>}</td>
                     <td className="lib-nowrap">{formatMaxTokens(maxTokens)}</td>
                     <td className="lib-nowrap">{cost === null ? <span className="muted">—</span> : <span title={cost.title}>{cost.text}</span>}</td>
-                    <td>{m.thinkingLevels.length === 0 ? <span className="muted">—</span> : <span className="lib-thinking" title={m.thinkingLevels.join(" / ")}>{m.thinkingLevels.join("·")}</span>}</td>
+                    <td>{m.thinkingLevels.length === 0 ? <span className="muted">—</span> : <span title={m.thinkingLevels.join(" / ")}>{m.thinkingLevels.join("·")}</span>}</td>
                     <td className="lib-act-cell">
                       <span className="lib-actions">
                         {inBench.has(m.selector) ? null : (

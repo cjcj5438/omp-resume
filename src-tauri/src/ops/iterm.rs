@@ -18,7 +18,9 @@ use std::process::{Command, Stdio};
 
 use crate::model::{AppError, ErrorCode};
 
-/// POSIX shell 单引号转义：`'` → `'"'"'`，整体包在单引号内。
+/// `osascript` 绝对路径（GUI 应用 PATH 极简）。
+pub const OSASCRIPT: &str = "/usr/bin/osascript";
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
@@ -104,7 +106,7 @@ pub fn open_tab(command: &str) -> Result<(), AppError> {
 }
 
 fn run_osascript(script: &str) -> Result<(), AppError> {
-    let child = Command::new("osascript")
+    let child = Command::new(OSASCRIPT)
         .arg("-e")
         .arg(script)
         .stdin(Stdio::null())
@@ -267,7 +269,7 @@ mod tests {
         use std::process::{Command, Stdio};
 
         fn osascript(script: &str) -> Result<String, String> {
-            let out = Command::new("osascript")
+            let out = Command::new(super::OSASCRIPT)
                 .arg("-e")
                 .arg(script)
                 .stdin(Stdio::null())

@@ -49,6 +49,22 @@ export const COMMON_ROLES: string[] = ROLE_INFO.filter((info) => info.kind === "
   (info) => info.id,
 );
 
+/** 能力类角色：默认折叠在「更多角色」里（配置了也会成卡，但收在这里）。 */
+export const MORE_ROLES: readonly string[] = ["image", "web", "speech", "dictation", "vision", "judge"];
+
+/** Vibe 工作会话档位：fast→sonic、good→task（omp `vibe_spawn` 的档位路由）。 */
+export interface VibeTier {
+  tier: "fast" | "good";
+  title: string;
+  chipLabel: string;
+  agent: string;
+  roleKey: string | null;
+}
+export const VIBE_TIERS: readonly VibeTier[] = [
+  { tier: "fast", title: "快速工作会话", chipLabel: "Vibe 快速", agent: "sonic", roleKey: null },
+  { tier: "good", title: "强力工作会话", chipLabel: "Vibe 强力", agent: "task", roleKey: "task" },
+];
+
 /** 内置 agent 的中文职责（omp 18.12.2 自带 6 个；英文 description 的意译）。 */
 export interface AgentDutyInfo {
   /** 中文短标签（流程图节点标题用）。 */

@@ -63,7 +63,6 @@ interface DisclosureProps {
   label: ReactNode;
   children: ReactNode;
   className?: string;
-  defaultOpen?: boolean;
 }
 
 /** 折叠块：未展开时不渲染内容（懒渲染）。 */
@@ -71,9 +70,8 @@ export function Disclosure({
   label,
   children,
   className,
-  defaultOpen = false,
 }: DisclosureProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(false);
   return (
     <div className={className ? `disclosure ${className}` : "disclosure"}>
       <button

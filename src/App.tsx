@@ -45,6 +45,8 @@ interface Toast {
   kind: "info" | "error";
 }
 
+const MAX_TOASTS = 5;
+
 /** 并列的顶层视图；会话页是根，其余可层层进入并逐级返回。 */
 type AppView = "sessions" | "manage" | "stats" | "history" | "cleanup";
 
@@ -90,35 +92,61 @@ function App() {
   const [ompVersion, setOmpVersion] = useState<string | null>(null);
   const [ompChecking, setOmpChecking] = useState(false);
   const [ompCheck, setOmpCheck] = useState<OmpUpdateCheck | null>(null);
-  const inFlight = useRef(false);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const rerun = useRef(false);
   const lastStart = useRef(0);
   const toastId = useRef(0);
+  const toastTimers = useRef(new Map<number, number>());
 
   const addToast = useCallback((text: string, kind: "info" | "error") => {
     const id = ++toastId.current;
-    setToasts((prev) => [...prev, { id, text, kind }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 6000);
+    setToasts((prev) => {
+      const next = [...prev, { id, text, kind }].slice(-MAX_TOASTS);
+      const evicted = prev.filter((t) => !next.some((n) => n.id === t.id));
+      for (const t of evicted) {
+        const timer = toastTimers.current.get(t.id);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          toastTimers.current.delete(t.id);
+        }
+      }
+      return next;
+    });
+    const timer = window.setTimeout(() => {
+      toastTimers.current.delete(id);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 6000);
+    toastTimers.current.set(id, timer);
   }, []);
 
-  const load = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    lastStart.current = Date.now();
-    setLoading(true);
-    try {
-      const res = await listSessions();
-      setList(res);
-      setListError(null);
-      const paths = new Set(
-        res.groups.flatMap((g) => g.sessions.map((s) => s.path)),
-      );
-      setChecked((prev) => new Set(retainExisting(prev, paths)));
-    } catch (e) {
-      setListError(normalizeError(e));
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
-    }
+  useEffect(() => () => {
+    for (const t of toastTimers.current.values()) clearTimeout(t);
+  }, []);
+
+  const load = useCallback((): Promise<void> => {
+    if (inFlight.current) { rerun.current = true; return inFlight.current; }
+    inFlight.current = (async () => {
+      do {
+        rerun.current = false;
+        lastStart.current = Date.now();
+        setLoading(true);
+        try {
+          const res = await listSessions();
+          setList(res);
+          setListError(null);
+          const paths = new Set(
+            res.groups.flatMap((g) => g.sessions.map((s) => s.path)),
+          );
+          setChecked((prev) => new Set(retainExisting(prev, paths)));
+        } catch (e) {
+          setListError(normalizeError(e));
+        } finally {
+          setLoading(false);
+        }
+      } while (rerun.current);
+      inFlight.current = null;
+    })();
+    return inFlight.current;
   }, []);
 
   const loadMeta = useCallback(async () => {
@@ -126,9 +154,11 @@ function App() {
       setMeta(await getMeta());
       setMetaError(null);
     } catch (e) {
-      setMetaError(normalizeError(e));
+      const err = normalizeError(e);
+      setMetaError(err);
+      if (err.code !== "META_CORRUPT") addToast(errorText(err), "error");
     }
-  }, []);
+  }, [addToast]);
   useEffect(() => {
     void load();
     void loadMeta();
@@ -161,7 +191,7 @@ function App() {
 
   useEffect(() => {
     const refocus = () => {
-      if (canFocusRefresh(inFlight.current, lastStart.current, Date.now()))
+      if (canFocusRefresh(inFlight.current !== null, lastStart.current, Date.now()))
         void load();
     };
     const onVisibility = () => {

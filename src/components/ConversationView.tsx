@@ -190,13 +190,20 @@ export function ConversationView({
     const el = scrollRef.current;
     if (!scrollToBottom || !conversation || loading || !el) return;
     // content-visibility 的估算高度会在渲染后修正，逐帧重滚到真正的底部。
+    let cancelled = false;
+    let raf = 0;
     let frames = 0;
     const settle = () => {
+      if (cancelled) return;
       el.scrollTop = el.scrollHeight;
       frames += 1;
-      if (frames < 10) requestAnimationFrame(settle);
+      if (frames < 10) raf = requestAnimationFrame(settle);
     };
     settle();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
   }, [scrollToBottom, conversation, loading]);
 
   if (error) {
@@ -218,7 +225,6 @@ export function ConversationView({
       <div className="conv-col">
         {conversation.items.map((item, i) => (
           <div
-            className="conv-wrap"
             key={i}
             style={{ contentVisibility: "auto", containIntrinsicSize: "auto 88px" }}
           >

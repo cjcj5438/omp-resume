@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 async function boot(): Promise<void> {
   if (
@@ -11,11 +12,31 @@ async function boot(): Promise<void> {
     const { installMockBackend } = await import("./dev/mockBackend");
     await installMockBackend();
   }
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  const root = document.getElementById("root");
+  if (root === null) throw new Error("缺少 #root 容器");
+  ReactDOM.createRoot(root).render(
     <React.StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </React.StrictMode>,
   );
 }
 
-void boot();
+boot().catch((e: unknown) => {
+  console.error(e);
+  const root = document.getElementById("root");
+  if (root !== null) {
+    const message = e instanceof Error ? e.message : String(e);
+    const outer = document.createElement("div");
+    outer.className = "pane-note";
+    outer.setAttribute("role", "alert");
+    const banner = document.createElement("div");
+    banner.className = "banner banner-error";
+    const label = document.createElement("span");
+    label.textContent = `启动失败：${message}`;
+    banner.appendChild(label);
+    outer.appendChild(banner);
+    root.replaceChildren(outer);
+  }
+});

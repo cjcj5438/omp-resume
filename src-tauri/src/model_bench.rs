@@ -100,7 +100,7 @@ struct Sample {
 /// 从合并输出解析探针结果：不看退出码（有失败时 bench 返回 1 但照样有 JSON），
 /// 从第一个以 `{` 开头的行开始流式解析第一个 JSON 值，取 `models[0].results[]`。
 fn parse_probe_output(output: &str) -> Result<Vec<Sample>, String> {
-    let json = json_start(output).ok_or_else(|| "输出中没有找到 JSON".to_string())?;
+    let json = crate::util::json_start(output).ok_or_else(|| "输出中没有找到 JSON".to_string())?;
     let mut stream = Deserializer::from_str(json).into_iter::<Value>();
     let value = stream
         .next()
@@ -126,18 +126,6 @@ fn parse_probe_output(output: &str) -> Result<Vec<Sample>, String> {
             })
         })
         .collect()
-}
-
-/// 合并输出中第一个以 `{` 开头的行及之后全部内容；没有 ⇒ `None`。
-fn json_start(output: &str) -> Option<&str> {
-    let mut index = 0;
-    for segment in output.split_inclusive('\n') {
-        if segment.starts_with('{') {
-            return Some(&output[index..]);
-        }
-        index += segment.len();
-    }
-    None
 }
 
 /// 跑一次探针。超时 ⇒ 按计划请求数全部记失败（错误文本写死）；其他错误原样返回。
@@ -400,8 +388,7 @@ pub fn model_bench_delete_impl(
     Ok(deleted)
 }
 
-/// 原子重写历史文件（同目录临时文件 + rename）。
-/// 调用方持 `BENCH_LOCK`（进程内串行），临时路径单 pid 一份即可。
+/// 原子重写历史文件（同目录临时文件 + rename；新文件 0600）。
 fn rewrite_history(path: &Path, kept: &[(DateTime<Utc>, BenchRound)]) -> Result<(), AppError> {
     let io_error =
         |e: std::io::Error| AppError::new(ErrorCode::Io, format!("无法写入探测历史：{e}"));
@@ -416,13 +403,11 @@ fn rewrite_history(path: &Path, kept: &[(DateTime<Utc>, BenchRound)]) -> Result<
         text.push_str(&line);
     }
     fs::create_dir_all(parent).map_err(io_error)?;
-    let tmp = parent.join(format!(".{BENCH_FILE}.{}.tmp", std::process::id()));
-    let result = fs::write(&tmp, text.as_bytes()).and_then(|()| fs::rename(&tmp, path));
-    if let Err(e) = result {
-        let _ = fs::remove_file(&tmp);
-        return Err(io_error(e));
-    }
-    Ok(())
+    let existing_permissions = fs::metadata(path).ok().map(|md| md.permissions());
+    let pending =
+        crate::util::PendingAtomic::stage(path, text.as_bytes(), BENCH_FILE, existing_permissions)
+            .map_err(|(_, e)| io_error(e))?;
+    pending.commit(path).map_err(|(_, e)| io_error(e))
 }
 
 /// 解析 agent.db 路径：`OMP_RESUME_AGENT_DB` > `$HOME/.omp/agent/agent.db`。
@@ -430,10 +415,7 @@ pub fn resolve_agent_db_path() -> PathBuf {
     if let Some(p) = std::env::var_os(AGENT_DB_ENV) {
         return PathBuf::from(p);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".omp/agent/agent.db")
+    crate::util::home_dir().join(".omp/agent/agent.db")
 }
 
 /// omp 日常实测统计（只读；任何失败 ⇒ `[]`，静默）。SQL 写死成一条，
@@ -501,44 +483,39 @@ pub fn model_perf_list_impl(db: &Path) -> Vec<ModelPerf> {
 /// CONTRACT §20.1/§4.51：跑两次 `omp bench` 探针并记一轮。
 #[tauri::command]
 pub async fn model_bench_run(selector: String) -> Result<BenchRound, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
         let data_dir = meta::data_dir()?;
         model_bench_run_impl(&bin, &data_dir, &selector, PROBE_TIMEOUT)
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 /// CONTRACT §20.2/§4.52：最近 30 天的探测历史（按 `at` 从早到晚）。
 #[tauri::command]
 pub async fn model_bench_history() -> Result<Vec<BenchRound>, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+    crate::blocking(|| {
         let data_dir = meta::data_dir()?;
         Ok(model_bench_history_impl(&data_dir))
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 /// CONTRACT §20.4/§4.56：删除 bench 记录（`at` 为 `None` 时清空该模型全部轮次），
 /// 返回删除条数。
 #[tauri::command]
 pub async fn model_bench_delete(selector: String, at: Option<String>) -> Result<usize, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         let data_dir = meta::data_dir()?;
         model_bench_delete_impl(&data_dir, &selector, at.as_deref())
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 /// CONTRACT §20.3/§4.53：omp 日常实测统计（只读；失败静默为空列表）。
 #[tauri::command]
 pub async fn model_perf_list() -> Result<Vec<ModelPerf>, AppError> {
-    tauri::async_runtime::spawn_blocking(|| Ok(model_perf_list_impl(&resolve_agent_db_path())))
-        .await
-        .map_err(crate::io_join_error)?
+    crate::blocking(|| Ok(model_perf_list_impl(&resolve_agent_db_path()))).await
 }
 
 #[cfg(test)]
@@ -749,7 +726,9 @@ mod tests {
     fn delete_removes_single_round_or_all_rounds_of_selector() {
         let dir = tempfile::tempdir().unwrap();
         let now = Utc::now();
-        let at = |hours: i64| (now - chrono::Duration::hours(hours)).to_rfc3339_opts(SecondsFormat::Millis, true);
+        let at = |hours: i64| {
+            (now - chrono::Duration::hours(hours)).to_rfc3339_opts(SecondsFormat::Millis, true)
+        };
         let (a_first, a_last, b_at) = (at(3), at(2), at(1));
         let line = |selector: &str, at: &str| {
             serde_json::to_string(&BenchRound {
@@ -779,7 +758,10 @@ mod tests {
         .unwrap();
 
         // 单轮删除：只掉 A 的指定轮，另一轮与 B 都留着且按 at 升序。
-        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", Some(&a_first)).unwrap(), 1);
+        assert_eq!(
+            model_bench_delete_impl(dir.path(), "acme/widget", Some(&a_first)).unwrap(),
+            1
+        );
         let left = model_bench_history_impl(dir.path());
         assert_eq!(left.len(), 2);
         assert!(left.iter().all(|r| r.at != a_first));
@@ -788,11 +770,17 @@ mod tests {
         assert_eq!(left[1].selector, "other/model");
 
         // 清空该 selector：只剩 B；再清一次为 0 且不写盘。
-        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(), 1);
+        assert_eq!(
+            model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(),
+            1
+        );
         let left = model_bench_history_impl(dir.path());
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].selector, "other/model");
-        assert_eq!(model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(), 0);
+        assert_eq!(
+            model_bench_delete_impl(dir.path(), "acme/widget", None).unwrap(),
+            0
+        );
 
         // selector 不合法 ⇒ InvalidInput；文件不存在 ⇒ 0。
         let bad = model_bench_delete_impl(dir.path(), "bad selector", None).unwrap_err();

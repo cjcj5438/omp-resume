@@ -63,18 +63,6 @@ impl std::fmt::Display for AppError {
 impl std::error::Error for AppError {}
 
 // ---------------------------------------------------------------------------
-// get_config
-// ---------------------------------------------------------------------------
-
-/// `get_config` 返回：解析后的实际目录（解析规则见 CONTRACT.md）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetConfigResult {
-    pub sessions_dir: String,
-    pub owners_dir: String,
-}
-
-// ---------------------------------------------------------------------------
 // list_sessions
 // ---------------------------------------------------------------------------
 

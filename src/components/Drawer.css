@@ -52,13 +52,6 @@
   flex-direction: column;
   gap: 12px;
 }
-
-.drawer-foot {
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-sidebar);
-}
-
 /* 内联形态：作为父级 flex 行的右列，不再贴窗口边缘，也不遮挡左列。 */
 .drawer-inline {
   position: static;

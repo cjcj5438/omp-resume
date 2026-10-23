@@ -2,7 +2,6 @@
  * 取色一律语义变量；过渡只用 var(--motion)；hover 规则遵守 §19（:not(:disabled)、激活态在后）。 */
 
 .bench-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.bench-intro { margin: 0; }
 .bench-hint, .bench-current, .bench-estimate { font-size: 12px; }
 
 .bench-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); justify-content: space-between; }
@@ -59,12 +58,6 @@
 .bench-spark { display: block; width: 100%; height: 22px; }
 .bench-spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .bench-spark-dot { fill: var(--accent); }
-
-/* 吸底待保存栏：贴滚动容器底部。 */
-.bench-savebar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--bg); border-top: 1px solid var(--border); padding: 8px 2px; margin-top: 8px; font-size: 12px; }
-.bench-pending-item { display: inline-flex; align-items: center; gap: 6px; }
-/* 嵌入 ModelsTab 时待保存栏不再吸底，避免卡在页面中间。 */
-.bench-panel-embedded .bench-savebar { position: static; }
 .bench-drawer-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* 抽屉内容块。 */

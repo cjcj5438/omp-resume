@@ -223,12 +223,10 @@ export function MemoryList(props: {
         onToast(`加载记忆列表失败：${text}`, "error");
       })
       .finally(() => listSeq.current === id && setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bank, debounced, kind, flags, sort, refreshToken]);
 
   useEffect(() => {
     setSelecting(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bank]);
 
   function loadMore(): void {

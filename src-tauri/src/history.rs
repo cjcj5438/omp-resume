@@ -22,10 +22,7 @@ pub fn resolve_db_path() -> PathBuf {
     if let Some(p) = std::env::var_os("OMP_RESUME_HISTORY_DB") {
         return PathBuf::from(p);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".omp/agent/history.db")
+    crate::util::home_dir().join(".omp/agent/history.db")
 }
 
 /// 只读打开；库不存在或无法打开 ⇒ `None`（不创建文件）。
@@ -62,23 +59,8 @@ pub fn search_prompts(db: &Path, query: Option<&str>, limit: u32) -> Vec<PromptH
     let pattern = query
         .map(str::trim)
         .filter(|q| !q.is_empty())
-        .map(like_pattern);
+        .map(crate::util::like_pattern);
     query_entries(&conn, pattern, limit).unwrap_or_default()
-}
-
-/// 把用户输入转为 `LIKE` 子串模式：转义 `\`、`%`、`_`（SQL 中配合 `ESCAPE '\'`），
-/// 两端加 `%`。
-fn like_pattern(query: &str) -> String {
-    let mut out = String::with_capacity(query.len() + 2);
-    out.push('%');
-    for c in query.chars() {
-        if matches!(c, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out.push('%');
-    out
 }
 
 fn query_entries(

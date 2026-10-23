@@ -49,7 +49,6 @@ export function MemoryDeleteDialog(props: {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bank, idsKey, retryToken]);
 
   async function confirm(): Promise<void> {

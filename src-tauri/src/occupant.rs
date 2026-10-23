@@ -19,6 +19,54 @@ pub(crate) const LSOF: &str = "/usr/sbin/lsof";
 /// `lsof` 硬超时：超时则杀子进程，调用方按各自语义降级。
 pub(crate) const LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// `lsof` 执行结果：退出码只返回不判定（调用方定政策）。
+pub(crate) struct LsofOutput {
+    pub code: Option<i32>,
+    pub stdout: String,
+}
+
+/// stdin null / stdout piped / stderr null；10ms try_wait 轮询；超时 kill+wait → None；spawn/wait/读取失败 → None。退出码只返回不判定。
+pub(crate) fn run_lsof(
+    lsof_bin: &Path,
+    fields: &str,
+    files: &[std::path::PathBuf],
+    timeout: Duration,
+) -> Option<LsofOutput> {
+    let mut cmd = std::process::Command::new(lsof_bin);
+    cmd.args(["-nP", "-F", fields, "--"]);
+    for file in files {
+        cmd.arg(file);
+    }
+    // stdin 悬空会继承奇怪的 fd：显式 null。
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    // 硬超时等待（无额外 crate）：轮询 try_wait，超时则 kill。
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+    let output = child.wait_with_output().ok()?;
+    let code = output.status.code();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    Some(LsofOutput { code, stdout })
+}
+
 /// 环境白名单：只提取这些变量，其余一律丢弃（不保留、不日志、不传前端）。
 const WL_TERM_PROGRAM: &str = "TERM_PROGRAM";
 const WL_TERM_PROGRAM_VERSION: &str = "TERM_PROGRAM_VERSION";
@@ -277,46 +325,22 @@ fn holder_pids(owners_dir: &Path, session_ids: &[String]) -> HashMap<String, u32
     if session_ids.is_empty() {
         return HashMap::new();
     }
-    let mut cmd = std::process::Command::new(LSOF);
-    cmd.args(["-nP", "-F", "pn", "--"]);
+    let mut files = Vec::new();
     for id in session_ids {
-        // id 已过 lock::valid 校验（字母数字/`-`/`_`），拼接安全。
-        cmd.arg(owners_dir.join(format!("{id}.lock")));
-    }
-    // stdin 悬空会继承奇怪的 fd：显式 null。
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::null());
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => return HashMap::new(),
-    };
-    // 硬超时等待（无额外 crate）：轮询 try_wait，超时则 kill。
-    let deadline = std::time::Instant::now() + LSOF_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return HashMap::new();
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                return HashMap::new();
-            }
+        // 非法 id（穿越/空/超长/非法字符）直接跳过，不拼路径、不调 lsof。
+        if !crate::lock::valid_session_id(id) {
+            continue;
         }
+        files.push(owners_dir.join(format!("{id}.lock")));
     }
-    let output = child
-        .wait_with_output()
-        .map(|o| o.stdout)
-        .unwrap_or_default();
+    if files.is_empty() {
+        return HashMap::new();
+    }
+    let Some(out) = run_lsof(Path::new(LSOF), "pn", &files, LSOF_TIMEOUT) else {
+        return HashMap::new();
+    };
     // lsof 无命中时 exit 1 且无输出 → 空表（正常情况，非错误）。
-    let text = String::from_utf8_lossy(&output);
-    let all = parse_lsof_output(&text);
+    let all = parse_lsof_output(&out.stdout);
     // 只保留本次请求的会话（lsof 按传入路径查，理论上全是；防御性过滤）。
     all.into_iter()
         .filter(|(id, _)| session_ids.iter().any(|w| w == id))
@@ -575,6 +599,16 @@ mod tests {
             parse_lsof_output("p1\nf2\nn/owners/.lock\n"),
             HashMap::new()
         );
+    }
+
+    #[test]
+    fn resolve_occupants_skips_invalid_ids() {
+        let dir = std::env::temp_dir();
+        let ids = ["../x", "a/b", "", "x!"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert!(resolve_occupants(&dir, &ids).is_empty());
     }
 
     #[test]

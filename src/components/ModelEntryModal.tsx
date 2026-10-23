@@ -79,7 +79,7 @@ export function ModelEntryModal(props: ModelEntryModalProps): ReactNode {
           />
           <div className="field">
             <span className="field-label">思考强度</span>
-            <div className="segment bench-segment" role="radiogroup" aria-label="思考强度">
+            <div className="bench-segment" role="radiogroup" aria-label="思考强度">
               <button
                 type="button"
                 role="radio"

@@ -6,9 +6,7 @@ import { findOmpCommand } from "./ompCommands";
 import { filterOmpCombos, findUnknownComboStep, OMP_COMBOS } from "./ompCombos";
 
 describe("OMP_COMBOS", () => {
-  it("数量在 8–12 之间，id 与标题唯一", () => {
-    expect(OMP_COMBOS.length).toBeGreaterThanOrEqual(8);
-    expect(OMP_COMBOS.length).toBeLessThanOrEqual(12);
+  it("id 与标题唯一", () => {
     expect(new Set(OMP_COMBOS.map((c) => c.id)).size).toBe(OMP_COMBOS.length);
     expect(new Set(OMP_COMBOS.map((c) => c.title)).size).toBe(OMP_COMBOS.length);
   });

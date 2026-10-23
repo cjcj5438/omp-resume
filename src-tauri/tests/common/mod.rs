@@ -298,17 +298,6 @@ impl Bank {
         use sha2::{Digest, Sha256};
         format!("{:x}", Sha256::digest(std::fs::read(self.db()).unwrap()))
     }
-
-    /// 目录内文件名（排序）。
-    pub fn entry_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(&self.dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    }
 }
 
 /// 递归收集 `(路径, 字节数)` 并排序（只读契约用）。
@@ -337,4 +326,36 @@ pub fn add_session_file(sessions: &Path, uuid: &str) {
     std::fs::create_dir_all(sessions.join("-proj")).unwrap();
     let name = format!("2026-10-14T02-18-47-387Z_{uuid}.jsonl");
     std::fs::write(sessions.join("-proj").join(name), "{}\n").unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 会话 fixture 辅助（backend/safety/ops 三文件共用；user_msg/assistant_msg 夹具
+// 内容不同，各自保留）。
+// ---------------------------------------------------------------------------
+
+pub fn cfg(root: &Path) -> omp_resume_lib::config::Config {
+    omp_resume_lib::config::Config {
+        sessions_dir: root.to_path_buf(),
+        owners_dir: root.join("owners"),
+    }
+}
+
+pub fn write_bytes(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+    std::fs::create_dir_all(dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, bytes).unwrap();
+    p
+}
+
+pub fn write_lines(dir: &Path, name: &str, lines: &[String]) -> PathBuf {
+    write_bytes(dir, name, (lines.join("\n") + "\n").as_bytes())
+}
+
+pub fn header(id: &str, cwd: &str) -> String {
+    serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":cwd})
+        .to_string()
+}
+
+pub fn msg(id: &str, parent: Option<&str>, message: serde_json::Value) -> String {
+    serde_json::json!({"type":"message","id":id,"parentId":parent,"timestamp":"2026-10-14T00:00:01.000Z","message":message}).to_string()
 }

@@ -23,7 +23,7 @@ const UNKNOWN: Probe = Probe {
 
 /// 会话 id 字符集：omp 生成的 uuid 与 8-hex id 均落在此集合；
 /// 其他形状（如 `h-<wyhash>` 派生名亦符合）超出则拒绝猜测。
-fn valid_session_id(id: &str) -> bool {
+pub(crate) fn valid_session_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id

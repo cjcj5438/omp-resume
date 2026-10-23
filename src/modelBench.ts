@@ -8,6 +8,7 @@ import { modelBenchRun, normalizeError } from "./api";
 import type { AgentDefinition, BenchRound, ModelInfo } from "./types";
 import { parseSelectorValue } from "./modelConfig";
 import { ROLE_INFO, roleInfo } from "./roleCards";
+import { readJson, writeJson } from "./storage";
 
 // ---- 本地配置（localStorage，与 pins 同 pattern） ----
 
@@ -44,52 +45,43 @@ function isIntervalMin(v: unknown): v is BenchIntervalMin {
 
 /** 读不到或结构损坏时回到默认值；数组内的坏条目只跳过该条。 */
 export function loadBenchConfig(storage?: Storage): BenchConfig {
-  try {
-    const raw = (storage ?? globalThis.localStorage).getItem(BENCH_CONFIG_KEY);
-    if (raw == null) return defaultBenchConfig();
-    const data: unknown = JSON.parse(raw);
-    if (typeof data !== "object" || data === null) return defaultBenchConfig();
-    const obj = data as Record<string, unknown>;
-    if (!Array.isArray(obj.entries) || !Array.isArray(obj.customTags)) return defaultBenchConfig();
-    const entries: BenchEntry[] = [];
-    for (const item of obj.entries) {
-      if (typeof item !== "object" || item === null) continue;
-      const e = item as Record<string, unknown>;
-      if (typeof e.selector !== "string" || !isPlainSelector(e.selector)) continue;
-      entries.push({
-        selector: e.selector,
-        tags: [...new Set(Array.isArray(e.tags) ? e.tags.filter((t): t is string => typeof t === "string") : [])],
-        monitor: e.monitor === true,
-      });
-    }
-    return {
-      entries,
-      customTags: [
-        ...new Set(
-          obj.customTags.filter((t): t is string => typeof t === "string" && CUSTOM_TAG_PATTERN.test(t)),
-        ),
-      ],
-      intervalMin: isIntervalMin(obj.intervalMin) ? obj.intervalMin : 0,
-      hidden: [
-        ...new Set(
-          Array.isArray(obj.hidden)
-            ? obj.hidden.filter((x): x is string => typeof x === "string" && isPlainSelector(x))
-            : [],
-        ),
-      ],
-    };
-  } catch {
-    return defaultBenchConfig();
+  const data: unknown = readJson(BENCH_CONFIG_KEY, storage);
+  if (data === undefined) return defaultBenchConfig();
+  if (typeof data !== "object" || data === null) return defaultBenchConfig();
+  const obj = data as Record<string, unknown>;
+  if (!Array.isArray(obj.entries) || !Array.isArray(obj.customTags)) return defaultBenchConfig();
+  const entries: BenchEntry[] = [];
+  for (const item of obj.entries) {
+    if (typeof item !== "object" || item === null) continue;
+    const e = item as Record<string, unknown>;
+    if (typeof e.selector !== "string" || !isPlainSelector(e.selector)) continue;
+    entries.push({
+      selector: e.selector,
+      tags: [...new Set(Array.isArray(e.tags) ? e.tags.filter((t): t is string => typeof t === "string") : [])],
+      monitor: e.monitor === true,
+    });
   }
+  return {
+    entries,
+    customTags: [
+      ...new Set(
+        obj.customTags.filter((t): t is string => typeof t === "string" && CUSTOM_TAG_PATTERN.test(t)),
+      ),
+    ],
+    intervalMin: isIntervalMin(obj.intervalMin) ? obj.intervalMin : 0,
+    hidden: [
+      ...new Set(
+        Array.isArray(obj.hidden)
+          ? obj.hidden.filter((x): x is string => typeof x === "string" && isPlainSelector(x))
+          : [],
+      ),
+    ],
+  };
 }
 
 /** 写入配置；存储不可用时静默忽略（本次运行内仍然有效）。 */
 export function saveBenchConfig(config: BenchConfig, storage?: Storage): void {
-  try {
-    (storage ?? globalThis.localStorage).setItem(BENCH_CONFIG_KEY, JSON.stringify(config));
-  } catch {
-    // 存储不可用：忽略，界面状态仍然有效。
-  }
+  writeJson(BENCH_CONFIG_KEY, config, storage);
 }
 
 // ---- 列表派生（entries ∪ modelRoles 普通 selector） ----
@@ -437,27 +429,6 @@ export function bucketizeRounds(rounds: BenchRound[], unit: BenchBucketUnit, now
     if (tpsN[i] > 0) b.tps = tpsSum[i] / tpsN[i];
   }
   return buckets;
-}
-
-// ---- 展示格式（表格/抽屉/图表多处共用，口径锁步） ----
-
-export function formatRate(value: number | null): string {
-  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
-}
-
-export function formatTps(value: number | null): string {
-  return value === null ? "—" : value.toFixed(1);
-}
-
-export function formatMs(value: number | null): string {
-  if (value === null) return "—";
-  return value < 1000 ? `${Math.round(value)}ms` : `${(value / 1000).toFixed(1)}s`;
-}
-
-/** USD 人话：≥$0.01 两位小数，更小显示 4 位（bench 单轮常不足 1 分钱）。 */
-export function formatUsd(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  return value > 0 && value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
 }
 
 // ---- 运行器（模块级单例，手动和监控共用） ----

@@ -7,13 +7,26 @@
  * frontmatter 里的 description 原样显示。不解析 spawns/tools（语义未验证）。
  */
 import type { AgentDefinition } from "../types";
-import { AGENT_INFO, type AdvisorState, type AgentEffective } from "../roleCards";
+import { AGENT_INFO, resolveAgentEffective, type AdvisorState, type AgentEffective } from "../roleCards";
+import { configFromDraft, type ModelDraftState } from "../modelDraft";
 
 export interface AgentFlowNode {
   agent: AgentDefinition;
   effective: AgentEffective;
   disabled: boolean;
   advisor: AdvisorState;
+}
+
+/** AgentFlow 与 AgentRow 共用的节点数据（草稿视角的「当前使用」+ 草稿状态）。 */
+export function agentFlowNodes(state: ModelDraftState): AgentFlowNode[] {
+  const { config, draft, modelsList } = state;
+  const view = configFromDraft(config, draft);
+  return config.agents.map((agent) => ({
+    agent,
+    effective: resolveAgentEffective(agent, view.agentOverrides[agent.name], view.roles, modelsList),
+    disabled: draft.disabled.has(agent.name),
+    advisor: draft.advisor.get(agent.name) ?? "default",
+  }));
 }
 
 const FONT = 13;

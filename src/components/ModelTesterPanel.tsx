@@ -1,21 +1,18 @@
 /**
- * 模型测试器面板：工具条 → 标签 chips → 结果表格 → （选中行）右侧抽屉 →
- * 待保存栏。可独立使用（本地 localStorage 配置 + 本地保存栏），也可嵌入
- * ModelsTab（受控配置 + 回填角色草稿，不渲染本地保存栏）。
+ * 模型测试器面板：工具条 → 标签 chips → 结果表格 → （选中行）右侧抽屉。
+ * 受控组件：bench 配置、模型与角色草稿全部由 ModelsTab 下发，推荐/设为角色
+ * 只回传改动，由「角色分配」统一保存。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import "./ModelTesterPanel.css";
 import "./Usage.css";
 import {
-  getModelConfig,
-  listModels,
   modelBenchHistory,
   modelPerfList,
   normalizeError,
-  updateModelConfig,
 } from "../api";
 import type { AgentDefinition, BenchRound, ModelConfig, ModelInfo, ModelPerf } from "../types";
-import { errorText } from "../format";
+import { errorText, formatMs, formatRate, formatTps } from "../format";
 import {
   BENCH_ERROR_LABEL,
   benchRunner,
@@ -24,13 +21,8 @@ import {
   deriveBenchList,
   deriveTagSet,
   estimateRoundsCost,
-  formatMs,
-  formatRate,
-  formatTps,
   isPlainSelector,
-  loadBenchConfig,
   recommendChanges,
-  saveBenchConfig,
   scoreRows,
   windowStats,
   type BenchConfig,
@@ -42,15 +34,10 @@ import { friendlyModelName, modelProvider } from "../roleCards";
 import { BenchDrawer } from "./BenchDrawer";
 import { RatioCell, Sparkline, tagLabel } from "./BenchSparkline";
 import { AddTagModal, ModelEntryModal } from "./ModelEntryModal";
-import { BenchSavebar } from "./BenchSavebar";
 import { BenchTagFilter } from "./BenchTagFilter";
 import { BenchToolbar } from "./BenchToolbar";
 import { useAlive, type ToastFn } from "./useOmpOp";
 
-const ROLES_KEY = "modelRoles";
-const CONFLICT_TEXT = "配置已被外部修改，请刷新后重试（下方已重新载入最新配置）";
-const EMPTY_ROLES: Record<string, unknown> = {};
-const EMPTY_AGENTS: AgentDefinition[] = [];
 
 /** 展示行：模型信息 + 统计 + 综合分，表格排序后的单位。 */
 export interface DisplayRow {
@@ -65,44 +52,31 @@ export interface DisplayRow {
 
 export interface ModelTesterPanelProps {
   onToast: ToastFn;
-  /** 嵌入 ModelsTab：隐藏导语、紧凑布局，待保存栏不再吸底。 */
-  embedded?: boolean;
-  /** 变化时重载（配置/模型/历史）。 */
+  /** 变化时重载历史与 perf。 */
   refreshKey?: number;
-  /** 受控 bench 配置：与 onConfigChange 成对出现，取代 localStorage 本地态。 */
-  config?: BenchConfig;
-  onConfigChange?: (next: BenchConfig) => void;
-  /** 受控保存：推荐/设为角色只回传改动，不渲染本地待保存栏。 */
-  onApplyRoles?: (changes: Map<string, string>) => void;
+  config: BenchConfig;
+  onConfigChange: (next: BenchConfig) => void;
+  /** 推荐/设为角色只回传改动，由「角色分配」统一保存。 */
+  onApplyRoles: (changes: Map<string, string>) => void;
   /** 规格跳转：判断某模型是否有 yml 规格；与 onEditSpec 成对出现时对话框显示「编辑规格…」。 */
   hasSpec?: (selector: string) => boolean;
   onEditSpec?: (selector: string) => void;
-  /** 嵌入时由父级下发：跳过 getModelConfig/listModels，只拉历史与 perf。 */
-  models?: ModelInfo[];
-  modelConfig?: ModelConfig;
+  models: ModelInfo[];
+  modelConfig: ModelConfig;
   /** 草稿视角 roles：设为-disabled 与一键推荐按草稿算，避免重复回填。 */
-  rolesOverride?: Record<string, unknown>;
+  rolesOverride: Record<string, unknown>;
 }
 
 export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
-  const { onToast, embedded = false, refreshKey = 0, config: controlled, onConfigChange, onApplyRoles, hasSpec, onEditSpec, models: modelsProp, modelConfig: modelConfigProp, rolesOverride } = props;
+  const { onToast, refreshKey = 0, config, onConfigChange, onApplyRoles, hasSpec, onEditSpec, models, modelConfig, rolesOverride } = props;
   const alive = useAlive();
-  const [localConfig, setLocalConfig] = useState<BenchConfig>(() => loadBenchConfig());
-  const config = controlled ?? localConfig;
-  const [localModelConfig, setLocalModelConfig] = useState<ModelConfig | null>(null);
-  const [localModels, setLocalModels] = useState<ModelInfo[]>([]);
-  const modelConfig = modelConfigProp ?? localModelConfig;
-  const models = modelsProp ?? localModels;
+  const histSeq = useRef(0);
   const [history, setHistory] = useState<BenchRound[]>([]);
   const [perfs, setPerfs] = useState<ModelPerf[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  /** 待保存：角色 → 新 selector。 */
-  const [pending, setPending] = useState<Map<string, string>>(new Map());
-  const [saving, setSaving] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
   const [tagModalOpen, setTagModalOpen] = useState(false);
@@ -110,58 +84,43 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
   const runningSet = useMemo(() => new Set(runnerSnap.running), [runnerSnap.running]);
 
   const updateConfig = useCallback((next: BenchConfig): void => {
-    if (onConfigChange !== undefined) {
-      onConfigChange(next);
-      return;
-    }
-    setLocalConfig(next);
-    saveBenchConfig(next);
+    onConfigChange(next);
   }, [onConfigChange]);
   const load = useCallback(async () => {
-    // 受控嵌入：父级已给 models/modelConfig，只拉历史与 perf（省一次慢查询）。
-    const needShared = modelsProp === undefined || modelConfigProp === undefined;
+    const id = ++histSeq.current;
     try {
-      if (needShared) {
-        const [mc, ms, h, p] = await Promise.all([
-          getModelConfig(),
-          listModels(),
-          modelBenchHistory(),
-          modelPerfList(),
-        ]);
-        if (!alive.current) return;
-        setLocalModelConfig(mc);
-        setLocalModels(ms);
-        setHistory(h);
-        setPerfs(p);
-      } else {
-        const [h, p] = await Promise.all([modelBenchHistory(), modelPerfList()]);
-        if (!alive.current) return;
-        setHistory(h);
-        setPerfs(p);
-      }
+      const [h, p] = await Promise.all([modelBenchHistory(), modelPerfList()]);
+      if (!alive.current || id !== histSeq.current) return;
+      setHistory(h);
+      setPerfs(p);
       setLoadError(null);
     } catch (e: unknown) {
-      if (!alive.current) return;
+      if (!alive.current || id !== histSeq.current) return;
       const text = errorText(normalizeError(e));
       setLoadError(text);
       onToast(`加载模型测试失败：${text}`, "error");
     } finally {
-      if (alive.current) setLoading(false);
+      if (alive.current && id === histSeq.current) setLoading(false);
     }
-  }, [alive, onToast, modelsProp, modelConfigProp]);
+  }, [alive, onToast]);
   useEffect(() => {
     setLoading(true);
     void load();
-  }, [load, refreshToken, refreshKey]);
+  }, [load, refreshKey]);
 
-  // 重载历史：运行器有新轮次、或抽屉里删了记录时调用（失败静默，界面上是旧数据）。
-  const reloadHistory = useCallback(() => {
+  // 重载历史：运行器有新轮次、或抽屉里删了记录时调用（后台自动刷新失败静默，界面上是旧数据）。
+  const reloadHistory = useCallback((notify = false) => {
+    const id = ++histSeq.current;
     modelBenchHistory()
       .then((h) => {
-        if (alive.current) setHistory(h);
+        if (alive.current && id === histSeq.current) setHistory(h);
       })
-      .catch(() => {});
-  }, [alive]);
+      .catch((e: unknown) => {
+        if (notify && alive.current && id === histSeq.current) {
+          onToast(`刷新记录失败：${errorText(normalizeError(e))}`, "error");
+        }
+      });
+  }, [alive, onToast]);
 
   // 运行器有轮次完成 → 重载历史（补上该 selector 的新轮次）。只依赖计数器。
   const completedRuns = runnerSnap.completedRuns;
@@ -170,9 +129,9 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
     reloadHistory();
   }, [completedRuns, reloadHistory]);
 
-  // roles 来源三选一：父级 rolesOverride 无引用稳定保证，浅比较内容一致时复用上次
+  // 父级 rolesOverride 无引用稳定保证，浅比较内容一致时复用上次
   // 引用，避免下游 bench/tags memo 失效（ModelsTab 不得改，只能在消费侧稳定）。
-  const rolesSource: Record<string, unknown> = rolesOverride ?? modelConfig?.roles ?? EMPTY_ROLES;
+  const rolesSource: Record<string, unknown> = rolesOverride;
   const rolesRef = useRef<Record<string, unknown>>(rolesSource);
   const prevRoles = rolesRef.current;
   const prevKeys = Object.keys(prevRoles);
@@ -181,12 +140,12 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
     prevKeys.length === nextKeys.length && prevKeys.every((k) => Object.is(prevRoles[k], rolesSource[k]));
   if (!rolesSame) rolesRef.current = rolesSource;
   const roles: Record<string, unknown> = rolesRef.current;
-  const agents: AgentDefinition[] = modelConfig?.agents ?? EMPTY_AGENTS;
+  const agents: AgentDefinition[] = modelConfig.agents;
 
   const benchList = useMemo(() => deriveBenchList(config, roles), [config, roles]);
   const benchSelectors = useMemo(() => benchList.map((r) => r.selector), [benchList]);
   const tags: BenchTag[] = useMemo(
-    () => deriveTagSet(config, roles, modelConfig?.agentOverrides ?? EMPTY_ROLES, agents),
+    () => deriveTagSet(config, roles, modelConfig.agentOverrides, agents),
     [config, roles, modelConfig, agents],
   );
   const tagCounts = useMemo(() => {
@@ -258,20 +217,10 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
       : 0;
 
   function stageChange(role: string, selector: string): void {
-    if (onApplyRoles !== undefined) {
-      onApplyRoles(new Map([[role, selector]]));
-      return;
-    }
-    setPending((prev) => {
-      const next = new Map(prev);
-      if (roles[role] === selector) next.delete(role);
-      else next.set(role, selector);
-      return next;
-    });
+    onApplyRoles(new Map([[role, selector]]));
   }
 
   function handleRecommend(): void {
-    if (modelConfig === null) return;
     const changes = recommendChanges(
       allRows.map((r) => ({ selector: r.model.selector, tags: r.model.tags, stats: r.stats, score: r.score })),
       tags,
@@ -281,58 +230,11 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
       onToast("没有满足条件的候选（24h 成功率≥95% 且样本≥5）", "info");
       return;
     }
-    if (onApplyRoles !== undefined) {
-      onApplyRoles(changes);
-      onToast("已加入「角色分配」的待保存修改", "info");
-      return;
-    }
-    setPending((prev) => new Map([...prev, ...changes]));
-    onToast(`已推荐 ${changes.size} 项，确认后点「保存到 omp」`, "info");
+    onApplyRoles(changes);
+    onToast("已加入「角色分配」的待保存修改", "info");
   }
 
-  async function handleSave(): Promise<void> {
-    if (modelConfig === null || pending.size === 0 || saving) return;
-    setSaving(true);
-    try {
-      const value = { ...roles };
-      for (const [role, selector] of pending) value[role] = selector;
-      await updateModelConfig({ key: ROLES_KEY, value, expected: roles });
-      if (!alive.current) return;
-      setPending(new Map());
-      onToast("已保存到 omp，新会话生效", "info");
-      const mc = await getModelConfig();
-      if (alive.current) setLocalModelConfig(mc);
-    } catch (e: unknown) {
-      if (!alive.current) return;
-      const err = normalizeError(e);
-      if (err.code === "CONFLICT") {
-        onToast(CONFLICT_TEXT, "error");
-        try {
-          const mc = await getModelConfig();
-          if (alive.current) {
-            setLocalModelConfig(mc);
-            setPending(new Map());
-          }
-        } catch {
-          // 重新载入失败：保留待保存，让用户重试。
-        }
-      } else {
-        onToast(`保存失败：${errorText(err)}`, "error");
-      }
-    } finally {
-      if (alive.current) setSaving(false);
-    }
-  }
-
-  if (loading && modelConfig === null) return <div className="pane-note">模型测试加载中…</div>;
-  if (modelConfig === null) {
-    return (
-      <div>
-        <div className="pane-note">加载失败：{loadError}</div>
-        <button type="button" className="btn" onClick={() => setRefreshToken((t) => t + 1)}>重试</button>
-      </div>
-    );
-  }
+  if (loading) return <div className="pane-note">模型测试加载中…</div>;
 
   const filterTag = tags.find((t) => t.id === tagFilter) ?? null;
   const filterCurrent = filterTag === null ? null : roles[filterTag.id];
@@ -347,11 +249,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
   }
 
   return (
-    <div className={embedded ? "manage-section bench-panel bench-panel-embedded" : "manage-section bench-panel"}>
-      {embedded ? null : (
-        // 独立路由预留：生产暂无 tester 路由，该分支保持可独立挂载。
-        <p className="muted bench-intro">omp bench 直连模型，不含 agent 前缀；日常实测来自 omp 自己的记录。</p>
-      )}
+    <div className="manage-section bench-panel">
       {loadError !== null ? <div className="pane-note">刷新失败：{loadError}</div> : null}
 
       <BenchToolbar
@@ -384,7 +282,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
         <div className="bench-table-wrap">
         <table className="manage-table bench-table">
           <colgroup>
-            <col className="bench-col-model" />
+            <col />
             <col className="bench-col-tags" />
             <col className="bench-col-rate" />
             <col className="bench-col-ttft" />
@@ -520,14 +418,13 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
           tags={tags}
           config={config}
           roles={roles}
-          applyHint={onApplyRoles !== undefined}
           onClose={() => setSelected(null)}
           onUpdateConfig={updateConfig}
           onStage={(tag) => stageChange(tag, drawerRow.model.selector)}
           onToast={onToast}
           onAddTag={() => setTagModalOpen(true)}
           onEdit={() => setEditTarget(drawerRow.model.selector)}
-          onRecordsChanged={reloadHistory}
+          onRecordsChanged={() => reloadHistory(true)}
         />
       ) : null}
 
@@ -579,23 +476,6 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
             updateConfig({ ...config, customTags: [...config.customTags, tag] });
             setTagModalOpen(false);
           }}
-        />
-      ) : null}
-
-      {onApplyRoles === undefined && pending.size > 0 ? (
-        <BenchSavebar
-          pending={pending}
-          roles={roles}
-          saving={saving}
-          onRevert={(role) =>
-            setPending((prev) => {
-              const next = new Map(prev);
-              next.delete(role);
-              return next;
-            })
-          }
-          onDiscard={() => setPending(new Map())}
-          onSave={() => void handleSave()}
         />
       ) : null}
     </div>

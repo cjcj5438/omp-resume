@@ -1,27 +1,21 @@
 /**
  * 「Agent」标签页：编排主代理与子代理——谁干活、用哪个模型、出错怎么换。
- * 状态走 useModelDraft（与「模型」页各持一份草稿），列表与保存条复用 AgentsSection。
+ * 与模型页共用草稿（ManageView 上提的 useModelDraft），列表与保存条复用 AgentsSection。
  * 主对话模型在「模型」页修改，这里只读展示编排器当前模型。
  * 流程图可交互：点节点滚动到对应配置行并短暂高亮。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import "./AgentsTab.css";
-import { configFromDraft, useModelDraft, type ModelDraftState } from "../modelDraft";
-import { resolveAgentEffective } from "../roleCards";
-import { AgentFlow } from "./AgentFlow";
-import { AgentsSection, agentFlowNodes } from "./AgentsSection";
+import { configFromDraft, type ModelDraftState } from "../modelDraft";
+import { VIBE_TIERS, resolveAgentEffective } from "../roleCards";
+import { AgentFlow, agentFlowNodes } from "./AgentFlow";
+import { AgentsSection } from "./AgentsSection";
 import { ModelDraftStatus } from "./ModelDraftStatus";
-import type { ToastFn } from "./useOmpOp";
-
-const VIBE_TIERS = [
-  { label: "Vibe 快速", name: "sonic" },
-  { label: "Vibe 强力", name: "task" },
-] as const;
 
 /** 高亮停留时长（ms）：足够眼睛跟上滚动，又不至于赖着不走。 */
 const FLASH_MS = 1600;
 
-function AgentsTabReady(props: { state: ModelDraftState }): ReactNode {
+export function AgentsTab(props: { state: ModelDraftState }): ReactNode {
   const s = props.state;
   const { config, draft, modelsList } = s;
   const [selected, setSelected] = useState<string | null>(null);
@@ -36,7 +30,7 @@ function AgentsTabReady(props: { state: ModelDraftState }): ReactNode {
   const view = configFromDraft(config, draft);
   const advisorCount = [...draft.advisor.values()].filter((a) => a !== "default").length;
   const vibeNames: Record<string, string> = {};
-  for (const { name } of VIBE_TIERS) {
+  for (const { agent: name } of VIBE_TIERS) {
     const def =
       config.agents.find((a) => a.name === name) ??
       { name, description: "", source: "builtin", defaultModel: [], defaultThinkingLevel: null };
@@ -60,8 +54,7 @@ function AgentsTabReady(props: { state: ModelDraftState }): ReactNode {
       flashTimer.current = null;
     }, FLASH_MS);
   };
-
-  // 刷新会重载配置并丢弃草稿：有未保存修改时禁用，避免误触丢编辑。
+  // 刷新会重载配置并丢弃草稿（会丢弃两个标签的未保存修改）：有未保存修改时禁用，避免误触丢编辑。
   const hasUnsaved = s.dirty.roles || s.dirty.agents || s.dirty.others;
   const handleRefresh = (): void => {
     void s.loadModels(true);
@@ -88,9 +81,9 @@ function AgentsTabReady(props: { state: ModelDraftState }): ReactNode {
         <span className="badge badge-grey">子代理 {config.agents.length}</span>
         <span className="badge badge-grey">停用 {draft.disabled.size}</span>
         <span className="badge badge-grey">顾问 {advisorCount}</span>
-        {VIBE_TIERS.map(({ label, name }) => (
-          <span key={name} className="badge badge-grey">
-            {label} {vibeNames[name]}
+        {VIBE_TIERS.map(({ chipLabel, agent }) => (
+          <span key={agent} className="badge badge-grey">
+            {chipLabel} {vibeNames[agent]}
           </span>
         ))}
       </div>
@@ -105,32 +98,9 @@ function AgentsTabReady(props: { state: ModelDraftState }): ReactNode {
           selected={selected}
         />
       ) : null}
-      <AgentsSection state={s} showFlow={false} />
+      <AgentsSection state={s} />
 
       <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
     </div>
   );
-}
-
-export function AgentsTab(props: { onToast: ToastFn }): ReactNode {
-  const { onToast } = props;
-  const loaded = useModelDraft(onToast);
-
-  if (loaded.status === "loading") {
-    return <div className="pane-note">正在读取模型配置…</div>;
-  }
-  if (loaded.status === "error") {
-    return (
-      <div className="manage-section">
-        <div className="banner banner-error" role="alert">
-          <div>{loaded.loadError ?? "读取模型配置失败"}</div>
-          <button type="button" className="btn btn-small" onClick={() => void loaded.loadConfig()}>
-            重试
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return <AgentsTabReady state={loaded.state} />;
 }

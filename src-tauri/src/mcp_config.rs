@@ -1,11 +1,11 @@
 //! OMP 原生 MCP JSON 配置（CONTRACT §4.30–§4.35）。
 //! 纯逻辑入口注入 HOME；列表只返回 secret 键名，变更不调用 omp。
 
-use std::fs::{self, OpenOptions, Permissions};
-use std::io::{ErrorKind, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs::{self, Permissions};
+use std::io::ErrorKind;
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
@@ -19,7 +19,6 @@ use crate::model::{
 
 pub const MCP_SCHEMA: &str = "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json";
 const ABSENT: &str = "absent";
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Tauri 只管理一个实例；克隆仍共享同一把锁，不与 omp 子进程门禁混用。
 #[derive(Clone, Default)]
@@ -46,13 +45,6 @@ fn require_writable_revision(expected: &str) -> AppResult<()> {
 
 fn not_found() -> AppError {
     AppError::new(ErrorCode::NotFound, "MCP 服务器不存在")
-}
-
-fn home_dir() -> AppResult<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .filter(|home| home.is_absolute())
-        .ok_or_else(|| io("无法确定 HOME 目录"))
 }
 
 fn project_dir(home: &Path, project: Option<&str>) -> AppResult<Option<PathBuf>> {
@@ -390,50 +382,31 @@ fn validate_config(config: &Value) -> AppResult<()> {
     Ok(())
 }
 
-struct PendingFile(PathBuf);
-
-impl Drop for PendingFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 fn atomic_write(
     path: &Path,
     bytes: &[u8],
     permissions: Option<Permissions>,
     expected: &str,
 ) -> AppResult<()> {
+    use crate::util::AtomicStage;
     let parent = path.parent().ok_or_else(|| io("MCP 配置路径无效"))?;
     fs::create_dir_all(parent).map_err(|error| io(format!("无法创建 MCP 配置目录：{error}")))?;
-    let (mut file, pending) = loop {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".mcp.json.{}.{sequence}.tmp", std::process::id()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&candidate)
-        {
-            Ok(file) => break (file, PendingFile(candidate)),
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(io(format!("无法创建 MCP 临时文件：{error}"))),
-        }
-    };
-    file.write_all(bytes)
-        .map_err(|error| io(format!("无法写入 MCP 配置：{error}")))?;
-    file.set_permissions(permissions.unwrap_or_else(|| Permissions::from_mode(0o600)))
-        .map_err(|error| io(format!("无法设置 MCP 配置权限：{error}")))?;
-    file.sync_all()
-        .map_err(|error| io(format!("无法同步 MCP 配置：{error}")))?;
-    drop(file);
+    let pending = crate::util::PendingAtomic::stage(path, bytes, "mcp.json", permissions).map_err(
+        |(stage, error)| match stage {
+            AtomicStage::Create => io(format!("无法创建 MCP 临时文件：{error}")),
+            AtomicStage::Write => io(format!("无法写入 MCP 配置：{error}")),
+            AtomicStage::Chmod => io(format!("无法设置 MCP 配置权限：{error}")),
+            AtomicStage::Sync => io(format!("无法同步 MCP 配置：{error}")),
+            AtomicStage::Rename => io(format!("无法原子替换 MCP 配置：{error}")),
+        },
+    )?;
     // 缩小外部 /mcp add 与本应用读改写之间的竞态窗口。
     if revision(read_bytes(path)?.as_deref()) != expected {
         return Err(conflict());
     }
-    fs::rename(&pending.0, path).map_err(|error| io(format!("无法原子替换 MCP 配置：{error}")))?;
-    // rename 后路径已不存在；正常释放也不留下临时文件。
-    Ok(())
+    pending
+        .commit(path)
+        .map_err(|(_, error)| io(format!("无法原子替换 MCP 配置：{error}")))
 }
 
 fn modify_file(
@@ -555,15 +528,10 @@ pub fn mcp_delete_server_impl(
     )
 }
 
-fn join_error(error: impl std::fmt::Display) -> AppError {
-    io(format!("后台任务失败：{error}"))
-}
-
 #[tauri::command]
 pub async fn mcp_list(project: Option<String>) -> AppResult<McpListResult> {
-    tauri::async_runtime::spawn_blocking(move || mcp_list_impl(&home_dir()?, project.as_deref()))
+    crate::blocking(move || mcp_list_impl(&crate::util::home_dir_strict()?, project.as_deref()))
         .await
-        .map_err(join_error)?
 }
 
 #[tauri::command]
@@ -572,23 +540,26 @@ pub async fn mcp_get_server(
     project: Option<String>,
     name: String,
 ) -> AppResult<McpServerRaw> {
-    tauri::async_runtime::spawn_blocking(move || {
-        mcp_get_server_impl(&home_dir()?, scope, project.as_deref(), &name)
+    crate::blocking(move || {
+        mcp_get_server_impl(
+            &crate::util::home_dir_strict()?,
+            scope,
+            project.as_deref(),
+            &name,
+        )
     })
     .await
-    .map_err(join_error)?
 }
 
 async fn mutate<T: Send + 'static>(
     state: McpWriteState,
     operation: impl FnOnce(&Path) -> AppResult<T> + Send + 'static,
 ) -> AppResult<T> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         let _guard = state.0.lock().map_err(|_| io("MCP 配置写入锁不可用"))?;
-        operation(&home_dir()?)
+        operation(&crate::util::home_dir_strict()?)
     })
     .await
-    .map_err(join_error)?
 }
 
 #[tauri::command]

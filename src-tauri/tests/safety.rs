@@ -4,43 +4,19 @@
 //! - 不启动 `omp` CLI，不打开 iTerm，不发模型请求。
 //! - flock 占用：同进程线程 + 子进程 python3 `fcntl.flock` 双路验证。
 
+mod common;
+
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use omp_resume_lib::config::{self, Config};
+use common::{cfg, header, msg, write_bytes, write_lines};
+use omp_resume_lib::config;
 use omp_resume_lib::model::ErrorCode;
 use omp_resume_lib::ops::commands as ops_cmds;
 use omp_resume_lib::ops::iterm;
 use omp_resume_lib::ops::marker;
 use omp_resume_lib::sessions;
 use serde_json::{json, Value};
-
-fn cfg(root: &Path) -> Config {
-    Config {
-        sessions_dir: root.to_path_buf(),
-        owners_dir: root.join("owners"),
-    }
-}
-
-fn write_bytes(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
-    std::fs::create_dir_all(dir).unwrap();
-    let p = dir.join(name);
-    std::fs::write(&p, bytes).unwrap();
-    p
-}
-
-fn write_lines(dir: &Path, name: &str, lines: &[String]) -> PathBuf {
-    write_bytes(dir, name, (lines.join("\n") + "\n").as_bytes())
-}
-
-fn header(id: &str, cwd: &str) -> String {
-    json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":cwd})
-        .to_string()
-}
-
-fn msg(id: &str, parent: Option<&str>, message: Value) -> String {
-    json!({"type":"message","id":id,"parentId":parent,"timestamp":"2026-10-14T00:00:01.000Z","message":message}).to_string()
-}
 
 fn user_msg(text: &str) -> Value {
     json!({"role":"user","content":[{"type":"text","text":text}]})

@@ -589,10 +589,10 @@ mod tests {
     #[test]
     #[ignore]
     fn real_data_cleanup_summary() {
-        let home = std::env::var("HOME").unwrap();
+        let home = crate::util::home_dir();
         let cfg = Config {
-            sessions_dir: PathBuf::from(format!("{home}/.omp/agent/sessions")),
-            owners_dir: PathBuf::from(format!("{home}/.omp/run/session-owners")),
+            sessions_dir: home.join(".omp/agent/sessions"),
+            owners_dir: home.join(".omp/run/session-owners"),
         };
         if !cfg.sessions_dir.is_dir() {
             println!("无真实 sessions 目录，跳过");

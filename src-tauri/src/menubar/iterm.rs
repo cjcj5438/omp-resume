@@ -50,7 +50,7 @@ pub fn iterm_running(run: &dyn Runner) -> bool {
         return true;
     }
     run.run(
-        "/usr/bin/osascript",
+        crate::ops::iterm::OSASCRIPT,
         &[
             "-e",
             "tell application \"System Events\" to exists process \"iTerm2\"",
@@ -104,7 +104,7 @@ pub fn parse_titles_output(out: &str) -> HashMap<String, String> {
 /// 任何失败 → 空表（静默降级为无标题信号）。
 pub fn fetch_titles(run: &dyn Runner) -> HashMap<String, String> {
     let script = titles_script();
-    match run.run("/usr/bin/osascript", &["-e", &script]) {
+    match run.run(crate::ops::iterm::OSASCRIPT, &["-e", &script]) {
         Ok(out) => parse_titles_output(&out),
         Err(_) => HashMap::new(),
     }
@@ -211,7 +211,7 @@ pub fn focus_tty(tty: &str, run: &dyn Runner) -> Result<(), FocusError> {
         return Err(FocusError::NotRunning);
     }
     let script = focus_script(tty);
-    match run.run("/usr/bin/osascript", &["-e", &script]) {
+    match run.run(crate::ops::iterm::OSASCRIPT, &["-e", &script]) {
         Ok(out) => {
             let out = out.trim();
             if out == "ok" {

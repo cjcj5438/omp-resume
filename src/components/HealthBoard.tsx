@@ -1,8 +1,8 @@
 import type { UsageHealth } from "../types";
+import { formatClock, usageNumber } from "../format";
 import { Kpi } from "./UsageCards";
-import { usageNumber } from "./UsageSummary";
 import { CacheHitChart, RequestsChart } from "./UsageCharts";
-import { ERROR_KIND_NAME, cacheHitSeries, formatClock, formatErrorRate, formatHitRate } from "./usageFormat";
+import { ERROR_KIND_NAME, cacheHitSeries, formatErrorRate, formatHitRate } from "./usageFormat";
 import "./Usage.css";
 
 function modelName(provider: string, model: string): string {

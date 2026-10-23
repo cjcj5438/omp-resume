@@ -9,7 +9,6 @@
 //! - 任何 omp 输出都不写日志。
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
@@ -295,36 +294,6 @@ pub struct Frontmatter {
     pub thinking_level: Option<String>,
 }
 
-/// YAML 标量：剥掉成对引号（双引号处理 `\\` `\"` `\n`，单引号处理 `''`）。
-fn scalar(raw: &str) -> String {
-    let raw = raw.trim();
-    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
-        let mut out = String::with_capacity(raw.len());
-        let mut chars = raw[1..raw.len() - 1].chars();
-        while let Some(c) = chars.next() {
-            if c != '\\' {
-                out.push(c);
-                continue;
-            }
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        }
-        return out;
-    }
-    if raw.len() >= 2 && raw.starts_with('\'') && raw.ends_with('\'') {
-        return raw[1..raw.len() - 1].replace("''", "'");
-    }
-    raw.to_owned()
-}
-
 /// 手写轻量 frontmatter 解析：首行 `---` 到下一个 `---` 之间的顶层字段。
 /// 只处理目标 4 个键，其余键（tools/output 等嵌套结构）原样忽略。
 /// `model` 支持字符串、块列表与行内 `["a","b"]` 三种写法。
@@ -342,7 +311,7 @@ pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
         if line.starts_with(char::is_whitespace) {
             if capture_model {
                 if let Some(item) = line.trim().strip_prefix("- ") {
-                    frontmatter.model.push(scalar(item));
+                    frontmatter.model.push(crate::util::unquote(item));
                 }
             }
             continue;
@@ -354,13 +323,13 @@ pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
         let rest = rest.trim();
         match key.trim() {
             "name" => {
-                frontmatter.name = non_empty(scalar(rest));
+                frontmatter.name = non_empty(crate::util::unquote(rest));
             }
             "description" => {
-                frontmatter.description = non_empty(scalar(rest));
+                frontmatter.description = non_empty(crate::util::unquote(rest));
             }
             "thinkingLevel" => {
-                frontmatter.thinking_level = non_empty(scalar(rest));
+                frontmatter.thinking_level = non_empty(crate::util::unquote(rest));
             }
             "model" => {
                 if rest.is_empty() {
@@ -369,11 +338,11 @@ pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
                 {
                     frontmatter.model = items
                         .split(',')
-                        .map(scalar)
+                        .map(crate::util::unquote)
                         .filter(|item| !item.is_empty())
                         .collect();
                 } else {
-                    frontmatter.model = vec![scalar(rest)];
+                    frontmatter.model = vec![crate::util::unquote(rest)];
                 }
             }
             _ => {}
@@ -442,13 +411,8 @@ fn io_error(context: &str, e: impl std::fmt::Display) -> AppError {
 
 /// `omp agents unpack` 到临时目录并解析后删除临时目录。
 fn unpack_builtin(bin: &Path) -> Result<Vec<AgentDef>, AppError> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let dir =
-        std::env::temp_dir().join(format!("omp-resume-agents-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|e| io_error("无法创建临时目录", e))?;
+    let dir = crate::util::mk_secure_tempdir("omp-resume-agents")
+        .map_err(|e| io_error("无法创建临时目录", e))?;
     let dir_arg = dir.to_string_lossy().into_owned();
     let run = run_omp(
         bin,
@@ -585,32 +549,24 @@ pub fn update_model_config_impl(
 // Tauri 命令
 // ---------------------------------------------------------------------------
 
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
 /// CONTRACT §4.36：模型列表（精简字段，不含凭据）。可能较慢，前端缓存 + 刷新。
 #[tauri::command]
 pub async fn list_models() -> Result<Vec<ModelInfo>, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+    crate::blocking(|| {
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
         list_models_impl(&bin)
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 /// CONTRACT §4.37：模型角色 / agent 覆盖 / 禁用 / advisor / 回退链 + agent 默认值。
 #[tauri::command]
 pub async fn get_model_config() -> Result<ModelConfig, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+    crate::blocking(|| {
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
-        get_model_config_impl(&bin, &home_dir())
+        get_model_config_impl(&bin, &crate::util::home_dir())
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 /// CONTRACT §4.38：白名单 key 的读-比-写-复读。
@@ -621,14 +577,13 @@ pub async fn update_model_config(
     value: Value,
     expected: Value,
 ) -> Result<UpdateModelConfigResult, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         use tauri::Manager;
         let busy = app.state::<OmpBusy>();
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
         update_model_config_impl(&bin, &busy, &key, &value, &expected)
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 #[cfg(test)]

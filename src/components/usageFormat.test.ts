@@ -6,7 +6,6 @@ import {
   cacheHitRate,
   cacheHitSeries,
   compactNumber,
-  formatClock,
   formatDuration,
   formatErrorRate,
   formatHitRate,
@@ -79,11 +78,6 @@ it("缓存命中序列：无 token 的桶为 null，比例钳制 0..1", () => {
       { cacheRead: 200, promptTokens: 100 },
     ]),
   ).toEqual([null, 0.6, 0, 1]);
-});
-
-it("时钟用本地 M月D日 HH:MM", () => {
-  expect(formatClock(new Date(2026, 9, 19, 8, 5).getTime())).toBe("10月19日 08:05");
-  expect(formatClock(new Date(2026, 0, 3, 23, 59).getTime())).toBe("1月3日 23:59");
 });
 
 it("时长：59s / 15m31s / 1h1m", () => {

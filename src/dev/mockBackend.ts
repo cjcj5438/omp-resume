@@ -420,7 +420,6 @@ function createSpecsMock(forceConflict: boolean) {
       if ([...patch.name].length > 200) throw err("INVALID_INPUT", "模型名称过长（最多 200 个字符）");
       if (patch.name.includes("\n") || patch.name.includes("\r")) throw err("INVALID_INPUT", "模型名称不能换行");
       // 与 Rust 同口径：全部 Cc 控制字符 + YAML 换行符（含 \t）。
-      // eslint-disable-next-line no-control-regex
       if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(patch.name)) {
         throw err("INVALID_INPUT", "模型名称包含非法字符");
       }
@@ -434,10 +433,12 @@ function createSpecsMock(forceConflict: boolean) {
     if (patch.input !== undefined) {
       if (!Array.isArray(patch.input) || patch.input.length === 0) throw err("INVALID_INPUT", "输入类型不能为空");
       if (patch.input.length > 8) throw err("INVALID_INPUT", "输入类型过多（最多 8 个）");
-      const seen = new Set(patch.input);
-      if (seen.size !== patch.input.length) throw err("INVALID_INPUT", "输入类型不能重复");
+      const seen = new Set<string>();
       for (const item of patch.input) {
-        if (item !== "text" && item !== "image") throw err("INVALID_INPUT", `不支持的输入类型：${item}`);
+        if (typeof item !== "string" || item.trim() === "") throw err("INVALID_INPUT", "输入类型不能含空项");
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(item)) throw err("INVALID_INPUT", `不支持的输入类型：${item}`);
+        if (seen.has(item)) throw err("INVALID_INPUT", "输入类型不能重复");
+        seen.add(item);
       }
     }
     if (patch.cost !== undefined) {
@@ -653,11 +654,6 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "mcp_set_enabled":
       case "mcp_delete_server":
         return mcp(cmd, args);
-      case "get_config":
-        return {
-          sessionsDir: "/Users/demo/.omp/agent/sessions",
-          ownersDir: "/Users/demo/.omp/run/session-owners",
-        };
       case "list_cleanup_candidates": {
         const olderThanDays = Number(args["olderThanDays"]);
         const topN = Number(args["topN"]);

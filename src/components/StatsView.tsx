@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { getUsageHealth, getUsageStats, normalizeError } from "../api";
-import { errorText } from "../format";
-import { formatMs, formatTps } from "../modelBench";
+import { errorText, formatMs, formatTps, usageMoney, usageNumber } from "../format";
 import type { AppError, UsageHealth, UsageRange, UsageStats } from "../types";
 import { HealthBoard } from "./HealthBoard";
 import { Kpi, TopSessions } from "./UsageCards";
 import { TrendChart, type TrendMetric } from "./UsageCharts";
 import { Donut } from "./UsageDonut";
-import { HeatLegend, UsageHeatmap } from "./UsageHeatmap";
+import { UsageHeatmap } from "./UsageHeatmap";
 import { activitySummary, cacheHitRate, compactNumber, formatDuration, formatHitRate } from "./usageFormat";
-import { usageMoney, usageNumber } from "./UsageSummary";
 import "./Usage.css";
 
 type StatsTab = "cost" | "health";
@@ -100,7 +98,7 @@ function RangeControls({
 }) {
   return (
     <div className="usage-controls">
-      <div role="group" aria-label="统计范围" className="usage-seg">
+      <div role="group" aria-label="统计范围" className="seg">
         {RANGES.map((r) => (
           <button
             key={r.value}
@@ -173,7 +171,7 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
       <section className="health-card usage-trend" aria-label="用量趋势">
         <div className="card-head">
           <h2>用量趋势</h2>
-          <div role="group" aria-label="趋势指标" className="usage-seg">
+          <div role="group" aria-label="趋势指标" className="seg">
             <button type="button" className="btn" aria-pressed={metric === "cost"} onClick={() => onMetric("cost")}>花费</button>
             <button type="button" className="btn" aria-pressed={metric === "tokens"} onClick={() => onMetric("tokens")}>Token</button>
           </div>
@@ -214,11 +212,10 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
       </div>
       <section className="health-card usage-activity" aria-label="活跃度">
         <div className="card-head">
-          <h2>活跃度</h2>
-          <span className="usage-head-right">
-            <HeatLegend />
-            <span className="usage-muted">近 26 周 · 按日花费 · 不受上方范围影响</span>
-          </span>
+          <div className="heat-title">
+            <h2>活跃度</h2>
+            <span className="usage-muted heat-scope">近 26 周 · 按日花费 · 不受上方范围影响</span>
+          </div>
         </div>
         <div className="heat-flex">
           <UsageHeatmap days={data.activity} />
@@ -271,7 +268,7 @@ export function StatsView({ onBack, sessionTitle, onOpenSession }: { onBack: () 
   // 看板首次访问后常驻（hidden 隐藏）：各自记住范围，切回不重复请求。
   const [healthVisited, setHealthVisited] = useState(false);
   return (
-    <main className="detail usage-view">
+    <main className="detail">
       <header className="detail-head">
         <div className="detail-title-row"><h1 className="detail-title">用量统计</h1><button type="button" className="btn" onClick={onBack}>返回</button></div>
         <p className="usage-muted">只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD</p>

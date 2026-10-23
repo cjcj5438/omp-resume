@@ -508,7 +508,7 @@ async fn operation_command(
     on_line: tauri::ipc::Channel<String>,
     operation: Operation,
 ) -> Result<OmpOpResult, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         use tauri::Manager;
         let busy = app.state::<OmpBusy>();
         let bin = crate::omp_cli::resolve_omp().ok_or_else(crate::omp_cli::omp_not_found)?;
@@ -517,27 +517,24 @@ async fn operation_command(
         })
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 #[tauri::command]
 pub async fn omp_plugins_list() -> Result<PluginsListResult, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+    crate::blocking(|| {
         let bin = crate::omp_cli::resolve_omp().ok_or_else(crate::omp_cli::omp_not_found)?;
         Ok(plugins_list_impl(&bin))
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 #[tauri::command]
 pub async fn omp_plugin_discover(marketplace: String) -> Result<Vec<DiscoverEntry>, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::blocking(move || {
         let bin = crate::omp_cli::resolve_omp().ok_or_else(crate::omp_cli::omp_not_found)?;
         discover_impl(&bin, &marketplace)
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 #[tauri::command]
@@ -610,12 +607,11 @@ pub async fn omp_marketplace_remove(
 
 #[tauri::command]
 pub async fn omp_skills_list() -> Result<SkillsListResult, AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+    crate::blocking(|| {
         let bin = crate::omp_cli::resolve_omp().ok_or_else(crate::omp_cli::omp_not_found)?;
         skills_list_impl(&bin)
     })
     .await
-    .map_err(crate::io_join_error)?
 }
 
 #[tauri::command]

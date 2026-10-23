@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import type { UsageSession } from "../types";
-import { formatRelativeTime } from "../format";
+import { formatRelativeTime, usageMoney, usageNumber } from "../format";
 import { compactNumber } from "./usageFormat";
-import { usageMoney, usageNumber } from "./UsageSummary";
 import "./Usage.css";
 
 export function Kpi({ label, value, subs = [], danger = false }: { label: string; value: string; subs?: (string | null | false)[]; danger?: boolean }) {

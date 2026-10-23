@@ -6,9 +6,8 @@
 import { useState, type ReactNode } from "react";
 import { normalizeError, modelBenchDelete } from "../api";
 import { errorText } from "../format";
-import { formatMs, formatRate, formatTps, formatUsd } from "../modelBench";
+import { formatClock, formatMs, formatRate, formatTps, formatUsd } from "../format";
 import type { BenchRound } from "../types";
-import { formatClock } from "./usageFormat";
 import { Modal } from "./ui";
 import type { ToastFn } from "./useOmpOp";
 
@@ -58,9 +57,9 @@ export function BenchRecords({ selector, rounds, onToast, onChanged }: BenchReco
         <span className="muted">还没有记录。</span>
       ) : (
         <ul className="bench-records">
-          {ordered.map((r) => (
-            <li key={r.at} className="bench-record">
-              <span className="bench-record-at">{formatClock(Date.parse(r.at))}</span>
+          {ordered.map((r, i) => (
+            <li key={`${r.at}-${i}`} className="bench-record">
+              <span className="bench-record-at">{Number.isNaN(Date.parse(r.at)) ? r.at : formatClock(Date.parse(r.at))}</span>
               <span className="bench-record-num">{formatRate(r.total === 0 ? null : r.ok / r.total)}</span>
               <span className="bench-record-num">{formatMs(r.ttftP50Ms)}</span>
               <span className="bench-record-num">{formatTps(r.tpsP50)}</span>

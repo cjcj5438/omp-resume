@@ -1,7 +1,7 @@
 /** openOmpChangelog：Tauri 打包走 openUrl；仅非 Tauri 环境回退 window.open。 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { OMP_CHANGELOG_URL, openOmpChangelog } from "./format";
+import { OMP_CHANGELOG_URL, formatClock, openOmpChangelog } from "./format";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
@@ -40,5 +40,12 @@ describe("openOmpChangelog", () => {
     } finally {
       delete w["isTauri"];
     }
+  });
+});
+
+describe("formatClock", () => {
+  it("时钟用本地 M月D日 HH:MM", () => {
+    expect(formatClock(new Date(2026, 9, 19, 8, 5).getTime())).toBe("10月19日 08:05");
+    expect(formatClock(new Date(2026, 0, 3, 23, 59).getTime())).toBe("1月3日 23:59");
   });
 });

@@ -65,12 +65,6 @@ export function cacheHitSeries(points: { cacheRead: number; promptTokens: number
   });
 }
 
-/** 最近列表时间：本地 "M月D日 HH:MM"。 */
-export function formatClock(time: number): string {
-  const d = new Date(time);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
 /** 紧凑数字：<1000 原样，k/M/B 保留一位小数。 */
 export function compactNumber(n: number): string {
   if (n < 1000) return String(Math.round(n));

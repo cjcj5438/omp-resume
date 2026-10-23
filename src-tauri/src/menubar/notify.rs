@@ -149,7 +149,8 @@ pub fn send_via_osascript(
     run: &dyn super::iterm::Runner,
 ) -> Result<(), String> {
     let script = osascript_notify_script(title, body);
-    run.run("/usr/bin/osascript", &["-e", &script]).map(|_| ())
+    run.run(crate::ops::iterm::OSASCRIPT, &["-e", &script])
+        .map(|_| ())
 }
 
 #[cfg(test)]

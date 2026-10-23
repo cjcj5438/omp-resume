@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import type { UsageHealthTimelinePoint, UsageTrendPoint, UsageTrendUnit } from "../types";
 import type { BenchBucket } from "../modelBench";
-import { formatRate, formatTps, formatUsd } from "../modelBench";
-import { usageMoney, usageNumber } from "./UsageSummary";
+import { formatRate, formatTps, formatUsd, usageMoney, usageNumber } from "../format";
 import { barHeights, cacheHitSeries, compactNumber, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
 import "./Usage.css";
 const W = 600;

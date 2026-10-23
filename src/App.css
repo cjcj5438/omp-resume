@@ -1183,6 +1183,8 @@ pre.mono {
   outline: none;
 }
 
+.modal-wide { width: 760px; }
+
 .modal-title {
   font-size: 14px;
   margin: 0;
@@ -1444,10 +1446,10 @@ pre.mono {
   font-size: 12px;
 }
 
-/* 清理排序分段控件：与 .usage-seg 同盒模型（App.css 不在 Usage.css 作用域内）。 */
-.cleanup-sort { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
-.cleanup-sort .btn { border-color: transparent; background: transparent; padding: 3px 10px; font-size: 12px; }
-.cleanup-sort .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* 分段控件（清理排序 / 用量统计共用）：带框容器 + 透明 .btn，激活态描边 + 淡底。 */
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
+.seg .btn { border-color: transparent; background: transparent; padding: 3px 10px; font-size: 12px; }
+.seg .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 .cleanup-body {
   flex: 1;

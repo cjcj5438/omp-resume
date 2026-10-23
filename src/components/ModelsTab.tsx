@@ -3,7 +3,7 @@
  * 状态：useModelDraft（模型+角色草稿）+ 本地 specs 快照 + 受控 bench 配置。
  * bench 的推荐/设为角色回填到角色草稿，统一在「角色分配」保存。
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getModelSpecs, normalizeError } from "../api";
 import { errorText } from "../format";
 import { parseSelectorValue } from "../modelConfig";
@@ -12,8 +12,8 @@ import {
   saveBenchConfig,
   type BenchConfig,
 } from "../modelBench";
-import { configFromDraft, useModelDraft } from "../modelDraft";
-import { friendlyModelName, rowAfterModelChange, selectorBase } from "../roleCards";
+import { configFromDraft, type ModelDraftState } from "../modelDraft";
+import { MORE_ROLES, friendlyModelName, rowAfterModelChange, selectorBase } from "../roleCards";
 import type { ModelSpec, ModelSpecUpdateResult } from "../types";
 import { ModelDraftStatus } from "./ModelDraftStatus";
 import { ModelLibrary } from "./ModelLibrary";
@@ -24,12 +24,10 @@ import type { ToastFn } from "./useOmpOp";
 import { useAlive } from "./useOmpOp";
 import "./ModelsTab.css";
 
-const MORE_ROLE_SET: Record<string, true> = { image: true, web: true, speech: true, dictation: true, vision: true, judge: true };
-
-export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
+export function ModelsTab(props: { onToast: ToastFn; state: ModelDraftState }): ReactNode {
   const { onToast } = props;
-  const loaded = useModelDraft(onToast);
   const alive = useAlive();
+  const specsSeq = useRef(0);
   const [specs, setSpecs] = useState<ModelSpec[]>([]);
   const [specsPath, setSpecsPath] = useState("");
   const [revision, setRevision] = useState("");
@@ -40,19 +38,20 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
   const [specSelector, setSpecSelector] = useState<string | null>(null);
 
   const loadSpecs = useCallback(async () => {
+    const id = ++specsSeq.current;
     setSpecsReloading(true);
     try {
       const result = await getModelSpecs();
-      if (!alive.current) return;
+      if (!alive.current || id !== specsSeq.current) return;
       setSpecs(result.available ? result.specs : []);
       setSpecsPath(result.path);
       setRevision(result.revision);
       setSpecsError(result.error);
     } catch (e: unknown) {
-      if (!alive.current) return;
+      if (!alive.current || id !== specsSeq.current) return;
       setSpecsError(errorText(normalizeError(e)));
     } finally {
-      if (alive.current) setSpecsReloading(false);
+      if (alive.current && id === specsSeq.current) setSpecsReloading(false);
     }
   }, [alive]);
 
@@ -76,23 +75,7 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
 
   const specsBySelector = useMemo(() => new Map(specs.map((s) => [s.selector, s])), [specs]);
 
-  if (loaded.status === "loading") {
-    return <div className="pane-note">正在读取模型配置…</div>;
-  }
-  if (loaded.status === "error") {
-    return (
-      <div className="manage-section">
-        <div className="banner banner-error" role="alert">
-          <div>{loaded.loadError ?? "读取模型配置失败"}</div>
-          <button type="button" className="btn btn-small" onClick={() => void loaded.loadConfig()}>
-            重试
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const s = loaded.state;
+  const s = props.state;
   const baselineRaw = s.config.roles.default;
   const baseline = typeof baselineRaw === "string"
     ? (friendlyModelName(parseSelectorValue(baselineRaw).selector, s.modelsList) ?? baselineRaw)
@@ -102,7 +85,7 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
     // 用 expandRole 保证 shownRoles/展开态，再按 bench 条目精确值写行。
     for (const [role] of changes) {
       s.expandRole(role);
-      if (MORE_ROLE_SET[role] === true) s.setMoreOpen(true);
+      if (MORE_ROLES.includes(role)) s.setMoreOpen(true);
     }
     s.setDraft((prev) => {
       if (prev === null) return prev;
@@ -129,6 +112,7 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
   const handleSpecSaved = (result: ModelSpecUpdateResult | null): void => {
     // 成功即先用返回的 revision/spec 顶掉本地，再异步 reload；快速连存不自冲突。
     if (result !== null) {
+      ++specsSeq.current;
       setRevision(result.revision);
       setSpecs((prev) => prev.map((entry) => (entry.selector === result.spec.selector ? result.spec : entry)));
       setTesterKey((k) => k + 1);
@@ -187,7 +171,6 @@ export function ModelsTab(props: { onToast: ToastFn }): ReactNode {
         <p className="muted models-tab-hint">跑 bench 看速度与稳定性，推荐结果回填到下面的角色分配。</p>
         <ModelTesterPanel
           onToast={onToast}
-          embedded
           refreshKey={testerKey}
           config={bench}
           onConfigChange={updateBench}

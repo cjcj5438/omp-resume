@@ -1,6 +1,6 @@
 //! 原生目录选择器：经 `osascript` 调用 AppleScript `choose folder`。
 //!
-//! - 不引入新依赖、不改 capabilities（与 iTerm 原语一样直接 spawn `osascript`，
+//! - 不引入新依赖、不改 capabilities（与 iTerm 原语一样直接 spawn `osascript` 绝对路径，
 //!   脚本走 `-e` argv，不经 shell）。
 //! - 用户取消（osascript 错误 -128）不是错误：返回 `None`。
 //! - 纯函数 `parse_choose_output` 负责解释结果，便于单测。
@@ -13,7 +13,7 @@ const CHOOSE_SCRIPT: &str = r#"POSIX path of (choose folder with prompt "选择�
 
 /// 运行选择器。`Ok(None)` = 用户取消；`Ok(Some(p))` = 所选目录（无末尾斜杠）。
 pub fn choose_directory() -> Result<Option<String>, AppError> {
-    let output = Command::new("osascript")
+    let output = Command::new(super::iterm::OSASCRIPT)
         .arg("-e")
         .arg(CHOOSE_SCRIPT)
         .stdin(Stdio::null())

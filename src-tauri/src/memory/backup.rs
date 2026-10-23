@@ -25,19 +25,22 @@ pub fn backup_root(data_dir: &Path) -> PathBuf {
     data_dir.join(BACKUP_DIR_NAME)
 }
 
-/// kind ↔ 目录后缀。
-const KINDS: [(MemoryBackupKind, &str); 3] = [
-    (MemoryBackupKind::BeforeDelete, "before-delete"),
-    (MemoryBackupKind::BeforeRestore, "before-restore"),
-    (MemoryBackupKind::BankRemoved, "bank-removed"),
-];
-
+/// kind → 目录后缀（穷举 match，加变体即编译错）。
 pub(crate) fn kind_suffix(kind: MemoryBackupKind) -> &'static str {
-    KINDS.iter().find(|(k, _)| *k == kind).unwrap().1
+    match kind {
+        MemoryBackupKind::BeforeDelete => "before-delete",
+        MemoryBackupKind::BeforeRestore => "before-restore",
+        MemoryBackupKind::BankRemoved => "bank-removed",
+    }
 }
 
 fn kind_from_suffix(suffix: &str) -> Option<MemoryBackupKind> {
-    KINDS.iter().find(|(_, n)| *n == suffix).map(|(k, _)| *k)
+    match suffix {
+        "before-delete" => Some(MemoryBackupKind::BeforeDelete),
+        "before-restore" => Some(MemoryBackupKind::BeforeRestore),
+        "bank-removed" => Some(MemoryBackupKind::BankRemoved),
+        _ => None,
+    }
 }
 
 /// 严格校验备份目录名：`^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$`。
@@ -418,6 +421,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("memory-backups");
         (tmp, root)
+    }
+
+    #[test]
+    fn kind_suffix_roundtrips_all_variants() {
+        for kind in [
+            MemoryBackupKind::BeforeDelete,
+            MemoryBackupKind::BeforeRestore,
+            MemoryBackupKind::BankRemoved,
+        ] {
+            assert_eq!(kind_from_suffix(kind_suffix(kind)), Some(kind));
+        }
+        assert_eq!(kind_from_suffix("evil"), None);
     }
 
     #[test]

@@ -41,7 +41,7 @@ const CONFIG_KEYS = {
   chains: "retry.fallbackChains",
 } as const;
 
-const CONFLICT_TEXT = "配置已被外部修改，请刷新（下方已重新载入最新配置）";
+const CONFLICT_TEXT = "配置已被外部修改，请刷新（下方已重新载入最新配置）（草稿已保留）";
 
 /**
  * 进程内模型缓存：`omp models --json` 较慢，不能每次挂载都重跑。
@@ -313,6 +313,20 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
     }
   }, []);
 
+  /** 只重读基线、保留草稿：saveBlock 部分失败后用（草稿不清、touched 按 saved 逐 key 清）。 */
+  const reloadBaseline = useCallback(async (): Promise<boolean> => {
+    try {
+      const loaded = await getModelConfig();
+      if (!alive.current) return false;
+      setConfig(loaded);
+      setLoadError(null);
+      return true;
+    } catch (e: unknown) {
+      if (alive.current) setLoadError(errorText(normalizeError(e)));
+      return false;
+    }
+  }, [alive]);
+
   useEffect(() => {
     void loadConfig();
   }, [loadConfig]);
@@ -383,19 +397,44 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
       await loadConfig();
       onToast(saved.length > 0 ? `已保存（${saved.join("、")}）` : "没有变化", "info");
     } catch (e: unknown) {
-      // 无论何种失败都重新载入：前面的 key 可能已写，不能拿着旧草稿假装没事。
-      await loadConfig();
+      // 失败只重读基线、草稿保留：已写成功的 key 只清其切片的 touched，重试只写失败的 key。
+      await reloadBaseline();
+      const savedKeys = new Set(saved);
+      if (savedKeys.size > 0) {
+        setDraft((prev) => {
+          if (prev === null) return prev;
+          const next: ModelDrafts = { ...prev };
+          if (savedKeys.has(pairLabel(CONFIG_KEYS.roles))) {
+            next.roles = new Map([...prev.roles].map(([k, row]) => [k, { ...row, touched: false }]));
+          }
+          if (savedKeys.has(pairLabel(CONFIG_KEYS.chains))) {
+            next.chains = new Map([...prev.chains].map(([k, chain]) => [k, { ...chain, touched: false }]));
+          }
+          if (savedKeys.has(pairLabel(CONFIG_KEYS.overrides))) {
+            next.overrides = new Map([...prev.overrides].map(([k, row]) => [k, { ...row, touched: false }]));
+          }
+          if (savedKeys.has(pairLabel(CONFIG_KEYS.advisor))) {
+            next.advisorTouched = new Set();
+          }
+          return next;
+        });
+      }
       const failure = e as { failed?: unknown; message?: string };
       const err = normalizeError(failure.failed ?? e);
       if (err.code === "CONFLICT") {
-        setBlockErrors((prev) => ({ ...prev, [block]: CONFLICT_TEXT }));
+        setBlockErrors((prev) => ({
+          ...prev,
+          [block]: saved.length > 0
+            ? `「${saved.join("、")}」已保存，但「${failure.message ?? ""}」失败：${CONFLICT_TEXT}`
+            : CONFLICT_TEXT,
+        }));
       } else if (saved.length > 0) {
         setBlockErrors((prev) => ({
           ...prev,
-          [block]: `「${saved.join("、")}」已保存，但「${failure.message ?? ""}」保存失败：${errorText(err)}（已重新载入最新配置，请检查后重试）`,
+          [block]: `「${saved.join("、")}」已保存，但「${failure.message ?? ""}」失败：${errorText(err)}（草稿已保留，检查后重试）`,
         }));
       } else {
-        setBlockErrors((prev) => ({ ...prev, [block]: `保存失败：${errorText(err)}` }));
+        setBlockErrors((prev) => ({ ...prev, [block]: `保存失败：${errorText(err)}（草稿已保留）` }));
       }
     } finally {
       busyRef.current = null;

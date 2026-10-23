@@ -8,7 +8,6 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import App from "../App";
 import { installMockBackend } from "../dev/mockBackend";
 import { ManageView } from "./ManageView";
-
 const S1 = "🎛️ DEMO: 构建可视化配置桌面应用";
 
 function rowOf(title: string): HTMLElement {
@@ -112,6 +111,28 @@ describe("ManageView 页签", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("模型页改角色后切 Agent 再切回：编辑与保存条保留", async () => {
+    await installMockBackend();
+    renderManageView();
+    await screen.findByRole("region", { name: "模型库" });
+
+    // memory 未配置：紧凑行点「设置」展开成卡，再选一个模型。
+    fireEvent.click(within(screen.getByTestId("role-compact-memory")).getByRole("button", { name: "设置" }));
+    fireEvent.click(within(screen.getByTestId("role-card-memory")).getByRole("button", { name: "记忆助手的主模型" }));
+    fireEvent.click(screen.getByRole("button", { name: /DeepSeek v4\.1 Flash/ }));
+    const rolesSection = screen.getByRole("region", { name: "角色分配" });
+    expect(await within(rolesSection).findByRole("status")).toHaveTextContent("1 处未保存修改");
+
+    // 切到 Agent 再切回：同一份草稿，编辑与保存条都在。
+    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
+    await screen.findByTestId("agent-flow");
+    fireEvent.click(screen.getByRole("tab", { name: "模型" }));
+    await screen.findByRole("region", { name: "模型库" });
+    const rolesAgain = screen.getByRole("region", { name: "角色分配" });
+    expect(within(rolesAgain).getByTestId("role-card-memory")).toHaveTextContent("DeepSeek v4.1 Flash (5438)");
+    expect(within(rolesAgain).getByRole("status")).toHaveTextContent("1 处未保存修改");
   });
 });
 

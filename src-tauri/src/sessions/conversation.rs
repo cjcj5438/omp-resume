@@ -9,7 +9,8 @@ use crate::model::{
 };
 
 use super::parse::{self, RawEntry};
-use super::{joined_text, truncate_bytes, truncate_chars, MAX_TEXT_BYTES, OTHER_TEXT_CHARS};
+use super::{joined_text, truncate_chars, MAX_TEXT_BYTES, OTHER_TEXT_CHARS, TRUNC_SUFFIX};
+use crate::util::truncate_bytes;
 
 /// 会话预览：`path` 须已校验。`node_id` 缺省为 active leaf。
 /// 非 v3 → `UNSUPPORTED_FORMAT`；空文件（无保留节点）→ 空 items。
@@ -114,7 +115,7 @@ fn map_message(e: &RawEntry) -> Option<ConversationItem> {
         }),
         "toolResult" => {
             let text = m.get("content").map(joined_text).unwrap_or_default();
-            let (text, truncated) = truncate_bytes(&text, MAX_TEXT_BYTES);
+            let (text, truncated) = truncate_bytes(&text, MAX_TEXT_BYTES, TRUNC_SUFFIX);
             ConversationItem::ToolResult(ToolResultItem {
                 tool_call_id: m
                     .get("toolCallId")
@@ -133,7 +134,7 @@ fn map_message(e: &RawEntry) -> Option<ConversationItem> {
         }
         "bashExecution" => {
             let output = m.get("output").and_then(|v| v.as_str()).unwrap_or("");
-            let (text, truncated) = truncate_bytes(output, MAX_TEXT_BYTES);
+            let (text, truncated) = truncate_bytes(output, MAX_TEXT_BYTES, TRUNC_SUFFIX);
             ConversationItem::BashExecution(BashExecutionItem {
                 command: m
                     .get("command")

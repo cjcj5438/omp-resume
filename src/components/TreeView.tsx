@@ -1,12 +1,13 @@
 /**
  * 树视图：折叠线性链、节点选择、root→node 预览、从此节点继续。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getConversation, getTree } from "../api";
-import type { AppError, Conversation, SessionSummary, TreeData, TreeNode } from "../types";
+import type { AppError, SessionSummary, TreeNode } from "../types";
+import type { ContinueOutcome } from "../flows";
 import { errorText, formatTreeTime } from "../format";
 import { MAX_INDENT_DEPTH, flattenRows, foldTree, type DisplayRow } from "../tree/fold";
-import type { ContinueOutcome } from "../flows";
+import { useAsyncData } from "./useAsyncData";
 import { ConversationView } from "./ConversationView";
 import { Modal } from "./ui";
 
@@ -30,28 +31,12 @@ interface TreeViewProps {
   onToast: (text: string, kind: "info" | "error") => void;
 }
 
-interface LoadState<T> {
-  data: T | null;
-  loading: boolean;
-  error: AppError | null;
-}
-
 export function TreeView({
   session,
   onContinue,
   refreshKey,
   onToast,
 }: TreeViewProps) {
-  const [tree, setTree] = useState<LoadState<TreeData>>({
-    data: null,
-    loading: false,
-    error: null,
-  });
-  const [preview, setPreview] = useState<LoadState<Conversation>>({
-    data: null,
-    loading: false,
-    error: null,
-  });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialogNode, setDialogNode] = useState<TreeNode | null>(null);
@@ -59,20 +44,8 @@ export function TreeView({
   const [busy, setBusy] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const loadTree = useCallback(async () => {
-    setTree((s) => ({ ...s, loading: true }));
-    try {
-      const data = await getTree({ path: session.path });
-      setTree({ data, loading: false, error: null });
-    } catch (e) {
-      setTree({ data: null, loading: false, error: e as AppError });
-    }
-  }, [session.path]);
-
-  useEffect(() => {
-    setTree({ data: null, loading: true, error: null });
-    void loadTree();
-  }, [loadTree, refreshKey]);
+  const tree = useAsyncData(() => getTree({ path: session.path }), [session.path, refreshKey]);
+  const preview = useAsyncData(() => getConversation({ path: session.path, nodeId: selectedId! }), [session.path, selectedId, refreshKey], { enabled: selectedId !== null, keepPrevious: true });
 
   useEffect(() => {
     if (!tree.data) return;
@@ -80,23 +53,6 @@ export function TreeView({
       cur && tree.data?.nodes.some((n) => n.id === cur) ? cur : tree.data?.leafId ?? null,
     );
   }, [tree.data]);
-
-  const loadPreview = useCallback(
-    async (nodeId: string) => {
-      setPreview((s) => ({ ...s, loading: true }));
-      try {
-        const data = await getConversation({ path: session.path, nodeId });
-        setPreview({ data, loading: false, error: null });
-      } catch (e) {
-        setPreview({ data: null, loading: false, error: e as AppError });
-      }
-    },
-    [session.path],
-  );
-
-  useEffect(() => {
-    if (selectedId) void loadPreview(selectedId);
-  }, [selectedId, refreshKey, loadPreview]);
 
   const rows = useMemo(() => (tree.data ? foldTree(tree.data) : []), [tree.data]);
   const visible = useMemo(() => flattenRows(rows, expanded), [rows, expanded]);
@@ -195,7 +151,7 @@ export function TreeView({
           {tree.error ? (
             <div className="banner banner-error" role="alert">
               <span>{errorText(tree.error)}</span>
-              <button type="button" className="btn btn-small" onClick={() => void loadTree()}>
+              <button type="button" className="btn btn-small" onClick={tree.reload}>
                 重试
               </button>
             </div>
@@ -241,7 +197,7 @@ export function TreeView({
             conversation={preview.data}
             loading={preview.loading}
             error={preview.error}
-            onRetry={() => selectedId && void loadPreview(selectedId)}
+            onRetry={preview.reload}
             emptyNote="选择左侧节点查看其路径内容"
           />
         </div>

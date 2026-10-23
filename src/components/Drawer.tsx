@@ -14,12 +14,10 @@ export function Drawer(props: {
   title: ReactNode;
   label: string;
   onClose: () => void;
-  /** 抽屉内需要固定不滚动的尾部内容（如操作行）。 */
-  footer?: ReactNode;
   inline?: boolean;
   children: ReactNode;
 }): ReactNode {
-  const { title, label, onClose, footer, inline = false, children } = props;
+  const { title, label, onClose, inline = false, children } = props;
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -51,7 +49,6 @@ export function Drawer(props: {
         </button>
       </header>
       <div className="drawer-body">{children}</div>
-      {footer === undefined ? null : <footer className="drawer-foot">{footer}</footer>}
     </div>
   );
 }

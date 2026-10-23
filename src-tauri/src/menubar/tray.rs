@@ -423,7 +423,7 @@ pub fn spawn_poller<R: Runtime + 'static>(
     owners_dir: PathBuf,
     sessions_dir: PathBuf,
 ) {
-    std::thread::Builder::new()
+    let poller = std::thread::Builder::new()
         .name("menubar-poll".to_string())
         .spawn(move || {
             let mut poller = Poller::new(
@@ -509,6 +509,8 @@ pub fn spawn_poller<R: Runtime + 'static>(
                     std::thread::sleep(interval - elapsed);
                 }
             }
-        })
-        .expect("spawn menubar poll thread");
+        });
+    if let Err(e) = poller {
+        eprintln!("menubar: 轮询线程启动失败：{e}");
+    }
 }
