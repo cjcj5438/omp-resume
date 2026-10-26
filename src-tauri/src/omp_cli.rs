@@ -694,8 +694,25 @@ mod tests {
         })
         .unwrap();
         assert_eq!(result.code, 0);
-        assert_eq!(lines, ["one", "two", "three"]);
-        assert_eq!(result.output, "one\ntwo\nthree");
+        // stdout/stderr 各由一个独立 reader 线程读入同一 channel：同流保序，
+        // 跨流到达顺序由 OS 调度决定，故不断言 two 与 one/three 的相对位置。
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        for line in &lines {
+            assert!(!line.contains('\x1b'), "{lines:?}");
+        }
+        let mut sorted = lines.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, ["one", "three", "two"]);
+        let pos = |want: &str| lines.iter().position(|line| line == want).unwrap();
+        assert!(pos("one") < pos("three"), "{lines:?}");
+        let mut expected = String::new();
+        for line in &lines {
+            expected.push_str(line);
+            if line.as_str() != "three" {
+                expected.push('\n');
+            }
+        }
+        assert_eq!(result.output, expected);
     }
 
     #[test]
