@@ -435,7 +435,14 @@ body {
 .ph-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
+}
+
+/* 空态在滚动区内垂直居中（承接原 .detail > .pane-note 的观感）。 */
+.ph-body > .pane-note {
+  margin: auto;
 }
 
 .ph-head {
