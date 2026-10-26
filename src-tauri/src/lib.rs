@@ -36,6 +36,8 @@ pub mod omp_plugins;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
 pub mod ops;
 pub mod sessions;
+/// Agent 舞台：会话内主会话/子代理/worker 的可视化状态（见 CONTRACT §23）。
+pub mod stage;
 pub mod usage;
 pub mod util;
 
@@ -251,6 +253,7 @@ pub fn run() {
         .manage(omp_cli::OmpBusy::default())
         .manage(mcp_config::McpWriteState::default())
         .manage(std::sync::Arc::new(usage::UsageCache::default()))
+        .manage(std::sync::Arc::new(stage::StageCache::default()))
         .setup(move |app| {
             // 菜单栏：设置 → 托盘 → 通知点击 → 轮询线程（CONTRACT §17）。
             let data_dir =
@@ -296,6 +299,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_sessions,
+            stage::get_agent_stage,
+            stage::list_running_sessions,
             usage::get_session_usage,
             usage::get_usage_stats,
             usage::get_usage_health,
@@ -333,6 +338,7 @@ pub fn run() {
             omp_plugins::omp_skills_update,
             omp_models::list_models,
             omp_models::get_model_config,
+            omp_models::list_agent_details,
             omp_models::update_model_config,
             model_bench::model_bench_run,
             model_bench::model_bench_history,

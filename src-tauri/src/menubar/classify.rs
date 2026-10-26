@@ -33,6 +33,16 @@ impl SessionStatus {
         }
     }
 
+    /// 稳定键（前端/舞台用；与 [`Self::label`] 的中文文案一一对应）。
+    pub fn key(self) -> &'static str {
+        match self {
+            SessionStatus::Working => "working",
+            SessionStatus::WaitingInput => "waiting",
+            SessionStatus::Idle => "idle",
+            SessionStatus::Stuck => "stuck",
+        }
+    }
+
     /// 菜单排序键：疑似卡住 → 等待输入 → 工作中 → 空闲。
     pub fn sort_rank(self) -> u8 {
         match self {

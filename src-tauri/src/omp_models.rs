@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use serde_json::{Map, Value};
 
 use crate::model::{
-    AgentDefinition, AgentSource, AppError, ErrorCode, ModelConfig, ModelInfo, RetryStatus,
-    UpdateModelConfigResult,
+    AgentDefinition, AgentDetail, AgentSource, AppError, ErrorCode, ModelConfig, ModelInfo,
+    RetryStatus, UpdateModelConfigResult,
 };
 use crate::omp_cli::{
     omp_not_found, require_success, resolve_omp, run_omp, strip_ansi, OmpBusy, CHECK_TIMEOUT,
@@ -285,38 +285,75 @@ pub fn list_models_impl(bin: &Path) -> Result<Vec<ModelInfo>, AppError> {
 // agent 定义（frontmatter 轻量解析）
 // ---------------------------------------------------------------------------
 
-/// agent md 的 frontmatter 抽取：只取 name / description / model / thinkingLevel。
+/// agent md 的 frontmatter 抽取：只取 name / description / model / thinkingLevel /
+/// tools / spawns；`output` 等嵌套结构原样忽略。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Frontmatter {
     pub name: Option<String>,
     pub description: Option<String>,
     pub model: Vec<String>,
     pub thinking_level: Option<String>,
+    /// `None` = 未声明（omp 默认工具集）；`Some([])` = 显式无工具。
+    pub tools: Option<Vec<String>>,
+    /// `None` = 未声明；`Some(["*"])` = 可派生任意 agent。
+    pub spawns: Option<Vec<String>>,
+}
+
+/// 需要按「块列表 / 行内列表」累积的字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListField {
+    Model,
+    Tools,
+    Spawns,
+}
+
+/// 行内或单行列表值：`read, bash` / `["a", 'b']` → 去引号、去空项。
+fn split_list(rest: &str) -> Vec<String> {
+    let inner = rest
+        .strip_prefix('[')
+        .and_then(|r| r.strip_suffix(']'))
+        .unwrap_or(rest);
+    inner
+        .split(',')
+        .map(|item| crate::util::unquote(item.trim()))
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// 手写轻量 frontmatter 解析：首行 `---` 到下一个 `---` 之间的顶层字段。
-/// 只处理目标 4 个键，其余键（tools/output 等嵌套结构）原样忽略。
-/// `model` 支持字符串、块列表与行内 `["a","b"]` 三种写法。
+/// `model` 支持字符串、块列表与行内 `["a","b"]` 三种写法（字符串不按逗号拆）。
+/// `tools` / `spawns` 支持块列表、逗号分隔与行内列表（`spawns: "*"` → `["*"]`）。
 pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
     let mut lines = text.lines();
     if lines.next()?.trim() != "---" {
         return None;
     }
     let mut frontmatter = Frontmatter::default();
-    let mut capture_model = false;
+    let mut capture: Option<ListField> = None;
     for line in lines {
         if line.trim() == "---" {
             break;
         }
         if line.starts_with(char::is_whitespace) {
-            if capture_model {
+            if let Some(field) = capture {
                 if let Some(item) = line.trim().strip_prefix("- ") {
-                    frontmatter.model.push(crate::util::unquote(item));
+                    let item = crate::util::unquote(item.trim());
+                    if !item.is_empty() {
+                        match field {
+                            ListField::Model => frontmatter.model.push(item),
+                            ListField::Tools => {
+                                frontmatter.tools.get_or_insert_with(Vec::new).push(item)
+                            }
+                            ListField::Spawns => {
+                                frontmatter.spawns.get_or_insert_with(Vec::new).push(item)
+                            }
+                        }
+                    }
                 }
             }
             continue;
         }
-        capture_model = false;
+        capture = None;
         let Some((key, rest)) = line.split_once(':') else {
             continue;
         };
@@ -333,16 +370,27 @@ pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
             }
             "model" => {
                 if rest.is_empty() {
-                    capture_model = true;
-                } else if let Some(items) = rest.strip_prefix('[').and_then(|r| r.strip_suffix(']'))
-                {
-                    frontmatter.model = items
-                        .split(',')
-                        .map(crate::util::unquote)
-                        .filter(|item| !item.is_empty())
-                        .collect();
+                    capture = Some(ListField::Model);
+                } else if rest.starts_with('[') {
+                    frontmatter.model = split_list(rest);
                 } else {
                     frontmatter.model = vec![crate::util::unquote(rest)];
+                }
+            }
+            "tools" => {
+                if rest.is_empty() {
+                    frontmatter.tools.get_or_insert_with(Vec::new);
+                    capture = Some(ListField::Tools);
+                } else {
+                    frontmatter.tools = Some(split_list(rest));
+                }
+            }
+            "spawns" => {
+                if rest.is_empty() {
+                    frontmatter.spawns.get_or_insert_with(Vec::new);
+                    capture = Some(ListField::Spawns);
+                } else {
+                    frontmatter.spawns = Some(split_list(rest));
                 }
             }
             _ => {}
@@ -355,13 +403,43 @@ fn non_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// agent 定义（读取中间产物；输出前转成 `AgentDefinition`）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// agent 定义（读取中间产物；输出前转成 `AgentDefinition` / `AgentDetail`）。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AgentDef {
     pub name: String,
     pub description: String,
     pub model: Vec<String>,
     pub thinking_level: Option<String>,
+    pub tools: Option<Vec<String>>,
+    pub spawns: Option<Vec<String>>,
+    /// frontmatter 之后的正文（= omp 的 `systemPrompt`）。
+    pub system_prompt: String,
+}
+
+/// 系统提示词最多展示的字符数（内置 agent 都远小于此；防御异常大文件）。
+const PROMPT_MAX_CHARS: usize = 64 * 1024;
+
+/// frontmatter 之后的正文；无 frontmatter 时取全文。
+fn agent_body(text: &str) -> String {
+    let mut lines = text.lines();
+    let starts_with_frontmatter = lines.next().is_some_and(|first| first.trim() == "---");
+    let body = if starts_with_frontmatter {
+        // 跳过首个 `---` 之后直到下一个独占一行的 `---`，其余即正文。
+        let rest: Vec<&str> = lines
+            .skip_while(|line| line.trim() != "---")
+            .skip(1)
+            .collect();
+        rest.join("\n")
+    } else {
+        text.to_string()
+    };
+    let body = body.trim();
+    if body.chars().count() > PROMPT_MAX_CHARS {
+        let mut cut: String = body.chars().take(PROMPT_MAX_CHARS).collect();
+        cut.push_str("\n…（已截断）");
+        return cut;
+    }
+    body.to_string()
 }
 
 /// 解析单个 agent md；frontmatter 缺失/缺 name 时以文件名兜底。
@@ -372,37 +450,47 @@ pub fn parse_agent_file(text: &str, fallback_name: &str) -> AgentDef {
         description: frontmatter.description.unwrap_or_default(),
         model: frontmatter.model,
         thinking_level: frontmatter.thinking_level,
+        tools: frontmatter.tools,
+        spawns: frontmatter.spawns,
+        system_prompt: agent_body(text),
     }
 }
 
 /// 合并内置与用户定义（读取顺序见 CONTRACT §4.37）：
 /// `~/.omp/agent/agents/<name>.md` 存在则以它的 frontmatter 为默认值，
 /// 否则取 unpack 出的内置定义；用户目录里多出的 agent 标记「自定义」。
-pub fn merge_agents(builtin: &[AgentDef], user: &[AgentDef]) -> Vec<AgentDefinition> {
+pub fn merge_agent_details(builtin: &[AgentDef], user: &[AgentDef]) -> Vec<AgentDetail> {
+    let detail = |def: &AgentDef, source: AgentSource| AgentDetail {
+        name: def.name.clone(),
+        description: def.description.clone(),
+        source,
+        default_model: def.model.clone(),
+        default_thinking_level: def.thinking_level.clone(),
+        tools: def.tools.clone(),
+        spawns: def.spawns.clone(),
+        system_prompt: def.system_prompt.clone(),
+    };
     let mut result = Vec::new();
     for item in builtin {
+        // 同名用户文件覆盖默认值，但 agent 仍算内置。
         let source = user.iter().find(|u| u.name == item.name).unwrap_or(item);
-        result.push(AgentDefinition {
-            name: item.name.clone(),
-            description: source.description.clone(),
-            source: AgentSource::Builtin,
-            default_model: source.model.clone(),
-            default_thinking_level: source.thinking_level.clone(),
-        });
+        result.push(detail(source, AgentSource::Builtin));
     }
     for item in user {
         if builtin.iter().any(|b| b.name == item.name) {
             continue;
         }
-        result.push(AgentDefinition {
-            name: item.name.clone(),
-            description: item.description.clone(),
-            source: AgentSource::User,
-            default_model: item.model.clone(),
-            default_thinking_level: item.thinking_level.clone(),
-        });
+        result.push(detail(item, AgentSource::User));
     }
     result
+}
+
+/// `get_model_config` 用的精简视图：只保留展示字段（与 `merge_agent_details` 同规则）。
+pub fn merge_agents(builtin: &[AgentDef], user: &[AgentDef]) -> Vec<AgentDefinition> {
+    merge_agent_details(builtin, user)
+        .into_iter()
+        .map(AgentDefinition::from)
+        .collect()
 }
 
 fn io_error(context: &str, e: impl std::fmt::Display) -> AppError {
@@ -565,6 +653,20 @@ pub async fn get_model_config() -> Result<ModelConfig, AppError> {
     crate::blocking(|| {
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
         get_model_config_impl(&bin, &crate::util::home_dir())
+    })
+    .await
+}
+
+/// CONTRACT §4.59：agent 定义的完整只读视图（工具 / 派生 / 系统提示词）。
+/// 与 `get_model_config` 共用内置定义缓存，绝不写任何 omp 配置。
+#[tauri::command]
+pub async fn list_agent_details() -> Result<Vec<AgentDetail>, AppError> {
+    crate::blocking(|| {
+        let bin = resolve_omp().ok_or_else(omp_not_found)?;
+        Ok(merge_agent_details(
+            &builtin_agents(&bin)?,
+            &user_agents(&crate::util::home_dir()),
+        ))
     })
     .await
 }
@@ -941,12 +1043,14 @@ exit 1"#,
                 description: "内置总控".into(),
                 model: vec!["@task".into()],
                 thinking_level: Some("auto".into()),
+                ..AgentDef::default()
             },
             AgentDef {
                 name: "scout".into(),
                 description: "内置调研".into(),
                 model: vec!["@smol".into()],
                 thinking_level: Some("medium".into()),
+                ..AgentDef::default()
             },
         ];
         let user = vec![
@@ -955,12 +1059,14 @@ exit 1"#,
                 description: "用户改写".into(),
                 model: vec!["5438/mimo-v2.6-pro".into()],
                 thinking_level: None,
+                ..AgentDef::default()
             },
             AgentDef {
                 name: "deployer".into(),
                 description: "用户自建".into(),
                 model: vec![],
                 thinking_level: None,
+                ..AgentDef::default()
             },
         ];
         let merged = merge_agents(&builtin, &user);
@@ -978,6 +1084,94 @@ exit 1"#,
         // 用户自建 agent 排在内置之后并标「自定义」。
         assert_eq!(merged[2].name, "deployer");
         assert_eq!(merged[2].source, AgentSource::User);
+    }
+
+    #[test]
+    fn frontmatter_parses_tools_and_spawns() {
+        let block = parse_frontmatter(
+            "---\nname: r\ntools:\n  - read\n  - grep\nspawns:\n  - scout\n---\nbody",
+        )
+        .unwrap();
+        assert_eq!(
+            block.tools,
+            Some(vec!["read".to_owned(), "grep".to_owned()])
+        );
+        assert_eq!(block.spawns, Some(vec!["scout".to_owned()]));
+
+        // 真实内置 `task.md` 的写法：任意派生。
+        let star = parse_frontmatter("---\nname: t\nspawns: \"*\"\n---\n").unwrap();
+        assert_eq!(star.spawns, Some(vec!["*".to_owned()]));
+        assert_eq!(star.tools, None);
+
+        // 逗号分隔与行内列表。
+        let csv = parse_frontmatter("---\nname: c\ntools: read, bash\n---\n").unwrap();
+        assert_eq!(csv.tools, Some(vec!["read".to_owned(), "bash".to_owned()]));
+        let inline = parse_frontmatter("---\nname: i\ntools: [\"read\", 'lsp']\n---\n").unwrap();
+        assert_eq!(
+            inline.tools,
+            Some(vec!["read".to_owned(), "lsp".to_owned()])
+        );
+
+        // `output` 下缩进的列表不能被吞进 tools。
+        let nested = parse_frontmatter(
+            "---\nname: o\ntools:\n  - read\noutput:\n  properties:\n    vague:\n      enum:\n        - correct\n---\n",
+        )
+        .unwrap();
+        assert_eq!(nested.tools, Some(vec!["read".to_owned()]));
+        assert_eq!(nested.spawns, None);
+    }
+
+    #[test]
+    fn agent_file_body_is_system_prompt() {
+        let def = parse_agent_file("---\nname: a\ntools:\n  - read\n---\n\nhello\n", "stem");
+        assert_eq!(def.name, "a");
+        assert_eq!(def.system_prompt, "hello");
+        assert_eq!(def.tools, Some(vec!["read".to_owned()]));
+        // 无 frontmatter：正文即全文；缺 name 用文件名。
+        let plain = parse_agent_file("just text\n", "stem");
+        assert_eq!(plain.name, "stem");
+        assert_eq!(plain.system_prompt, "just text");
+    }
+
+    #[test]
+    fn agent_details_merge_tools_and_prompt() {
+        let builtin = vec![AgentDef {
+            name: "scout".into(),
+            description: "内置".into(),
+            model: vec!["@smol".into()],
+            tools: Some(vec!["read".into()]),
+            system_prompt: "旧提示词".into(),
+            ..AgentDef::default()
+        }];
+        let user = vec![
+            AgentDef {
+                name: "scout".into(),
+                description: "用户改写".into(),
+                tools: Some(vec!["read".into(), "grep".into()]),
+                spawns: Some(vec!["*".into()]),
+                system_prompt: "新提示词".into(),
+                ..AgentDef::default()
+            },
+            AgentDef {
+                name: "custom".into(),
+                description: "自建".into(),
+                ..AgentDef::default()
+            },
+        ];
+        let merged = merge_agent_details(&builtin, &user);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].name, "scout");
+        assert_eq!(merged[0].source, AgentSource::Builtin);
+        assert_eq!(
+            merged[0].tools,
+            Some(vec!["read".to_owned(), "grep".to_owned()])
+        );
+        assert_eq!(merged[0].spawns, Some(vec!["*".to_owned()]));
+        assert_eq!(merged[0].system_prompt, "新提示词");
+        assert_eq!(merged[1].name, "custom");
+        assert_eq!(merged[1].source, AgentSource::User);
+        assert_eq!(merged[1].tools, None);
+        assert_eq!(merged[1].system_prompt, "");
     }
 
     #[test]

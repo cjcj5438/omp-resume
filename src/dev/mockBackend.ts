@@ -13,9 +13,10 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
-import type { AgentDefinition, AppError, BenchRound, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry, UsageRange } from "../types";
+import type { AgentStage, StageActor, StageActorKind, StageActorState, StageActivity } from "../types";
 import {
   FIXTURE_SESSIONS,
   buildListResult,
@@ -292,6 +293,43 @@ const MOCK_AGENTS: AgentDefinition[] = [
   { name: "deployer", description: "自定义：发布与部署", source: "user", defaultModel: ["@smol"], defaultThinkingLevel: null },
 ];
 
+/** `list_agent_details` 的附加字段（工具 / 派生 / 系统提示词）。 */
+const MOCK_AGENT_EXTRA: Record<
+  string,
+  { tools: string[] | null; spawns: string[] | null; systemPrompt: string }
+> = {
+  task: {
+    tools: null,
+    spawns: ["*"],
+    systemPrompt: "你是通用执行子代理。\n按委派说明完成任务，最后汇报改动与验证结果。",
+  },
+  sonic: {
+    tools: null,
+    spawns: null,
+    systemPrompt: "只做机械更新与数据收集，不做设计决策。",
+  },
+  scout: {
+    tools: ["read", "find", "grep", "glob", "web_search"],
+    spawns: null,
+    systemPrompt: "快速只读调研：返回压缩后的结论、文件引用与结构说明。",
+  },
+  reviewer: {
+    tools: ["read", "find", "grep", "glob", "bash", "lsp", "web_search", "ast_grep"],
+    spawns: ["scout"],
+    systemPrompt: "审查给定改动：只报具体的正确性/安全问题，附文件行号。",
+  },
+  "security-reviewer": {
+    tools: ["read", "find", "grep", "glob", "lsp", "ast_grep"],
+    spawns: null,
+    systemPrompt: "只读安全审查：找可复现的漏洞证据，按严重度排序。",
+  },
+  deployer: {
+    tools: ["bash"],
+    spawns: null,
+    systemPrompt: "执行发布与部署步骤，失败时报告具体命令与输出。",
+  },
+};
+
 /** 模型与 Agent 配置 mock：白名单 5 键的读-比-写 + 模型列表 + 只读兜底状态。 */
 function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
   // 与后端一致的原始值（unknown 保留）；含别名 @smol、未知 selector、
@@ -334,6 +372,14 @@ function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
 
   return (cmd: string, args: Record<string, unknown>) => {
     if (cmd === "list_models") return structuredClone(MOCK_MODELS);
+    if (cmd === "list_agent_details") {
+      return structuredClone(
+        MOCK_AGENTS.map((agent): AgentDetail => ({
+          ...agent,
+          ...(MOCK_AGENT_EXTRA[agent.name] ?? { tools: null, spawns: null, systemPrompt: "" }),
+        })),
+      );
+    }
     if (cmd === "get_model_config") {
       return {
         roles: structuredClone(state["modelRoles"]) as Record<string, unknown>,
@@ -566,6 +612,202 @@ function createBenchMock() {
   };
 }
 
+
+// ---- 舞台 mock（CONTRACT §23） ----
+
+/** 舞台场景（`?stage=`）：live 逐相位演示 / review 全终态 / many 溢出 / empty 只有主。 */
+type StageScenario = "live" | "review" | "many" | "empty";
+
+/** 首次调用时刻（live 场景以它为 t0 推进相位）。 */
+let stageT0: number | null = null;
+
+const PHASES: { main: StageActorState; actors: Record<string, StageActorState> }[] = [
+  { main: "running", actors: { api: "queued", tests: "queued", docs: "queued", lint: "queued", advisor: "idle" } },
+  { main: "running", actors: { api: "running", tests: "queued", docs: "queued", lint: "queued", advisor: "idle" } },
+  { main: "running", actors: { api: "running", tests: "running", docs: "queued", lint: "queued", advisor: "running" } },
+  { main: "running", actors: { api: "running", tests: "running", docs: "running", lint: "queued", advisor: "running" } },
+  { main: "running", actors: { api: "running", tests: "done", docs: "running", lint: "queued", advisor: "running" } },
+  { main: "running", actors: { api: "failed", tests: "done", docs: "running", lint: "queued", advisor: "idle" } },
+  { main: "running", actors: { api: "failed", tests: "done", docs: "done", lint: "lost", advisor: "idle" } },
+  { main: "idle", actors: { api: "failed", tests: "done", docs: "done", lint: "lost", advisor: "idle" } },
+];
+
+const TOOL_CYCLE = ["read", "edit", "bash", "task"];
+
+const ACTOR_META: Record<string, { name: string; kind: StageActorKind; agent: string | null; brief: string }> = {
+  api: { name: "api", kind: "subagent", agent: "task", brief: "实现 REST 端点与校验" },
+  tests: { name: "tests", kind: "subagent", agent: "task", brief: "补齐端到端测试" },
+  docs: { name: "docs", kind: "worker", agent: "scout", brief: "更新接口文档" },
+  lint: { name: "lint", kind: "worker", agent: "sonic", brief: "跑 lint 与格式化" },
+  advisor: { name: "__advisor", kind: "advisor", agent: null, brief: "复审实现" },
+};
+
+const STATE_TEXT: Record<string, string | null> = {
+  running: null,
+  queued: null,
+  idle: "待命",
+  done: "已结束",
+  failed: "error",
+  lost: "会话已退出",
+};
+
+function stageActor(
+  id: string,
+  state: StageActorState,
+  meta: { name: string; kind: StageActorKind; agent: string | null; brief: string },
+  t0: number,
+  index: number,
+): StageActor {
+  const startedAt = new Date(t0 + index * 1000).toISOString();
+  const ended = state === "done" || state === "failed" || state === "lost";
+  const closedAt = new Date(t0 + 20000 + index * 4000).toISOString();
+  const tool = TOOL_CYCLE[index % TOOL_CYCLE.length];
+  const calls = state === "queued" ? 0 : 6 + index * 3;
+  const recent: StageActivity[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    recent.push({
+      at: new Date(t0 + index * 1000 + i * 1500).toISOString(),
+      kind: i % 2 === 0 ? "tool" : "thinking",
+      tool: i % 2 === 0 ? TOOL_CYCLE[(index + i) % TOOL_CYCLE.length] : null,
+      text: i % 2 === 0 ? meta.brief : "",
+    });
+  }
+  return {
+    id,
+    kind: meta.kind,
+    parentId: null,
+    name: meta.name,
+    agent: meta.agent,
+    brief: meta.brief,
+    state,
+    statusText: STATE_TEXT[state] ?? null,
+    startedAt,
+    endedAt: ended ? closedAt : null,
+    lastActivityAt: new Date(t0 + 30000 + index * 1000).toISOString(),
+    model: "amr-link/deepseek-v4.1-flash",
+    contextTokens: state === "queued" ? 0 : 12000 + index * 3400,
+    cost: state === "queued" ? 0 : 0.0012 * (index + 1),
+    toolCalls: calls,
+    current:
+      state === "running"
+        ? { at: new Date(t0 + 30000).toISOString(), kind: "tool", tool, text: `运行 ${tool}` }
+        : null,
+    recent,
+  };
+}
+
+function mockStage(scenario: StageScenario, path: string, title: string): AgentStage {
+  const now = Date.now();
+  if (scenario === "empty") {
+    return {
+      path,
+      sessionId: "mock-empty",
+      title,
+      cwd: "/mock/project",
+      inUse: true,
+      probeOk: true,
+      updatedAt: new Date(now).toISOString(),
+      omitted: 0,
+      actors: [
+        {
+          ...stageActor("main", "running", { name: "管理员", kind: "main", agent: null, brief: "" }, now - 240000, 0),
+          kind: "main",
+          name: "管理员",
+        },
+      ],
+    };
+  }
+  if (scenario === "many") {
+    const actors: StageActor[] = [
+      { ...stageActor("main", "running", { name: "管理员", kind: "main", agent: null, brief: "" }, now - 600000, 0), kind: "main", name: "管理员" },
+    ];
+    for (let i = 0; i < 25; i += 1) {
+      const state: StageActorState = i % 7 === 0 ? "done" : i % 11 === 0 ? "failed" : i % 5 === 0 ? "idle" : "running";
+      const agent = ["task", "scout", "sonic", "reviewer", "security-reviewer"][i % 5];
+      actors.push(
+        stageActor(
+          `actor-${i}`,
+          state,
+          { name: `worker-${i}`, kind: i % 3 === 0 ? "worker" : "subagent", agent, brief: `并行任务 ${i}` },
+          now - 500000,
+          i + 1,
+        ),
+      );
+    }
+    return {
+      path,
+      sessionId: "mock-many",
+      title,
+      cwd: "/mock/project",
+      inUse: true,
+      probeOk: true,
+      updatedAt: new Date(now).toISOString(),
+      omitted: 0,
+      actors,
+    };
+  }
+  if (scenario === "review") {
+    const actors: StageActor[] = [
+      { ...stageActor("main", "done", { name: "管理员", kind: "main", agent: null, brief: "" }, now - 900000, 0), kind: "main", name: "管理员" },
+    ];
+    const states: StageActorState[] = ["done", "done", "done", "done", "failed", "lost"];
+    const keys = ["api", "tests", "docs", "lint", "advisor", "extra"];
+    states.forEach((state, i) => {
+      const key = keys[i];
+      const meta = ACTOR_META[key] ?? { name: key, kind: "subagent" as StageActorKind, agent: "task", brief: `任务 ${key}` };
+      actors.push(stageActor(key, state, meta, now - 880000, i + 1));
+    });
+    return {
+      path,
+      sessionId: "mock-review",
+      title,
+      cwd: "/mock/project",
+      inUse: false,
+      probeOk: true,
+      updatedAt: new Date(now).toISOString(),
+      omitted: 0,
+      actors,
+    };
+  }
+  // live：相位由首次调用时刻推进，4s 一档。
+  stageT0 ??= now;
+  const phaseIndex = Math.floor((now - stageT0) / 4000) % PHASES.length;
+  const phase = PHASES[phaseIndex];
+  const actors: StageActor[] = [
+    {
+      ...stageActor("main", phase.main, { name: "管理员", kind: "main", agent: null, brief: "" }, stageT0, 0),
+      kind: "main",
+      name: "管理员",
+      statusText: phase.main === "idle" ? "等待输入" : null,
+      cost: 0.0421 + phaseIndex * 0.003,
+      toolCalls: 32 + phaseIndex * 4,
+    },
+  ];
+  let index = 1;
+  for (const key of ["api", "tests", "docs", "lint", "advisor"]) {
+    const state = phase.actors[key];
+    const meta = ACTOR_META[key];
+    const actor = stageActor(key, state, meta, stageT0, index);
+    actors.push({
+      ...actor,
+      cost: actor.cost + phaseIndex * 0.0004,
+      toolCalls: actor.toolCalls + phaseIndex,
+    });
+    index += 1;
+  }
+  return {
+    path,
+    sessionId: "mock-live",
+    title,
+    cwd: "/mock/project",
+    inUse: true,
+    probeOk: true,
+    updatedAt: new Date(now).toISOString(),
+    omitted: 0,
+    actors,
+  };
+}
+
 export async function installMockBackend(): Promise<MockHandle> {
   const params = new URLSearchParams(window.location.search);
   const latency = Number(params.get("latency") ?? "0") || 0;
@@ -648,6 +890,33 @@ export async function installMockBackend(): Promise<MockHandle> {
         : {};
 
     switch (cmd) {
+      case "list_running_sessions": {
+        const scenario = (params.get("stage") ?? "live") as StageScenario;
+        // 回看/空场景没有运行中会话（否则左栏会出现自相矛盾的「运行中」行）。
+        if (scenario === "empty" || scenario === "review") return [];
+        const first = sessions[0]?.summary;
+        return [
+          {
+            id: first?.id ?? "mock-session",
+            path: first?.path ?? "/mock/-mock-project/session.jsonl",
+            title: first?.title ?? "mock 会话",
+            status: "working",
+            statusText: "工作中",
+            subagents: scenario === "many" ? 25 : 4,
+            durationSecs: 320,
+            app: "iTerm2",
+          },
+        ];
+      }
+      case "get_agent_stage": {
+        const scenario = (params.get("stage") ?? "live") as StageScenario;
+        const path = (args["path"] as string | undefined) ?? "/mock/-mock-project/session.jsonl";
+        const hit = find(path);
+        if (!hit && !path.startsWith("/mock")) throw err("NOT_FOUND", "会话文件不存在");
+        if (params.has("stageMissing")) throw err("NOT_FOUND", "会话文件不存在");
+        if (params.get("stage") === "unsupported") throw err("UNSUPPORTED_FORMAT", "该会话格式暂不支持");
+        return mockStage(scenario, path, hit?.summary.title ?? "mock 舞台会话");
+      }
       case "mcp_list":
       case "mcp_get_server":
       case "mcp_save_server":
@@ -948,6 +1217,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         for (const skill of skills) if (skill.source === "registry") skill.description = "由 registry 管理的示例技能（已更新）";
         return streamedOutput(args, "✔ Updated registry-example\n");
       case "list_models":
+      case "list_agent_details":
       case "get_model_config":
       case "update_model_config":
         return model(cmd, args);

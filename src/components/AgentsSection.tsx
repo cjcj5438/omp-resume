@@ -130,7 +130,7 @@ export function AgentsSection(props: { state: ModelDraftState }) {
 }
 
 /** 「当前使用」行：Agent 行与 Vibe 档位行共用，保证两处展示完全一致。 */
-function EffectiveLine(props: {
+export function EffectiveLine(props: {
   testId: string;
   modelText: string;
   provider: string | null;

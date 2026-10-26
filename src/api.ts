@@ -5,6 +5,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { CleanupCandidate } from "./types";
 import type {
+  AgentDetail,
+  AgentStage,
   AppendBranchMarkerRequest,
   AppendBranchMarkerResult,
   AppError,
@@ -34,6 +36,7 @@ import type {
   ModelSpecsResult,
   OpenInItermRequest,
   PromptHistoryEntry,
+  RunningSession,
   OmpVersion,
   OmpUpdateCheck,
   OmpUpdateResult,
@@ -421,4 +424,19 @@ export function updateModelSpec(req: ModelSpecPatchRequest): Promise<ModelSpecUp
     patch: req.patch,
     expectedRevision: req.expectedRevision,
   });
+}
+
+/** CONTRACT §4.57：单个会话的舞台（只读）。 */
+export function getAgentStage(path: string): Promise<AgentStage> {
+  return call("get_agent_stage", { path });
+}
+
+/** CONTRACT §4.58：运行中会话快照（菜单栏轮询器每 3 秒发布）。 */
+export function listRunningSessions(): Promise<RunningSession[]> {
+  return call("list_running_sessions");
+}
+
+/** CONTRACT §4.59：agent 定义的完整只读视图（工具 / 派生 / 系统提示词）。 */
+export function listAgentDetails(): Promise<AgentDetail[]> {
+  return call("list_agent_details");
 }

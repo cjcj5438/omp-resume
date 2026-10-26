@@ -45,6 +45,8 @@ function renderSidebar(over: {
       onToggleManage={noop}
       statsActive={over.statsActive ?? false}
       onToggleStats={noop}
+      stageActive={false}
+      onToggleStage={noop}
       cleanupActive={false}
       onToggleCleanup={noop}
       checked={over.checked ?? new Set()}
@@ -217,11 +219,12 @@ describe("Sidebar omp 更新日志", () => {
 });
 
 describe("Sidebar 顶部", () => {
-  it("视图切换条同组：统计/清理/提示词历史/管理为 aria-pressed 开关，速查为普通动作", () => {
+  it("视图切换条同组：舞台/统计/清理/提示词历史/管理为 aria-pressed 开关，速查为普通动作", () => {
     renderSidebar({ statsActive: true });
     const nav = screen.getByRole("group", { name: "视图切换" });
 
     expect(Array.from(nav.querySelectorAll("button"), (b) => b.textContent)).toEqual([
+      "舞台",
       "统计",
       "清理",
       "提示词历史",
@@ -229,7 +232,7 @@ describe("Sidebar 顶部", () => {
       "速查",
     ]);
     expect(within(nav).getByRole("button", { name: "统计" })).toHaveAttribute("aria-pressed", "true");
-    for (const name of ["清理", "提示词历史", "管理"]) {
+    for (const name of ["舞台", "清理", "提示词历史", "管理"]) {
       expect(within(nav).getByRole("button", { name })).toHaveAttribute("aria-pressed", "false");
     }
     // 速查是打开对话框的动作，不是视图开关。

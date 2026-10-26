@@ -25,6 +25,8 @@ interface SidebarProps {
   onToggleManage: () => void;
   statsActive: boolean;
   onToggleStats: () => void;
+  stageActive: boolean;
+  onToggleStage: () => void;
   cleanupActive: boolean;
   onToggleCleanup: () => void;
   checked: Set<string>;
@@ -68,6 +70,8 @@ export function Sidebar({
   onToggleManage,
   statsActive,
   onToggleStats,
+  stageActive,
+  onToggleStage,
   cleanupActive,
   onToggleCleanup,
   checked,
@@ -109,6 +113,7 @@ export function Sidebar({
   const selecting = multiMode || checked.size > 0;
   // 四个视图按钮同一形态：激活时点击 = 返回上一级（title 说明）。
   const NAV_VIEWS = [
+    { label: "舞台", active: stageActive, hint: "Agent 舞台", onClick: onToggleStage },
     { label: "统计", active: statsActive, hint: "用量统计", onClick: onToggleStats },
     { label: "清理", active: cleanupActive, hint: "清理候选", onClick: onToggleCleanup },
     { label: "提示词历史", active: historyActive, hint: "提示词历史", onClick: onToggleHistory },

@@ -45,6 +45,8 @@ impl OccupantSource for SystemOccupants {
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub id: String,
+    /// 顶层会话文件路径（舞台命令按路径匹配）。
+    pub path: PathBuf,
     pub title: String,
     pub status: SessionStatus,
     /// 中文判定依据（探针展示，不进菜单）。
@@ -275,6 +277,7 @@ impl Poller {
             let focusable = app.as_deref() == Some("iTerm2") && tty.is_some();
             snapshots.push(Snapshot {
                 id: id.clone(),
+                path: path.clone(),
                 title: tail.title(),
                 status,
                 reason: verdict.reason,

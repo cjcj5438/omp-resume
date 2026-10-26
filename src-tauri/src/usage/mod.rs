@@ -6,10 +6,10 @@ use crate::model::{
     AppError, AppResult, ErrorCode, SessionUsage, UsageHealth, UsageRange, UsageStats,
 };
 
-mod cache;
+pub(crate) mod cache;
 mod health;
 mod parse;
-mod redact;
+pub(crate) mod redact;
 mod stats;
 mod window;
 

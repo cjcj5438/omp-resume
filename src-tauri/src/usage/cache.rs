@@ -95,7 +95,7 @@ pub(super) fn is_jsonl(path: &Path) -> bool {
 
 // 不跟随目录/文件软链接；每次递归重新枚举全部嵌套文件及 metadata，
 // 因而嵌套增删、非最新文件追加均不会被目录级时间戳缓存漏掉。
-pub(super) fn nested_files(path: &Path, out: &mut Vec<PathBuf>) -> AppResult<()> {
+pub(crate) fn nested_files(path: &Path, out: &mut Vec<PathBuf>) -> AppResult<()> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),

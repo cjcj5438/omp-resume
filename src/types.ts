@@ -546,6 +546,15 @@ export interface AgentDefinition {
   defaultThinkingLevel: string | null;
 }
 
+/** `list_agent_details` 一行：展示字段 + 工具 / 派生 / 系统提示词（全部只读）。 */
+export interface AgentDetail extends AgentDefinition {
+  /** null = 未声明（omp 默认工具集）；[] = 显式无工具。 */
+  tools: string[] | null;
+  /** null = 未声明；["*"] = 可派生任意 agent。 */
+  spawns: string[] | null;
+  systemPrompt: string;
+}
+
 /** 全局兜底状态（只读）；读不到或形状异常时对应字段为 null（显示「未知」）。 */
 export interface RetryStatus {
   modelFallback: boolean | null;
@@ -836,4 +845,66 @@ export interface ModelPerf {
   ttftMs: number | null;
   tps: number | null;
   updatedAt: string;
+}
+
+// Agent 舞台（CONTRACT §23）：主会话 / task 子代理 / vibe worker / advisor。
+
+export type StageActorKind = "main" | "subagent" | "worker" | "advisor";
+
+export type StageActorState = "queued" | "running" | "idle" | "done" | "failed" | "lost";
+
+export type StageActivityKind = "tool" | "thinking" | "reply" | "state";
+
+/** 一条活动（工具调用 / 思考 / 回复 / 状态变化）。`at` 为 ISO-8601 UTC 毫秒。 */
+export interface StageActivity {
+  at: string;
+  kind: StageActivityKind;
+  tool: string | null;
+  text: string;
+}
+
+/** 舞台上的一个角色。`id` 为 "main" 或相对附件目录去 `.jsonl` 的路径。 */
+export interface StageActor {
+  id: string;
+  kind: StageActorKind;
+  parentId: string | null;
+  name: string;
+  agent: string | null;
+  brief: string | null;
+  state: StageActorState;
+  statusText: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  lastActivityAt: string | null;
+  model: string | null;
+  contextTokens: number;
+  cost: number;
+  toolCalls: number;
+  current: StageActivity | null;
+  recent: StageActivity[];
+}
+
+/** 一个会话的完整舞台（`actors[0]` 恒为主会话）。 */
+export interface AgentStage {
+  path: string;
+  sessionId: string | null;
+  title: string;
+  cwd: string | null;
+  inUse: boolean;
+  probeOk: boolean;
+  updatedAt: string;
+  omitted: number;
+  actors: StageActor[];
+}
+
+/** 运行中会话快照（菜单栏轮询器发布）。 */
+export interface RunningSession {
+  id: string;
+  path: string;
+  title: string;
+  status: "working" | "waiting" | "idle" | "stuck";
+  statusText: string;
+  subagents: number;
+  durationSecs: number;
+  app: string | null;
 }

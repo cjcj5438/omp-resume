@@ -1,6 +1,6 @@
 //! 错误信息脱敏。
 /// 错误原文 → 单行、≤200 字符；形似密钥的片段脱敏为 [已脱敏]。
-pub(super) fn sanitize_message(raw: &str) -> String {
+pub(crate) fn sanitize_message(raw: &str) -> String {
     redact_secrets(&raw.split_whitespace().collect::<Vec<_>>().join(" "))
         .chars()
         .take(200)

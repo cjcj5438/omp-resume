@@ -775,6 +775,35 @@ pub struct AgentDefinition {
     pub default_thinking_level: Option<String>,
 }
 
+/// `list_agent_details` 的一行：`AgentDefinition` 的展示字段 + 工具 / 派生 / 系统提示词。
+/// 只读；不读也不写 `models.yml` 的凭据字段。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDetail {
+    pub name: String,
+    pub description: String,
+    pub source: AgentSource,
+    pub default_model: Vec<String>,
+    pub default_thinking_level: Option<String>,
+    /// `None` = 未声明（omp 默认工具集）；`Some([])` = 显式无工具。
+    pub tools: Option<Vec<String>>,
+    /// `None` = 未声明；`Some(["*"])` = 可派生任意 agent。
+    pub spawns: Option<Vec<String>>,
+    pub system_prompt: String,
+}
+
+impl From<AgentDetail> for AgentDefinition {
+    fn from(detail: AgentDetail) -> Self {
+        AgentDefinition {
+            name: detail.name,
+            description: detail.description,
+            source: detail.source,
+            default_model: detail.default_model,
+            default_thinking_level: detail.default_thinking_level,
+        }
+    }
+}
+
 /// 全局兜底开关（只读展示）：`retry.modelFallback` / `retry.fallbackOn` /
 /// `retry.fallbackRevertPolicy`。读不到或形状异常时对应字段为 None（前端显示「未知」），
 /// 不让整个 `get_model_config` 失败。
@@ -807,6 +836,119 @@ pub struct ModelConfig {
 pub struct UpdateModelConfigResult {
     pub key: String,
     pub value: serde_json::Value,
+}
+
+// ---------------------------------------------------------------------------
+// Agent 舞台（CONTRACT §23）
+// ---------------------------------------------------------------------------
+
+/// 舞台角色种类：主会话 / `task` 子代理 / `vibe_spawn` 工作者 / advisor。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StageActorKind {
+    Main,
+    Subagent,
+    Worker,
+    Advisor,
+}
+
+/// 舞台角色状态（由 `stage::derive` 纯函数判定）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StageActorState {
+    Queued,
+    Running,
+    Idle,
+    Done,
+    Failed,
+    Lost,
+}
+
+/// 活动流条目种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StageActivityKind {
+    Tool,
+    Thinking,
+    Reply,
+    State,
+}
+
+/// 一条活动（工具调用 / 思考 / 回复 / 状态变化）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageActivity {
+    /// ISO-8601 UTC 毫秒。
+    pub at: String,
+    pub kind: StageActivityKind,
+    pub tool: Option<String>,
+    pub text: String,
+}
+
+/// 舞台上的一个角色（主会话或子代理）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageActor {
+    /// `"main"` 或相对附件目录的路径去掉 `.jsonl`（`"scout"`、`"skel/child"`）。
+    pub id: String,
+    pub kind: StageActorKind,
+    /// 附件目录内的父子关系（`<dir>/x.jsonl` 且 `<dir>.jsonl` 同在树内）。
+    pub parent_id: Option<String>,
+    pub name: String,
+    /// `task` 的 `tasks[].agent` 或 lifecycle 的 `agent`。
+    pub agent: Option<String>,
+    /// 触发该子代理的父会话 toolCall intent（≤60 字符，已脱敏）。
+    pub brief: Option<String>,
+    pub state: StageActorState,
+    /// 人话状态（「等待输入」/「疑似卡住」/「待命」/退出原因）。
+    pub status_text: Option<String>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub last_activity_at: Option<String>,
+    /// `"provider/model"`。
+    pub model: Option<String>,
+    /// 最后一条 assistant 的 `usage.totalTokens`（当前上下文大小，不累加）。
+    pub context_tokens: u64,
+    /// Σ assistant `usage.cost.total`。
+    pub cost: f64,
+    pub tool_calls: u64,
+    pub current: Option<StageActivity>,
+    /// 旧→新，≤30 条。
+    pub recent: Vec<StageActivity>,
+}
+
+/// `get_agent_stage` 返回：一个会话的完整舞台。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStage {
+    pub path: String,
+    pub session_id: Option<String>,
+    pub title: String,
+    pub cwd: Option<String>,
+    pub in_use: bool,
+    pub probe_ok: bool,
+    /// ISO-8601 UTC 毫秒。
+    pub updated_at: String,
+    /// 超过 200 个文件时丢弃的最旧项数。
+    pub omitted: u32,
+    /// main 在首位，其余按 started_at 升序（None 排后）、再按 id。
+    pub actors: Vec<StageActor>,
+}
+
+/// `list_running_sessions` 返回项（菜单栏轮询器快照）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningSession {
+    pub id: String,
+    pub path: String,
+    pub title: String,
+    /// `"working"` | `"waiting"` | `"idle"` | `"stuck"`。
+    pub status: String,
+    /// 中文状态文案（「工作中」等）。
+    pub status_text: String,
+    pub subagents: u32,
+    pub duration_secs: i64,
+    pub app: Option<String>,
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ import { DetailPane } from "./components/DetailPane";
 import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
 import { StatsView } from "./components/StatsView";
+import { StageView } from "./stage/StageView";
 import { CleanupView } from "./components/CleanupView";
 import { ChartTip } from "./components/ChartTip";
 import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
@@ -48,7 +49,7 @@ interface Toast {
 const MAX_TOASTS = 5;
 
 /** 并列的顶层视图；会话页是根，其余可层层进入并逐级返回。 */
-type AppView = "sessions" | "manage" | "stats" | "history" | "cleanup";
+type AppView = "sessions" | "manage" | "stats" | "history" | "cleanup" | "stage";
 
 function App() {
   const [list, setList] = useState<ListSessionsResult | null>(null);
@@ -391,6 +392,8 @@ function App() {
         onToggleManage={() => toggleView("manage")}
         statsActive={view === "stats"}
         onToggleStats={() => toggleView("stats")}
+        stageActive={view === "stage"}
+        onToggleStage={() => toggleView("stage")}
         historyActive={view === "history"}
         onToggleHistory={() => toggleView("history")}
         cleanupActive={view === "cleanup"}
@@ -417,7 +420,7 @@ function App() {
         onClearChecks={() => setChecked(new Set())}
         selectedPath={selectedPath}
         onSelect={(path) => {
-          showSessions();
+          if (view !== "stage") showSessions();
           setSelectedPath(path);
         }}
         pins={pins}
@@ -449,6 +452,23 @@ function App() {
           onCheckOmp={handleCheckOmp}
           loadedSessionIds={loadedSessionIds}
           onOpenSession={handleOpenSession}
+        />
+      ) : view === "stage" ? (
+        <StageView
+          onBack={goBack}
+          selectedPath={selectedPath}
+          selectedTitle={
+            selectedPath === null
+              ? null
+              : (() => {
+                  const s = byPath.get(selectedPath);
+                  return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null;
+                })()
+          }
+          onOpenSession={(path) => {
+            showSessions();
+            setSelectedPath(path);
+          }}
         />
       ) : view === "stats" ? <StatsView onBack={goBack} sessionTitle={(path) => { const s = byPath.get(path); return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null; }} onOpenSession={(path) => { showSessions(); setSelectedPath(path); }} /> : view === "cleanup" ? (
         <CleanupView

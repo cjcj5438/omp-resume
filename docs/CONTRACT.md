@@ -24,7 +24,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
   不使用 unix 时间戳。
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
   4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
-  4.54–4.55 模型规格（§21）。
+  4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）。
 
 ## 1. 配置解析
 
@@ -646,7 +646,8 @@ header `.title`、每个 `title_change` 的 `.title`。
   `model_bench.rs`（模型测速与历史）、`model_specs/`（`mod` / `yaml` /
   `validate` / `io` / `tests`，规格编辑，见 §21）、`usage/`（`mod` /
   `cache` / `parse` / `window` / `stats` / `health` / `redact` / `tests`，
-  用量与运行看板，见 §12）。
+  用量与运行看板，见 §12）、`stage/`（`mod` / `cursor` / `actor_tail` /
+  `derive` / `tests`，Agent 舞台，见 §23）。
 
 ## 9. 常量
 
@@ -1929,3 +1930,107 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 ## 22. 管理视图信息架构（`ManageView` 六个标签页）
 
 （已删除：以代码为准）
+
+## 23. Agent 舞台（§4.57–§4.58，`stage/`）
+
+把**一个已存在的会话**（顶层 `<项目>/<文件>.jsonl`）里的主会话、`task` 子代理、
+`vibe_spawn` 工作者与 advisor 拼成可视化所需的状态。**只读**：不写任何会话文件、
+不向 omp 发信号、不调 LLM；因此界面里没有任何「停止」按钮。
+
+### 23.1 数据来源（全部是既有 jsonl 内容，无新数据源）
+
+- 顶层 jsonl：`session` header（id / version / cwd / timestamp）、`title` 与
+  `title_change`、`model_change`、assistant 的 `usage` / `stopReason` / `content`、
+  `custom/tool_execution_start`（`data.toolCallId/toolName/args/intent`）、
+  assistant `toolCall`（`task.tasks[]` 与 `vibe_spawn.arguments.name`）、
+  `custom/vibe-session-lifecycle`（`data.id/action/agent/childSessionFile`）、
+  `custom/session_exit`（`data.kind/reason/recordedAt`）。
+- 附件目录 = 顶层文件去 `.jsonl` 的同名目录：其中**直接子文件**全部算角色，
+  深度 ≥2 的非 `__advisor.jsonl` 也算（按目录关系设 `parentId`）；嵌套
+  `__advisor.jsonl` 一律忽略。深度 1 的 `__advisor.jsonl` → `Advisor`；
+  `childSessionFile` 命中的 → `Worker`；其余 → `Subagent`。
+- **不**用 mtime 或心跳（`model_usage`）判活（与 §17.1 同规则）；`model_usage`、
+  `custom_message`、`todo_hud_state` 等行直接忽略。
+
+### 23.2 增量与上限
+
+- 每个文件一个游标 + 状态，最多缓存 4 个会话（LRU）；不在本轮目录列表里的文件项
+  当轮丢弃。游标语义与 §17.2 一致：首次/截断重置、末行不完整留待下轮、
+  单行 >16 MiB 跳过。
+- 附件目录 canonicalize 后必须同时位于 sessionsDir 与附件目录内，否则 `OUTSIDE_ROOT`
+  （符号链接在枚举阶段已跳过）。
+- 单会话最多展开 200 个附件 jsonl（超出按 mtime 降序保留），丢弃数写入 `omitted`。
+- 活动流每角色保留最近 30 条；文本经 `usage::redact::sanitize_message` 脱敏后截断
+  （活动 80 字符、派发说明 60 字符）。
+
+### 23.3 状态判定（`stage/derive.rs`，纯函数，按序短路）
+
+`Main`：`!parentInUse` → `done`「已结束」；否则 `working`→`running`、
+`waiting`→`idle`「等待输入」、`idle`→`idle`「空闲」、`stuck`→`failed`「疑似卡住」、
+未知（轮询器还没见到）→`running`。
+
+`Worker`（按 `child_file` 命中把父会话 lifecycle 的动作传进来；子代理/advisor 恒无动作）：
+异常 `exit.kind != normal` 优先 → `failed`（`statusText` 为 `reason`）；文件里已有
+`exit.kind == normal` → `done`（worker 会话进程已终结，`turn-settled` 可能尚未落盘）；
+`spawn`→`queued`；`turn-started`→`running`（父会话不在用 → `lost`）；
+`turn-settled`→`idle`「待命」。
+
+`session_exit` 只在「最后一次」有效：出现更晚的活动行（`session_init`、`model_change`、
+任意 `message`、`tool_execution_start`、`vibe-session-lifecycle`、更晚的 `session_exit`）
+即作废上一次退出记录——worker/子代理会被 `omp --resume` 恢复（实测
+`app-icon.jsonl`：`exit(normal)` 后 18 分钟又 `session_init` 并继续跑），
+陈旧的 `exit` 不能把正在运行的角色显示成已完成。`title` / `title_change` /
+`model_usage`（心跳）不算活动。
+
+`Subagent`/`Advisor`：文件不存在→`queued`；`exit.kind == normal`→`done`；
+其它 exit→`failed`；**无 exit、无未配对工具且最后 stopReason 为 `error`/`aborted`→
+`failed`（终态，不随父会话是否在用而变化；例外：`Advisor` 的 `aborted` 是「顾问被重置」
+的正常机制 → `done`）**；父会话不在用且没有上述终态→`lost`「会话已退出」；
+无 exit 且无未配对工具、最后一条 assistant 已 `stop`、静默超过 `ORPHAN_DONE_SECS`
+（120s）→`done`；其余 `running`。
+
+角色的 `agent`（前端按它选形象、显示配置）：`task.tasks[].agent` → `vibe_spawn` 的
+lifecycle `agent` → 省略 agent 的 `task` 调用按 omp 约定记 `task`。孙代理
+`<父>/<父>.<子>.jsonl` 的 `name` 去掉重复的父名前缀，`agent`/`brief` 取自**父代理**
+tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值顺序：块级 `intent` →
+`arguments.i` → 任务正文（`tasks[].task` / `vibe_spawn.prompt`）第一行有内容的文字
+（`# Target` 这类纯标题词跳过）。
+
+`parentInUse = probe.inUse || (!probe.probeOk && 轮询器快照存在)`；header 无 id 时
+`parentInUse = 轮询器快照存在`。
+
+### 23.4 / 4.57 `get_agent_stage { path } -> AgentStage`
+
+`path` 经 §6 校验（仅顶层文件）。返回 `actors[0]` 恒为主会话（`id="main"`，
+`name="管理员"`），其余按 `startedAt` 升序（缺省排后）、再按 `id`。`current` 取
+「最新未配对工具」，否则（仍在运行且最后一条 assistant 未收尾）为 `thinking`。
+`cost` = Σ assistant `usage.cost.total`（不含 `model_usage`，与 §12.2 口径一致）；
+`contextTokens` = 最后一条 assistant 的 `usage.totalTokens`（缺失时四项相加；
+合计为 0 的出错轮次不覆盖已知值）。`current` 对 `done`/`failed`/`lost` 一律为
+`null`——已收尾的角色不再显示过期的当前活动。
+顶层 header 非 v3 → `UNSUPPORTED_FORMAT`；文件不存在 → `NOT_FOUND`。
+
+### 23.5 / 4.58 `list_running_sessions() -> RunningSession[]`
+
+菜单栏轮询器（§17）每轮成功后整体覆盖发布的快照（`Shared::running`）：
+`status` 取 `"working"|"waiting"|"idle"|"stuck"`（与中文 `statusText` 一一对应）。
+本轮轮询失败不覆盖（保留上一轮），因此该命令永不写盘、永不阻塞。
+
+### 23.6 / 4.59 `list_agent_details() -> AgentDetail[]`（只读）
+
+与 `get_model_config` 同源同序（内置 unpack → `~/.omp/agent/agents/*.md`，同名用户文件
+覆盖默认值但 `source` 仍为 `builtin`），并多读三个字段：`tools`（`null` = 未声明 →
+omp 默认工具集；`[]` = 无工具）、`spawns`（`null` = 未声明；`["*"]` = 任意 agent）、
+`systemPrompt`（frontmatter 之后的正文，超过 64K 字符截断）。项目级 `.omp/agents` 不读。
+**绝不写 omp 配置**：本命令与 `get_model_config` 共用内置定义缓存，不调用
+`set_raw_value` / `update_model_config` / `update_model_spec` / `mcp_*_save`。
+内置定义来自 `omp agents unpack --dir <临时目录> --json`（临时目录用完即删）。
+
+### 23.7 前端
+
+- 轮询：`useStagePoll` 单链（同一时刻至多一个请求；隐藏时不排期、恢复可见立即拉一次）；
+  `inUse=false` 的会话 10s 一轮（`ENDED_INTERVAL_MS`），回到在用自动恢复 1.5s。
+- 形象：按 agent 固定（`DEFAULT_AGENT_CHARS`），用户可在「Agent 库」里逐个覆盖；
+  偏好只存 `localStorage`（`omp-resume:stage:v2`，另清掉语义已变的 v1），不写 omp。
+- 配置展示：「选中详情」与「Agent 库」共用 `AgentConfigPanel`，全部只读，没有保存入口。
+- 在舞台视图里点侧栏会话只切换舞台目标，不离开舞台（看详情走头部「查看会话」）。

@@ -35,6 +35,8 @@ pub const SESSION_PREFIX: &str = "session:";
 pub struct Shared {
     /// 会话 id → tty（聚焦用，轮询每轮发布）。
     pub focus: Mutex<HashMap<String, String>>,
+    /// 运行中会话快照（每轮整体覆盖；`list_running_sessions` 读它）。
+    pub running: Mutex<Vec<crate::model::RunningSession>>,
     pub last_menu: Mutex<Option<MenuModel>>,
     pub settings: Mutex<Settings>,
     /// 通知 id → 会话 id（点击回调聚焦用；汇总/ plain 通知记空串 → 打开主窗口）。
@@ -52,6 +54,7 @@ impl Shared {
     pub fn new(data_dir: PathBuf, settings: Settings) -> Self {
         Self {
             focus: Mutex::new(HashMap::new()),
+            running: Mutex::new(Vec::new()),
             last_menu: Mutex::new(None),
             settings: Mutex::new(settings),
             notify_targets: Mutex::new(HashMap::new()),
@@ -453,6 +456,22 @@ pub fn spawn_poller<R: Runtime + 'static>(
                                 if let Some(tty) = &s.tty {
                                     focus.insert(s.id.clone(), tty.clone());
                                 }
+                            }
+                        }
+                        // 发布运行中快照（舞台左栏 + 主会话状态）。
+                        if let Ok(mut running) = shared.running.lock() {
+                            running.clear();
+                            for s in &outcome.snapshots {
+                                running.push(crate::model::RunningSession {
+                                    id: s.id.clone(),
+                                    path: s.path.to_string_lossy().to_string(),
+                                    title: s.title.clone(),
+                                    status: s.status.key().to_string(),
+                                    status_text: s.status.label().to_string(),
+                                    subagents: s.subagents,
+                                    duration_secs: s.duration_secs,
+                                    app: s.app.clone(),
+                                });
                             }
                         }
                         // 仅时长文字变化 → 就地 set_text（不关掉用户展开着的菜单）；
