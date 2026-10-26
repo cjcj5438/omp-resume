@@ -73,63 +73,65 @@ export function PromptHistoryView({
         />
         <span className="muted">{loading ? "搜索中…" : `${entries.length} 条`}</span>
       </div>
-      {entries.length === 0 && !loading ? (
-        <div className="pane-note">{query.trim() ? "没有匹配的提示词" : "暂无提示词历史"}</div>
-      ) : null}
-      <ul className="ph-list">
-        {entries.map((e) => {
-          const sourceLoaded = e.sessionId !== null && loadedSessionIds.has(e.sessionId);
-          const cwdName = e.cwd ? (e.cwd.split("/").filter(Boolean).pop() ?? e.cwd) : "无项目目录";
-          return (
-            <li key={e.id} className="ph-item">
-              <div className="ph-prompt" title={e.prompt}>
-                {e.prompt}
-              </div>
-              <div className="ph-meta">
-                <span className="mono" title={e.cwd ?? undefined}>
-                  {cwdName}
-                </span>
-                <span>{formatRelativeTime(e.createdAt)}</span>
-                <span>使用 {e.useCount} 次</span>
-              </div>
-              <div className="ph-actions">
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  onClick={async () => {
-                    const ok = await copyText(e.prompt);
-                    onToast(ok ? "已复制提示词" : "复制失败：剪贴板不可用", ok ? "info" : "error");
-                  }}
-                >
-                  复制
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={!sourceLoaded}
-                  title={sourceLoaded ? undefined : "来源会话不在当前列表中"}
-                  onClick={() => {
-                    if (e.sessionId !== null) onOpenSession(e.sessionId);
-                  }}
-                >
-                  跳到来源会话
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  disabled={e.cwd === null}
-                  title={e.cwd === null ? "该提示词没有记录项目目录" : undefined}
-                  onClick={() => {
-                    if (e.cwd !== null) onNewSessionIn(e.cwd);
-                  }}
-                >
-                  在该目录新会话
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="ph-body">
+        {entries.length === 0 && !loading ? (
+          <div className="pane-note">{query.trim() ? "没有匹配的提示词" : "暂无提示词历史"}</div>
+        ) : null}
+        <ul className="ph-list">
+          {entries.map((e) => {
+            const sourceLoaded = e.sessionId !== null && loadedSessionIds.has(e.sessionId);
+            const cwdName = e.cwd ? (e.cwd.split("/").filter(Boolean).pop() ?? e.cwd) : "无项目目录";
+            return (
+              <li key={e.id} className="ph-item">
+                <div className="ph-prompt" title={e.prompt}>
+                  {e.prompt}
+                </div>
+                <div className="ph-meta">
+                  <span className="mono" title={e.cwd ?? undefined}>
+                    {cwdName}
+                  </span>
+                  <span>{formatRelativeTime(e.createdAt)}</span>
+                  <span>使用 {e.useCount} 次</span>
+                </div>
+                <div className="ph-actions">
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    onClick={async () => {
+                      const ok = await copyText(e.prompt);
+                      onToast(ok ? "已复制提示词" : "复制失败：剪贴板不可用", ok ? "info" : "error");
+                    }}
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    disabled={!sourceLoaded}
+                    title={sourceLoaded ? undefined : "来源会话不在当前列表中"}
+                    onClick={() => {
+                      if (e.sessionId !== null) onOpenSession(e.sessionId);
+                    }}
+                  >
+                    跳到来源会话
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    disabled={e.cwd === null}
+                    title={e.cwd === null ? "该提示词没有记录项目目录" : undefined}
+                    onClick={() => {
+                      if (e.cwd !== null) onNewSessionIn(e.cwd);
+                    }}
+                  >
+                    在该目录新会话
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </main>
   );
 }

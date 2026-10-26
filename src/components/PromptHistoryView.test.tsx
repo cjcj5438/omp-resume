@@ -72,3 +72,39 @@ describe("PromptHistoryView 动作门禁", () => {
     expect(onNewSessionIn).toHaveBeenCalledWith("/w/alpha");
   });
 });
+
+describe("PromptHistoryView 滚动结构", () => {
+  it("列表在独立滚动区内，搜索栏在滚动区外（滚列表不带走头部）", async () => {
+    const many: PromptHistoryEntry[] = Array.from({ length: 30 }, (_, i) => ({
+      id: 100 + i,
+      prompt: `滚动条目 ${i}`,
+      cwd: "/w/alpha",
+      sessionId: "s-loaded",
+      createdAt: "2026-10-16T01:00:00.000Z",
+      useCount: 1,
+    }));
+    mockIPC((cmd) => (cmd === "search_prompt_history" ? many : undefined));
+    render(
+      <PromptHistoryView
+        onBack={() => {}}
+        loadedSessionIds={new Set(["s-loaded"])}
+        onOpenSession={() => {}}
+        onNewSessionIn={() => {}}
+        onToast={() => {}}
+      />,
+    );
+    const items = await screen.findAllByText(/滚动条目 \d+/);
+    expect(items).toHaveLength(30);
+    // 滚动区存在，且是每条条目的祖先：长列表只能在它内部滚动。
+    const body = document.querySelector(".ph-body");
+    expect(body).not.toBeNull();
+    for (const item of items) {
+      expect(body!.contains(item.closest("li"))).toBe(true);
+    }
+    // 搜索栏是滚动区的兄弟（在其外部）：滚动列表不会把它带走。
+    const head = document.querySelector(".ph-head");
+    expect(head).not.toBeNull();
+    expect(body!.contains(head)).toBe(false);
+    expect(head!.parentElement).toBe(body!.parentElement);
+  });
+});

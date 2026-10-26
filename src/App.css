@@ -427,8 +427,14 @@ body {
   overflow: hidden;
 }
 
-/* 提示词历史视图：搜索栏 + 列表，列表区域可滚动。 */
+/* 提示词历史视图：.detail 仍是不可滚动外壳，.ph-body 是内部滚动区（头尾固定、列表自滚）。 */
 .ph-view {
+  min-height: 0;
+}
+
+.ph-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
