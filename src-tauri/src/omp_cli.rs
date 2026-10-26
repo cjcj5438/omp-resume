@@ -685,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn streams_stdout_stderr_in_arrival_order_and_null_stdin() {
+    fn captures_both_streams_without_cross_stream_order_and_null_stdin() {
         let _processes = subprocess_test_guard();
         let (_dir, bin) = fake("read ignored && exit 8\n[ \"$NO_COLOR\" = 1 ] || exit 9\nprintf 'one\\n'\nsleep 0.05\nprintf '\\033[31mtwo\\033[0m\\r\\n' >&2\nsleep 0.05\nprintf 'three'");
         let mut lines = Vec::new();
