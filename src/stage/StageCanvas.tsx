@@ -13,6 +13,8 @@ import { drawSprite, type CharacterId } from "./sprites";
 import type { StagePrefs } from "./prefs";
 import { STATE_WORD } from "./stateWords";
 import type { AgentStage, StageActor, StageActorState } from "../types";
+import { Minus, Plus } from "lucide-react";
+import { Ico } from "../components/ui";
 
 const ZOOMS = [1, 2, 3] as const;
 /** 帧间隔上限：30fps（33ms）。 */
@@ -301,8 +303,8 @@ export function StageCanvas({
   return (
     <div className="stage-canvas-wrap" ref={wrapRef} data-pannable={pannable}>
       <div className="stage-canvas-tools">
-        <button type="button" className="btn btn-small" onClick={zoomIn} aria-label="放大">＋</button>
-        <button type="button" className="btn btn-small" onClick={zoomOut} aria-label="缩小">－</button>
+        <button type="button" className="btn btn-small" onClick={zoomIn} aria-label="放大"><Ico icon={Plus} size={12} /></button>
+        <button type="button" className="btn btn-small" onClick={zoomOut} aria-label="缩小"><Ico icon={Minus} size={12} /></button>
         <button type="button" className="btn btn-small" onClick={resetZoom}>复位</button>
         <button type="button" className="btn btn-small" onClick={onOpenLibrary}>Agent 库</button>
       </div>

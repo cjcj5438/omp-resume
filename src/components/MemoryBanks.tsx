@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { memoryBankStatus, memoryDeleteBank, normalizeError } from "../api";
 import type { MemoryBankStatus, MemoryBankSummary } from "../types";
 import { displayCwd, errorText, formatFullTime, formatRelativeTime, formatSize } from "../format";
-import { Modal } from "./ui";
+import { Ico, Modal } from "./ui";
 import type { ToastFn } from "./useOmpOp";
 import {
   BANK_INVALID_LABEL,
@@ -18,6 +18,7 @@ import {
   useBankStatus,
 } from "./useMemoryMaintenance";
 import "./MemoryPanel.css";
+import { Check, X } from "lucide-react";
 
 /** 记忆多者在前，其次最近记忆，再次库名。 */
 function ranked(banks: MemoryBankSummary[]): MemoryBankSummary[] {
@@ -350,7 +351,7 @@ function CleanupDialog(props: {
         <ul className="mem-cleanup-results" aria-label="清理结果">
           {results.map((r) => (
             <li key={r.bank} className={r.ok ? undefined : "mem-step-fail"}>
-              {r.ok ? "✔" : "✘"} {r.name}：{r.text}
+              {r.ok ? <Ico icon={Check} size={12} /> : <Ico icon={X} size={12} />} {r.name}：{r.text}
             </li>
           ))}
         </ul>

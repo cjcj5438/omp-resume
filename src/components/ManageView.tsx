@@ -21,6 +21,8 @@ import { ModelsTab } from "./ModelsTab";
 import { PluginsPanel, upgradeIsUpToDate } from "./PluginsPanel";
 import { SkillsPanel } from "./SkillsPanel";
 import { useAlive, useOmpOp, type ToastFn } from "./useOmpOp";
+import { Check, X } from "lucide-react";
+import { Ico } from "./ui";
 
 export interface ManageProject {
   cwd: string;
@@ -178,7 +180,7 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
         <ul className="manage-summary" aria-label="全部更新结果">
           {summary.map((s) => (
             <li key={s.name} className={s.ok ? undefined : "manage-step-fail"}>
-              {s.ok ? "✔" : "✘"} {s.name}：{s.detail}
+              {s.ok ? <Ico icon={Check} size={12} /> : <Ico icon={X} size={12} />} {s.name}：{s.detail}
             </li>
           ))}
         </ul>

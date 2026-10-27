@@ -5,6 +5,8 @@
 import type { ReactNode } from "react";
 import { formatUsd } from "../format";
 import { benchRunner, type BenchConfig, type BenchIntervalMin } from "../modelBench";
+import { Play } from "lucide-react";
+import { Ico } from "./ui";
 
 const INTERVAL_OPTIONS: { value: BenchIntervalMin; label: string }[] = [
   { value: 0, label: "关" },
@@ -37,7 +39,7 @@ export function BenchToolbar(props: BenchToolbarProps): ReactNode {
           onClick={() => benchRunner.enqueueMany(selectors)}
           title={benchCount === 0 ? "先添加模型" : `共 ${benchCount} 个模型依次测试`}
         >
-          ▶ 测试全部 ≈{formatUsd(estimateAll)}
+          <Ico icon={Play} size={12} /> 测试全部 ≈{formatUsd(estimateAll)}
         </button>
       </div>
       <div className="bench-monitor">

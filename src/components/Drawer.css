@@ -11,7 +11,7 @@
   min-height: 0;
   background: var(--bg);
   border-left: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
   outline: none;
   animation: drawer-in 140ms ease-out;
 }
@@ -34,7 +34,7 @@
 .drawer-title {
   margin: 0;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--fs-lg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

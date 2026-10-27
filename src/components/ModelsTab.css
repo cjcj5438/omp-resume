@@ -4,7 +4,7 @@
 .models-tab-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .models-tab-intro { margin: 0; margin-right: auto; }
 .models-tab-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.models-tab-hint { margin: 0 0 8px; font-size: 12px; }
+.models-tab-hint { margin: 0 0 8px; font-size: var(--fs-sm); }
 
 /* 模型库表格。 */
 .model-lib { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -27,23 +27,23 @@
 .lib-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-model-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 2px; min-width: 0; overflow: hidden; }
 .lib-model-sub > .badge, .lib-model-sub > .lib-usage { flex: none; }
-.lib-id { font-size: 11px; flex: 1 1 120px; min-width: 120px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-id { font-size: var(--fs-xs); flex: 1 1 120px; min-width: 120px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-usage { display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
 .lib-act-cell { white-space: nowrap; }
 .lib-actions { display: inline-flex; align-items: center; gap: 6px; }
 .lib-row { cursor: default; }
 
 /* 规格抽屉。 */
-.spec-facts { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.spec-facts { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
 .spec-fact { display: flex; gap: 8px; }
 .spec-fact > span:first-child { flex: none; width: 72px; }
 .spec-fact > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .spec-form { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
-.spec-form-title { font-size: 12px; color: var(--text-muted); }
-.spec-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.spec-form-title { font-size: var(--fs-sm); color: var(--text-muted); }
+.spec-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
 .spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.spec-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.spec-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 .spec-check-row { display: flex; gap: 12px; }
-.spec-error { color: var(--danger); font-size: 12px; }
-.spec-path, .spec-note { font-size: 12px; }
+.spec-error { color: var(--danger); font-size: var(--fs-sm); }
+.spec-path, .spec-note { font-size: var(--fs-sm); }
 @media (max-width: 560px) { .spec-grid { grid-template-columns: 1fr; } }

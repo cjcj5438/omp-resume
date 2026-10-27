@@ -18,6 +18,8 @@ import { buildTimeline } from "./timeline";
 import { agentKeyOf, loadStagePrefs, type StagePrefs } from "./prefs";
 import { STATE_WORD } from "./stateWords";
 import { useRunningSessions, useStagePoll } from "./useStageData";
+import { EmptyState } from "../components/ui";
+import { Theater } from "lucide-react";
 import "./Stage.css";
 
 export interface StageViewProps {
@@ -188,7 +190,9 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
           </div>
         </header>
         <div className="stage-empty">
-          <p>没有运行中的会话。在左侧选择一个会话，可回看它的子代理舞台。</p>
+          <EmptyState icon={Theater} title="没有运行中的会话">
+            在左侧选择一个会话，可回看它的子代理舞台。
+          </EmptyState>
         </div>
       </main>
     );

@@ -4,6 +4,8 @@ import { normalizeError, searchPromptHistory } from "../api";
 import type { PromptHistoryEntry } from "../types";
 import { copyText } from "../clipboard";
 import { errorText, formatRelativeTime } from "../format";
+import { EmptyState } from "./ui";
+import { History } from "lucide-react";
 
 interface PromptHistoryViewProps {
   /** 回到上一级视图（与其它视图的「返回」一致）。 */
@@ -75,7 +77,9 @@ export function PromptHistoryView({
       </div>
       <div className="ph-body">
         {entries.length === 0 && !loading ? (
-          <div className="pane-note">{query.trim() ? "没有匹配的提示词" : "暂无提示词历史"}</div>
+          <EmptyState icon={History} title={query.trim() ? "没有匹配的提示词" : "暂无提示词历史"}>
+            {query.trim() ? "换个关键词再试。" : "在 omp 里提问后，提示词会出现在这里。"}
+          </EmptyState>
         ) : null}
         <ul className="ph-list">
           {entries.map((e) => {

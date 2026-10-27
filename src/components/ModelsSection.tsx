@@ -21,6 +21,8 @@ import {
 import { attachedTitle, type ModelDraftState } from "../modelDraft";
 import { ChainChip, ThinkingSegment } from "./ModelDraftWidgets";
 import { ModelPicker } from "./ModelPicker";
+import { Plus } from "lucide-react";
+import { Ico } from "./ui";
 
 export function ModelsSection(props: { state: ModelDraftState }) {
   const s = props.state;
@@ -406,7 +408,7 @@ function ChainEditor(props: {
             disabled={disabled}
             onClick={() => setAdding(true)}
           >
-            ＋ 添加兜底模型
+            <Ico icon={Plus} size={12} /> 添加兜底模型
           </button>
         </div>
       ) : (

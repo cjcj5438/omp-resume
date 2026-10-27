@@ -16,10 +16,10 @@
   gap: 6px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .model-picker-btn:hover:not(:disabled) {
@@ -39,8 +39,8 @@
   padding: 8px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
 }
 
 .model-picker-list,
@@ -51,7 +51,7 @@
 }
 
 .model-picker-group {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   padding: 6px 4px 2px;
 }
@@ -64,7 +64,7 @@
   width: 100%;
   text-align: left;
   padding: 5px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: none;
   border: none;
   color: inherit;
@@ -88,13 +88,13 @@
 }
 
 .model-picker-selector {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .model-picker-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   flex-basis: 100%;
 }

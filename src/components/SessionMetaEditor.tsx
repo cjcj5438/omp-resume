@@ -8,6 +8,8 @@ import { getMeta, normalizeError, setSessionMeta } from "../api";
 import { errorText } from "../format";
 import type { AppError, MetaSnapshot, SessionMeta } from "../types";
 import "./SessionMetaEditor.css";
+import { X } from "lucide-react";
+import { Ico } from "./ui";
 
 export const ALIAS_MAX = 80;
 export const TAG_MAX = 24;
@@ -162,7 +164,7 @@ export function SessionMetaEditor({
                 disabled={saving || corrupted}
                 onClick={() => setTags(tags.filter((x) => x !== t))}
               >
-                ×
+                <Ico icon={X} size={12} />
               </button>
             </span>
           ))}

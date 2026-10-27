@@ -4,7 +4,7 @@
 .agents-tab-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .agents-tab-head .agents-tab-intro { margin-right: auto; }
 .agents-tab-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.agents-tab-hint { margin: 8px 0 0; font-size: 12px; }
+.agents-tab-hint { margin: 8px 0 0; font-size: var(--fs-sm); }
 
 /* 流程图点节点后的行高亮：描边强调 + 淡底，约 1.6s 后由组件移除。 */
 .models-agents .agent-row-flash {

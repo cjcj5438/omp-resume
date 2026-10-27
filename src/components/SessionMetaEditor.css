@@ -17,7 +17,7 @@
 .meta-label {
   flex: none;
   width: 36px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -39,9 +39,9 @@
   gap: 2px;
   padding: 1px 4px 1px 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-hover);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
@@ -50,10 +50,10 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1;
   padding: 2px 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
 }
 
 .meta-tag-x:hover:not(:disabled) {
@@ -85,7 +85,7 @@
 }
 
 .meta-hint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ---- 悬浮反馈：过渡统一用 --motion（输入框沿用全局 .filter-input 规则） ---- */

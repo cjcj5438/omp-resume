@@ -9,6 +9,8 @@ import { benchRunner, type BenchConfig } from "../modelBench";
 import { selectorBase } from "../roleCards";
 import { formatContextWindow, roleInfo } from "../roleCards";
 import type { ToastFn } from "./useOmpOp";
+import { Play } from "lucide-react";
+import { Ico } from "./ui";
 
 interface ModelLibraryProps {
   models: ModelInfo[];
@@ -181,7 +183,7 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
                             benchRunner.enqueue(m.selector);
                           }}
                         >
-                          测试 ▶
+                          测试 <Ico icon={Play} size={12} />
                         </button>
                         <button
                           type="button"

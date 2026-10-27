@@ -5,6 +5,8 @@
 import "./ModelsAgentsPanel.css";
 import type { ModelInfo } from "../types";
 import { orderNumeral, selectorBase, selectorThinking } from "../roleCards";
+import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { Ico } from "./ui";
 
 /** 思考强度分段控件：默认 + 所选模型的档位；当前值不在档位表时原样保留。 */
 export function ThinkingSegment(props: {
@@ -110,7 +112,7 @@ export function ChainChip(props: {
           title="上移"
           onClick={() => onMove(index, -1)}
         >
-          ↑
+          <Ico icon={ArrowUp} size={12} />
         </button>
         <button
           type="button"
@@ -120,7 +122,7 @@ export function ChainChip(props: {
           title="下移"
           onClick={() => onMove(index, 1)}
         >
-          ↓
+          <Ico icon={ArrowDown} size={12} />
         </button>
         <button
           type="button"
@@ -130,7 +132,7 @@ export function ChainChip(props: {
           title="删除"
           onClick={onDelete}
         >
-          ✕
+          <Ico icon={X} size={12} />
         </button>
       </span>
       )}

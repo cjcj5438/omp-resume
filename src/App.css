@@ -38,6 +38,32 @@
   --badge-label-text: #4a3800;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --motion: 120ms;
+  /* 字号刻度：全仓 CSS 只允许用这套变量（stage 画布内的 7/8/9px 例外）。 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fs-2xl: 20px;
+  --fs-3xl: 26px;
+  /* 圆角刻度 */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-full: 999px;
+  /* 动效刻度 */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* 阴影：流内卡片 sm，浮层 md */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  /* 层级 */
+  --z-titlebar: 5;
+  --z-popover: 40;
+  --z-overlay: 100;
 }
 
 :root[data-theme="dark"] {
@@ -67,6 +93,9 @@
   --badge-inuse-ink: #ffb020;
   --badge-label-bg: #e8c34a;
   --badge-label-text: #4a3800;
+  /* 深色主题：阴影更重，靠白色细描边勾勒边界 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
 }
 
 /* ---- 强调色覆盖：accent / fill（按钮填充）/ soft（淡底）/ 选中行 / 用户气泡 ---- */
@@ -171,10 +200,12 @@ body {
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "Helvetica Neue", sans-serif;
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  /* 数字等宽：时长/用量/大小在列表里不跳动。 */
+  font-variant-numeric: tabular-nums;
 }
 
 .mono {
@@ -191,6 +222,28 @@ body {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  /* Overlay 标题栏：内容整体下移一条拖拽条的高度。 */
+  padding-top: 28px;
+  box-sizing: border-box;
+}
+
+/* 统一标题栏拖拽区（Overlay 样式下窗口无系统标题栏）。 */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: var(--z-titlebar);
+}
+
+/* 视图区：侧栏之外的所有内容统一一层不透明底，保证半透明侧栏的材质只落在左栏。 */
+.main-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg);
 }
 
 .sidebar {
@@ -215,9 +268,9 @@ body {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
 }
@@ -231,7 +284,7 @@ body {
 
 .sidebar-footer {
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   border-top: 1px solid var(--border);
 }
@@ -243,7 +296,7 @@ body {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: default;
 }
 
@@ -253,7 +306,7 @@ body {
 
 .changelog-link:focus-visible {
   outline: 2px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 
 /* ---- 分组与行 ---- */
@@ -266,10 +319,11 @@ body {
   min-width: 0;
   padding: 4px 6px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text);
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
   cursor: default;
   text-align: left;
 }
@@ -292,7 +346,7 @@ body {
 
 .group-cwd {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -304,9 +358,9 @@ body {
   flex: none;
   padding: 0 7px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
 }
@@ -328,9 +382,9 @@ body {
   flex: none;
   padding: 0 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   cursor: default;
   opacity: 0;
@@ -373,9 +427,9 @@ body {
   flex: none;
   padding: 0 4px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-muted);
   cursor: default;
@@ -410,9 +464,9 @@ body {
   margin-top: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-hover);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .recap-text {
@@ -471,7 +525,7 @@ body {
 }
 
 .ph-prompt {
-  font-size: 13px;
+  font-size: var(--fs-md);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -484,7 +538,7 @@ body {
   flex-wrap: wrap;
   gap: 4px 10px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -499,18 +553,20 @@ body {
   display: flex;
   gap: 5px;
   align-items: flex-start;
-  padding: 5px 8px 5px 6px;
+  margin: 1px 6px;
+  padding: 6px 10px;
   cursor: default;
-  border-left: 3px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
 .row:hover {
   background: var(--bg-hover);
 }
 
-.row-selected {
+.row-selected,
+.row-selected:hover {
   background: var(--bg-selected);
-  border-left-color: var(--accent);
 }
 
 .row-check {
@@ -534,7 +590,7 @@ body {
 /* 别名作主标题时，原标题小号灰字附后，明确区分两者。 */
 .row-title-orig {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   color: var(--text-muted);
 }
@@ -543,7 +599,7 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 3px 7px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 1px;
   min-width: 0;
@@ -554,8 +610,8 @@ body {
 .badge {
   display: inline-block;
   padding: 0 6px;
-  border-radius: 999px;
-  font-size: 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
   line-height: 16px;
   white-space: nowrap;
 }
@@ -636,10 +692,10 @@ body {
   gap: 4px;
   padding: 1px 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
   cursor: pointer;
 }
@@ -665,9 +721,9 @@ body {
   align-items: center;
   gap: 5px;
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
   cursor: default;
@@ -705,7 +761,7 @@ body {
 
 .btn-small {
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .spinner {
@@ -746,7 +802,7 @@ body {
 }
 
 .detail-title {
-  font-size: 15px;
+  font-size: var(--fs-lg);
   margin: 0;
 }
 
@@ -754,7 +810,7 @@ body {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 4px;
   overflow-wrap: anywhere;
@@ -794,10 +850,10 @@ body {
   padding: 4px 14px;
   border: 1px solid transparent;
   border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   cursor: default;
 }
 
@@ -857,7 +913,7 @@ body {
 
 .bubble-user {
   background: var(--bg-bubble-user);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   padding: 8px 12px;
   max-width: 78%;
 }
@@ -867,14 +923,14 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.55;
 }
 
 .plain-text.mono,
 pre.mono {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .conv-assistant {
@@ -888,18 +944,18 @@ pre.mono {
 .assistant-text pre {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .assistant-text code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   background: var(--bg-card);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
 }
 
@@ -911,7 +967,7 @@ pre.mono {
 .assistant-text td {
   border: 1px solid var(--border);
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .md-link {
@@ -935,9 +991,9 @@ pre.mono {
   background: transparent;
   color: inherit;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: default;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .disclosure-toggle:hover {
@@ -951,7 +1007,7 @@ pre.mono {
 .disclosure-body .plain-text {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 8px;
   max-height: 320px;
   overflow: auto;
@@ -963,9 +1019,9 @@ pre.mono {
   gap: 4px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -989,13 +1045,13 @@ pre.mono {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 8px 12px;
   margin: 8px 0;
 }
 
 .conv-divider-title {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: 0.4px;
@@ -1072,17 +1128,17 @@ pre.mono {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .tree-time {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .depth-mark {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-family: var(--mono);
 }
@@ -1091,9 +1147,9 @@ pre.mono {
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: default;
   flex: none;
 }
@@ -1119,7 +1175,7 @@ pre.mono {
 }
 
 .tree-preview-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ---- 横幅 / 提示 ---- */
@@ -1129,9 +1185,9 @@ pre.mono {
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   margin: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .banner-error {
@@ -1160,10 +1216,10 @@ pre.mono {
 .toast {
   background: var(--toast-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 8px 12px;
-  box-shadow: var(--shadow);
-  font-size: 12px;
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm);
 }
 
 .toast-error {
@@ -1191,7 +1247,7 @@ pre.mono {
   flex-direction: column;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
   outline: none;
 }
@@ -1199,7 +1255,7 @@ pre.mono {
 .modal-wide { width: 760px; }
 
 .modal-title {
-  font-size: 14px;
+  font-size: var(--fs-lg);
   margin: 0;
   padding: 14px 16px 8px;
 }
@@ -1226,7 +1282,7 @@ pre.mono {
 .delete-warning {
   color: var(--danger);
   background: var(--danger-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 8px 10px;
 }
 
@@ -1238,7 +1294,7 @@ pre.mono {
   overflow-y: auto;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 8px 10px;
 }
 
@@ -1249,7 +1305,7 @@ pre.mono {
   max-height: 280px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .delete-item {
@@ -1272,7 +1328,7 @@ pre.mono {
   padding: 8px 10px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1302,14 +1358,14 @@ pre.mono {
 }
 
 .manage-sub {
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 16px 0 8px;
 }
 
 .manage-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .manage-table th,
@@ -1338,7 +1394,7 @@ pre.mono {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .manage-mkt {
@@ -1352,7 +1408,7 @@ pre.mono {
   margin-top: 8px;
   padding: 8px 12px;
   background: var(--bg-card);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .manage-browse-head {
@@ -1375,8 +1431,8 @@ pre.mono {
   margin: 8px 0 0;
   padding: 8px 12px;
   background: var(--bg-card);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-sm);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1394,8 +1450,8 @@ pre.mono {
   margin: 8px 16px;
   padding: 8px 12px;
   background: var(--bg-card);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-sm);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1410,7 +1466,7 @@ pre.mono {
   padding: 8px 12px;
   max-height: 180px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .manage-log pre {
@@ -1432,7 +1488,7 @@ pre.mono {
 
 .cleanup-note {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 4px 0 0;
 }
 
@@ -1445,7 +1501,7 @@ pre.mono {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
@@ -1456,12 +1512,12 @@ pre.mono {
 
 .cleanup-total {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* 分段控件（清理排序 / 用量统计共用）：带框容器 + 透明 .btn，激活态描边 + 淡底。 */
-.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
-.seg .btn { border-color: transparent; background: transparent; padding: 3px 10px; font-size: 12px; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-card); }
+.seg .btn { border-color: transparent; background: transparent; padding: 3px 10px; font-size: var(--fs-sm); }
 .seg .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 .cleanup-body {
@@ -1489,7 +1545,7 @@ pre.mono {
 }
 
 .cleanup-table .row-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1511,15 +1567,15 @@ pre.mono {
   padding: 10px 12px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 .appearance-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-bottom: 4px;
 }
@@ -1556,7 +1612,7 @@ pre.mono {
   outline: 2px solid transparent;
   outline-offset: 1px;
   color: var(--on-accent);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -1641,7 +1697,7 @@ pre.mono {
 
 .manage-mkt:hover {
   background: var(--bg-hover);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 /* ---- 激活态 hover：保留底色并加内圈提示，盖过 active 规则 ---- */
@@ -1677,4 +1733,95 @@ pre.mono {
 /* ---- 减少动态：全局停掉过渡 ---- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0ms !important; }
+}
+
+
+/* ---- 全局排版与可达性兜底（ui-ux-pro-max Pre-Delivery Checklist） ----
+ * 标题更紧的字距 = 大字号在屏上更稳；焦点环全应用统一，组件级规则可覆盖。
+ * 系统开启「减少动态效果」时停掉一切动画与平滑滚动。 */
+h1,
+h2,
+h3,
+.modal-title,
+.pane-title,
+.stage-title {
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- 半透明侧栏材质（macOS sidebar effect） ----
+ * 窗口本身透明 + 原生 NSVisualEffectView；侧栏让出底色，主区域自己铺 --bg。
+ * 材质实测亮度：浅色 ≈ #e7e9ea（L≈0.81），深色 ≈ #505252（L≈0.086）。
+ * 因此这两处把次要文字覆盖率提高，保证 ≥ 4.5:1；不支持材质时回退到不透明底色。 */
+:root[data-vibrancy="on"] html,
+:root[data-vibrancy="on"] body {
+  background: transparent;
+}
+
+:root[data-vibrancy="on"] .sidebar {
+  background: transparent;
+  /* 材质上文字对比度更易掉，用更实的次要色。 */
+  --text-muted: #5f5f64;
+}
+
+:root[data-vibrancy="on"][data-theme="dark"] .sidebar {
+  --text-muted: #d0d0d6;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-vibrancy="on"] .sidebar {
+    background: var(--bg-sidebar);
+  }
+}
+
+/* ---- 空状态（EmptyState） ---- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.empty-state-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.empty-state-title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.empty-state-desc {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  max-width: 36ch;
+  text-wrap: balance;
+  line-height: 1.5;
 }

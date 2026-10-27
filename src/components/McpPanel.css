@@ -28,7 +28,7 @@
 }
 
 .mcp-path {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -44,7 +44,7 @@
   gap: 6px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
 }
 
@@ -61,7 +61,7 @@
 }
 
 .mcp-endpoint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -72,10 +72,10 @@
 }
 
 .mcp-key-chip {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 1px 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   color: var(--text-muted);
 }
 
@@ -85,7 +85,7 @@
 }
 
 .mcp-hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .mcp-secondary {
@@ -113,7 +113,7 @@
 .mcp-textarea {
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
 }

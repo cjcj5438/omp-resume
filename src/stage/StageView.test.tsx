@@ -167,9 +167,8 @@ describe("StageView", () => {
   test("无运行会话且无选中会话 → 空态", async () => {
     listRunningSessions.mockResolvedValue([]);
     render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
-    expect(
-      await screen.findByText("没有运行中的会话。在左侧选择一个会话，可回看它的子代理舞台。"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("没有运行中的会话")).toBeInTheDocument();
+    expect(screen.getByText("在左侧选择一个会话，可回看它的子代理舞台。")).toBeInTheDocument();
     expect(getAgentStage).not.toHaveBeenCalled();
   });
 

@@ -22,7 +22,8 @@ import {
   type CopyKind,
   type SessionMenuActions,
 } from "../sessionMenus";
-import { SessionBadges } from "./ui";
+import { EmptyState, Ico, SessionBadges } from "./ui";
+import { BookOpen, ChartColumn, ChevronRight, Eraser, History, ListChecks, Pin, Plus, RotateCw, SearchX, Settings2, SquarePen, Theater } from "lucide-react";
 import { AppearancePanel } from "./AppearancePanel";
 import type { ToastFn } from "./useOmpOp";
 import { ModePicker } from "./ModePicker";
@@ -181,11 +182,11 @@ export function Sidebar({
   const selecting = multiMode || checked.size > 0;
   // 四个视图按钮同一形态：激活时点击 = 返回上一级（title 说明）。
   const NAV_VIEWS = [
-    { label: "舞台", active: stageActive, hint: "Agent 舞台", onClick: onToggleStage },
-    { label: "统计", active: statsActive, hint: "用量统计", onClick: onToggleStats },
-    { label: "清理", active: cleanupActive, hint: "清理候选", onClick: onToggleCleanup },
-    { label: "提示词历史", active: historyActive, hint: "提示词历史", onClick: onToggleHistory },
-    { label: "管理", active: manageActive, hint: "管理", onClick: onToggleManage },
+    { label: "舞台", icon: Theater, active: stageActive, hint: "Agent 舞台", onClick: onToggleStage },
+    { label: "统计", icon: ChartColumn, active: statsActive, hint: "用量统计", onClick: onToggleStats },
+    { label: "清理", icon: Eraser, active: cleanupActive, hint: "清理候选", onClick: onToggleCleanup },
+    { label: "提示词历史", icon: History, active: historyActive, hint: "提示词历史", onClick: onToggleHistory },
+    { label: "管理", icon: Settings2, active: manageActive, hint: "管理", onClick: onToggleManage },
   ];
   const toggleMulti = () => {
     if (selecting) {
@@ -421,7 +422,7 @@ export function Sidebar({
             {loading ? (
               <span className="spinner" aria-hidden="true" />
             ) : (
-              <span aria-hidden="true">↻</span>
+              <Ico icon={RotateCw} size={13} />
             )}
           </button>
           <button
@@ -432,11 +433,11 @@ export function Sidebar({
             title="多选"
             onClick={toggleMulti}
           >
-            <span aria-hidden="true">☑</span>
+            <Ico icon={ListChecks} size={13} />
           </button>
         </div>
         <button type="button" className="btn btn-accent new-session-btn" onClick={onNewSession}>
-          <span aria-hidden="true" className="new-session-plus">+</span>新会话…
+          <Ico icon={SquarePen} size={13} />新会话…
         </button>
         <div className="view-nav" role="group" aria-label="视图切换">
           {NAV_VIEWS.map((v) => (
@@ -448,10 +449,12 @@ export function Sidebar({
               title={v.active ? "返回上一级" : v.hint}
               onClick={v.onClick}
             >
+              <Ico icon={v.icon} size={13} />
               {v.label}
             </button>
           ))}
           <button type="button" className="view-nav-btn" onClick={onOpenCheatSheet}>
+            <Ico icon={BookOpen} size={13} />
             速查
           </button>
         </div>
@@ -504,7 +507,9 @@ export function Sidebar({
           </div>
         ) : null}
         {groups.length === 0 && pinnedSessions.length === 0 ? (
-          <div className="pane-note">没有匹配的会话</div>
+          <EmptyState icon={SearchX} title="没有匹配的会话">
+            换个关键词，或清除标签筛选。
+          </EmptyState>
         ) : null}
         {pinnedSessions.length > 0 ? (
           <section className="group pinned-group" aria-label="置顶会话">
@@ -540,10 +545,10 @@ export function Sidebar({
                   className={collapsed.has(PINNED_KEY) ? "group-arrow" : "group-arrow group-arrow-open"}
                   aria-hidden="true"
                 >
-                  ▸
+                  <Ico icon={ChevronRight} size={12} />
                 </span>
                 <span className="pinned-pin" aria-hidden="true">
-                  📌
+                  <Ico icon={Pin} size={12} />
                 </span>
                 <span className="pinned-name">置顶</span>
                 <span className="pinned-count">{pinnedSessions.length}</span>
@@ -622,7 +627,7 @@ export function Sidebar({
                     className={open ? "group-arrow group-arrow-open" : "group-arrow"}
                     aria-hidden="true"
                   >
-                    ▸
+                    <Ico icon={ChevronRight} size={12} />
                   </span>
                   <span className="group-name">{name}</span>
                   <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
@@ -645,7 +650,7 @@ export function Sidebar({
                   disabled={dirMissing}
                   onClick={() => onNewSessionIn(g.cwd)}
                 >
-                  +
+                  <Ico icon={Plus} size={12} />
                 </button>
               </div>
               {open ? (
@@ -951,7 +956,7 @@ function PinToggle({ pinned, kindLabel, name, onToggle }: PinToggleProps) {
         onToggle();
       }}
     >
-      📌
+      <Ico icon={Pin} size={12} />
     </button>
   );
 }

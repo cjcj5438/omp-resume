@@ -18,33 +18,49 @@
   font-weight: 600;
 }
 
-.new-session-plus {
-  margin-right: 4px;
-  font-weight: 700;
-}
-
 /* ---- 顶部：视图切换分段条（统计/清理/提示词历史/管理/速查共用一行） ---- */
 .view-nav {
   display: flex;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
 }
 
 .view-nav-btn {
   flex: 1 1 auto;
   min-width: 0;
+  /* 图标 + 文字：图标不参与压缩，文字过长时省略。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   padding: 3px 4px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: default;
+}
+
+.view-nav-btn svg {
+  flex: none;
+  opacity: 0.75;
+}
+
+.view-nav-btn[aria-pressed="true"] svg {
+  opacity: 1;
+}
+
+/* 新会话按钮：图标与文字同一基线，图标不压缩。 */
+.btn.new-session-btn svg {
+  flex: none;
 }
 
 .view-nav-btn:hover {
@@ -129,13 +145,13 @@
 
 .pinned-pin {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 
 .pinned-name {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--accent);
@@ -144,10 +160,10 @@
 .pinned-count {
   flex: none;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 16px;
   font-variant-numeric: tabular-nums;
 }
@@ -174,7 +190,7 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   background: var(--accent-soft);
@@ -185,7 +201,7 @@
   border: none;
   background: transparent;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: default;
 }
 
@@ -195,7 +211,7 @@
 
 .select-link:focus-visible {
   outline: 2px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 
 /* ---- 组头三态勾选：与行内勾选框同列（组头行已有 9px 左内边距）。 ---- */
@@ -207,7 +223,7 @@
 /* 项目会话全部置顶后的占位说明：与行标题同列，克制一行。 */
 .group-empty-note {
   padding: 4px 10px 8px 28px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -239,7 +255,7 @@
 
 /* 外观齿轮比小号按钮字号略大，避免图标显得过小。 */
 .footer-row .appearance-wrap .btn {
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .footer-update {
@@ -295,7 +311,7 @@
   margin: 0 4px;
   padding: 6px 8px;
   border-left-width: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   transition: background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
 }
 
@@ -313,7 +329,7 @@
 }
 
 .sidebar .row-title {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   line-height: 1.45;
 }
 
@@ -335,11 +351,11 @@
 
 .sidebar .group-header {
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
 .sidebar .group-name {
-  font-size: 12.5px;
+  font-size: var(--fs-md);
   letter-spacing: 0.01em;
 }
 
@@ -383,3 +399,25 @@
   font: inherit;
 }
 
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dialog-field-label {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.dialog-field-error {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--danger);
+}
+
+.dialog-field-note {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}

@@ -63,7 +63,7 @@ describe("复制", () => {
     fireEvent.click(btn);
     await act(async () => {});
     expect(writeText).toHaveBeenCalledWith("/delete");
-    expect(btn).toHaveTextContent("已复制 ✓");
+    expect(btn).toHaveTextContent("已复制");
 
     await act(async () => {
       vi.advanceTimersByTime(1500);

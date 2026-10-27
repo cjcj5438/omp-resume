@@ -33,7 +33,7 @@
 }
 
 .stage-rail-head {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   margin: 0 0 4px 2px;
@@ -41,7 +41,7 @@
 }
 
 .stage-rail-note {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 2px;
 }
@@ -52,7 +52,7 @@
   text-align: left;
   padding: 6px 8px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -70,7 +70,7 @@
 
 .stage-rail-title {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -80,7 +80,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -95,8 +95,8 @@
 
 .stage-dot-working { background: var(--stage-run); }
 .stage-dot-waiting { background: var(--stage-queue); }
-.stage-dot-stuck { background: var(--stage-fail); }
 .stage-dot-idle { background: var(--stage-idle); }
+.stage-dot-stuck { background: var(--stage-fail); }
 
 .stage-main {
   min-width: 0;
@@ -108,7 +108,7 @@
 }
 
 .stage-head-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -119,9 +119,9 @@
 .stage-head-spacer { flex: 1; }
 
 .stage-badge {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--badge-inuse-soft);
   color: var(--badge-inuse-ink);
   border: 1px solid var(--badge-inuse-bg);
@@ -133,7 +133,7 @@
 
 .stage-mono {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 /* ---- 画布 ---- */
@@ -158,7 +158,7 @@
   align-items: flex-start;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   max-width: 100%;
 }
@@ -198,12 +198,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1;
   color: var(--text);
   background: color-mix(in srgb, var(--bg) 76%, transparent);
   padding: 1px 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
   will-change: transform;
 }
@@ -222,17 +222,17 @@
   gap: 1px;
   max-width: 210px;
   padding: 5px 7px;
-  font-size: 11px;
-  border-radius: 6px;
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
   pointer-events: none;
 }
 
 .stage-tip-mono {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -271,7 +271,7 @@
   text-align: left;
   border: 1px solid var(--border);
   border-left: 3px solid var(--stage-idle);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text);
   font: inherit;
@@ -310,7 +310,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -322,24 +322,24 @@
   font-size: 9px;
   font-family: var(--mono);
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--bg-hover);
   color: var(--text-muted);
   flex: none;
 }
 
 .stage-card-state {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text);
 }
 
 .stage-card-note {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .stage-card-line {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -364,14 +364,14 @@
 
 .stage-panel {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   padding: 6px 8px 8px;
   min-width: 0;
 }
 
 .stage-panel-head {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
   margin: 0 0 4px;
@@ -412,7 +412,7 @@
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   border-bottom: 1px dashed var(--border);
   padding-bottom: 4px;
@@ -434,11 +434,11 @@
   width: 100%;
   text-align: left;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 2px 4px;
   cursor: pointer;
 }
@@ -469,7 +469,7 @@
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 24px;
   text-align: center;
 }
@@ -487,7 +487,7 @@
 }
 
 .stage-empty-note {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 0;
 }
@@ -499,7 +499,7 @@
 }
 
 .stage-lib-hint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 0;
 }
@@ -525,7 +525,7 @@
   gap: 8px;
   padding: 4px 6px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text);
   font: inherit;
@@ -542,7 +542,7 @@
   flex-direction: column;
   gap: 1px;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .stage-lib-row-text .mono {
@@ -562,13 +562,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
 .stage-lib-field select {
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
@@ -577,7 +577,7 @@
 
 .stage-agent-config {
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   padding: 4px 8px;
   margin-bottom: 8px;
   background: var(--bg-card);
@@ -585,7 +585,7 @@
 
 .stage-agent-config > summary {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
@@ -594,7 +594,7 @@
   flex-direction: column;
   gap: 4px;
   padding-top: 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .stage-agent-title {
@@ -609,7 +609,7 @@
 .stage-agent-run { margin: 0; }
 
 .stage-agent-row { margin: 0; line-height: 1.5; }
-.stage-agent-row .agent-effective { font-size: 11px; }
+.stage-agent-row .agent-effective { font-size: var(--fs-xs); }
 
 .stage-agent-chips {
   display: inline-flex;
@@ -629,7 +629,7 @@
   font: 11px var(--mono);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px;
   margin: 4px 0 0;
 }

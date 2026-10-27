@@ -9,19 +9,22 @@ import { errorText, formatTreeTime } from "../format";
 import { MAX_INDENT_DEPTH, flattenRows, foldTree, type DisplayRow } from "../tree/fold";
 import { useAsyncData } from "./useAsyncData";
 import { ConversationView } from "./ConversationView";
-import { Modal } from "./ui";
+import { Ico, Modal } from "./ui";
+import { Bot, ChevronDown, ChevronRight, GitBranch, Shrink, User, Wrench, type LucideIcon } from "lucide-react";
 
-const ROLE_ICON: Record<string, string> = {
-  user: "👤",
-  assistant: "🤖",
-  toolResult: "🔧",
-  bashExecution: "$",
+/** 角色 → 图标（同一 family，深浅主题同色）。 */
+const ROLE_ICON: Record<string, LucideIcon> = {
+  user: User,
+  assistant: Bot,
+  toolResult: Wrench,
 };
 
-function nodeIcon(n: TreeNode): string {
-  if (n.isCompaction) return "🗜";
-  if (n.isBranchSummary) return "🔀";
-  return ROLE_ICON[n.role ?? ""] ?? "·";
+/** 节点图标：压缩/分支摘要优先，其次按角色，兜底为分支点。 */
+function NodeIcon({ node }: { node: TreeNode }) {
+  if (node.isCompaction) return <Ico icon={Shrink} size={12} />;
+  if (node.isBranchSummary) return <Ico icon={GitBranch} size={12} />;
+  const icon = ROLE_ICON[node.role ?? ""];
+  return icon === undefined ? <Ico icon={GitBranch} size={12} /> : <Ico icon={icon} size={12} />;
 }
 
 interface TreeViewProps {
@@ -233,7 +236,10 @@ export function TreeView({
             恢复后从所选节点继续，新内容会在同一文件里形成新分支。此操作会修改会话文件。
           </p>
           <div className="modal-node-preview">
-            <span className="muted">{nodeIcon(dialogNode)}</span> {dialogNode.preview}
+            <span className="muted">
+              <NodeIcon node={dialogNode} />
+            </span>{" "}
+            {dialogNode.preview}
           </div>
         </Modal>
       ) : null}
@@ -276,7 +282,7 @@ function TreeRow({ row, selected, expanded, leafId, onSelect, onToggleFold }: Tr
           aria-expanded={expanded}
           onClick={() => onToggleFold(row.key)}
         >
-          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span> {row.nodes.length} 条消息
+          <Ico icon={expanded ? ChevronDown : ChevronRight} size={12} /> {row.nodes.length} 条消息
         </button>
         <span className="tree-preview-text muted">
           {row.nodes[0].preview}
@@ -301,7 +307,7 @@ function TreeRow({ row, selected, expanded, leafId, onSelect, onToggleFold }: Tr
     >
       {depthMark ? <span className="depth-mark">{depthMark}</span> : null}
       <span className="tree-icon" aria-hidden="true">
-        {nodeIcon(n)}
+        <NodeIcon node={n} />
       </span>
       <span className="tree-preview-text" title={n.preview}>
         {n.preview}

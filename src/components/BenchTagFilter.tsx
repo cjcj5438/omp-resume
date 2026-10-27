@@ -5,6 +5,8 @@
  */
 import type { ReactNode } from "react";
 import type { BenchTag } from "../modelBench";
+import { X } from "lucide-react";
+import { Ico } from "./ui";
 
 export interface BenchTagFilterProps {
   tags: BenchTag[];
@@ -51,7 +53,7 @@ export function BenchTagFilter(props: BenchTagFilterProps): ReactNode {
                 title={`删除自定义标签 ${t.id}`}
                 onClick={() => onRemoveCustomTag(t.id)}
               >
-                ✕
+                <Ico icon={X} size={12} />
               </button>
             ) : null}
           </span>

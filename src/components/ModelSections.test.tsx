@@ -450,7 +450,7 @@ describe("其他模型的兜底", () => {
     fireEvent.click(screen.getByText(/共 2 条/));
 
     const chain = screen.getByTestId("chain-sonic");
-    fireEvent.click(within(chain).getByRole("button", { name: "＋ 添加兜底模型" }));
+    fireEvent.click(within(chain).getByRole("button", { name: "添加兜底模型" }));
     fireEvent.click(within(chain).getByRole("button", { name: "使用自定义值…" }));
     const manual = within(chain).getByLabelText(/手动输入/);
     fireEvent.change(manual, { target: { value: "p1/extra" } });

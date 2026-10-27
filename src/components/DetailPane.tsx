@@ -8,10 +8,11 @@ import { copyText } from "../clipboard";
 import { useAsyncData } from "./useAsyncData";
 import { ConversationView } from "./ConversationView";
 import { TreeView } from "./TreeView";
-import { SessionBadges } from "./ui";
+import { EmptyState, SessionBadges } from "./ui";
 import { UsageSummary } from "./UsageSummary";
 import { RecapBlock } from "./RecapBlock";
 import { SessionMetaEditor } from "./SessionMetaEditor";
+import { FileX, PanelLeft } from "lucide-react";
 
 interface DetailPaneProps {
   session: SessionSummary | null;
@@ -116,9 +117,15 @@ export function DetailPane({
           ) : null}
         </header>
       ) : (
-        <div className="pane-note">
-          {gone ? "该会话已不存在" : "从左侧选择一个会话查看详情"}
-        </div>
+        gone ? (
+          <EmptyState icon={FileX} title="该会话已不存在">
+            它可能已被删除或移动，点侧栏的刷新按钮更新列表。
+          </EmptyState>
+        ) : (
+          <EmptyState icon={PanelLeft} title="选择一个会话">
+            从左侧列表选中会话，查看对话、分支树和用量。右键会话可快速继续、重命名、打标签。
+          </EmptyState>
+        )
       )}
       {showToolbar ? (
         <div className="toolbar">

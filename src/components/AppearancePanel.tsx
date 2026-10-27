@@ -3,6 +3,8 @@
  * 挂在侧栏底部状态区；选择即时生效并持久化，无保存按钮。
  */
 import { useEffect, useRef, useState } from "react";
+import { Check, Palette } from "lucide-react";
+import { Ico } from "../components/ui";
 import {
   ACCENTS,
   ACCENT_LABEL,
@@ -89,7 +91,7 @@ export function AppearancePanel() {
         title="切换主题与强调色"
         onClick={() => setOpen((o) => !o)}
       >
-        <span aria-hidden="true">⚙</span>
+        <Ico icon={Palette} />
       </button>
       {open ? (
         <div className="appearance-pop" role="dialog" aria-label="外观设置">
@@ -129,7 +131,7 @@ export function AppearancePanel() {
                     title={ACCENT_LABEL[a]}
                     onClick={() => setAccent(a)}
                   >
-                    {selected ? <span aria-hidden="true">✓</span> : null}
+                    {selected ? <Ico icon={Check} size={12} /> : null}
                   </button>
                 );
               })}

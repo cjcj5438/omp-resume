@@ -3,6 +3,9 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
+// 原生半透明材质（sidebar effect）：CSS 据此让侧栏与窗口底色透明。
+document.documentElement.dataset.vibrancy = "on";
+
 async function boot(): Promise<void> {
   if (
     import.meta.env.DEV &&

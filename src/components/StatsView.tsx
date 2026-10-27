@@ -8,6 +8,8 @@ import { TrendChart, type TrendMetric } from "./UsageCharts";
 import { Donut } from "./UsageDonut";
 import { UsageHeatmap } from "./UsageHeatmap";
 import { activitySummary, cacheHitRate, compactNumber, formatDuration, formatHitRate } from "./usageFormat";
+import { EmptyState } from "./ui";
+import { ChartColumn } from "lucide-react";
 import "./Usage.css";
 
 type StatsTab = "cost" | "health";
@@ -167,7 +169,11 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
       <Kpi label="工具调用" value={usageNumber(timing.toolCalls)} subs={[`工具耗时 ${formatDuration(timing.toolMs)}`]} />
       <Kpi label="活跃时长" value={formatDuration(active)} subs={[`模型调用 ${usageNumber(timing.calls)} 次（主对话）`]} />
     </section>
-    {!data.byProject.length ? <div className="pane-note">此范围内暂无用量数据</div> : <>
+    {!data.byProject.length ? (
+      <EmptyState icon={ChartColumn} title="此范围内暂无用量数据">
+        换个时间范围试试。
+      </EmptyState>
+    ) : <>
       <section className="health-card usage-trend" aria-label="用量趋势">
         <div className="card-head">
           <h2>用量趋势</h2>

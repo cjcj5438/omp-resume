@@ -7,7 +7,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AppError, Conversation, ConversationItem } from "../types";
 import { errorText } from "../format";
-import { Disclosure } from "./ui";
+import { Disclosure, Ico } from "./ui";
+import { Check, Wrench, X } from "lucide-react";
 
 /** 链接不跳转 webview：拦截点击，URL 放 title。 */
 function MdLink({ href, children, title }: ComponentProps<"a">) {
@@ -74,7 +75,7 @@ const ItemView = memo(function ItemView({ item }: { item: ConversationItem }) {
                 className="thin"
                 label={
                   <span className="chip">
-                    <span aria-hidden="true">🔧</span> {b.name}
+                    <Ico icon={Wrench} size={12} /> {b.name}
                     <span className="chip-args mono">{argsPreview(b.args)}</span>
                   </span>
                 }
@@ -96,7 +97,7 @@ const ItemView = memo(function ItemView({ item }: { item: ConversationItem }) {
             className="thin"
             label={
               <span className={item.isError ? "chip chip-error" : "chip"}>
-                <span aria-hidden="true">{item.isError ? "✗" : "✓"}</span> {item.toolName}
+                <span aria-hidden="true">{item.isError ? <Ico icon={X} size={12} /> : <Ico icon={Check} size={12} />}</span> {item.toolName}
                 <span className="chip-args">{firstLine(item.text)}</span>
                 {item.truncated ? <span className="muted">（已截断）</span> : null}
               </span>

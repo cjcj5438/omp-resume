@@ -19,7 +19,8 @@ import {
   type CleanupSortDir,
 } from "../cleanup";
 import type { DeleteTarget } from "../flows";
-import { Badge } from "./ui";
+import { Badge, EmptyState } from "./ui";
+import { Sparkles } from "lucide-react";
 
 interface CleanupViewProps {
   onBack: () => void;
@@ -209,9 +210,9 @@ export function CleanupView({
           </div>
         ) : null}
         {!loading && !error && list.length === 0 ? (
-          <div className="pane-note">
-            没有符合清理规则的会话（空会话 / cwd 已删除 / 体积大 / 久未更新）。
-          </div>
+          <EmptyState icon={Sparkles} title="很干净">
+            没有符合清理规则的会话（空会话 / 目录已删除 / 体积大 / 久未更新）。
+          </EmptyState>
         ) : null}
         {list.length > 0 ? (
           <table className="manage-table cleanup-table">

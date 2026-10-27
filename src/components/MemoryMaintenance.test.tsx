@@ -387,7 +387,8 @@ describe("无效库批量清理", () => {
     const runBtn = within(dialog).getByRole("button", { name: "备份并移除 1 个库" });
     fireEvent.click(runBtn); fireEvent.click(runBtn);
     await waitFor(() => expect(calls.deleteBank).toEqual([{ bank: "gone" }]));
-    expect(await within(dialog).findByText(/✘ gone：无法移除/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/gone：无法移除/)).toBeInTheDocument();
+    expect(dialog.querySelectorAll(".mem-step-fail")).toHaveLength(1);
     expect(onToast).toHaveBeenCalledWith("已移除 0 个无效库，1 个失败", "error");
     expect(await within(dialog).findByRole("button", { name: "完成" })).toBeInTheDocument();
     await waitFor(() => expect(calls.overview).toBe(2));
@@ -397,7 +398,7 @@ describe("无效库批量清理", () => {
     const again = await openCleanup();
     await within(again).findByRole("checkbox", { name: /gone/ });
     fireEvent.click(within(again).getByRole("button", { name: "备份并移除 1 个库" }));
-    expect(await within(again).findByText(/✔ gone：已移除（已备份）/)).toBeInTheDocument();
+    expect(await within(again).findByText(/gone：已移除（已备份）/)).toBeInTheDocument();
     expect(onToast).toHaveBeenCalledWith("已移除 1 个无效库，均已备份", "info");
   });
 

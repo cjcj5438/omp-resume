@@ -398,6 +398,8 @@ function App() {
 
   return (
     <div className="app">
+      {/* 统一标题栏：Overlay 标题栏下这块区域既做拖拽区，也当视觉分隔。 */}
+      <div className="titlebar" data-tauri-drag-region />
       <Sidebar
         groups={groups}
         pinnedSessions={pinnedSessions}
@@ -462,6 +464,7 @@ function App() {
         onRequestDelete={handleRequestDelete}
         onMetaSnapshot={handleMetaSnapshot}
       />
+      <main className="main-pane">
       {view === "history" ? (
         <PromptHistoryView
           onBack={goBack}
@@ -531,6 +534,7 @@ function App() {
           onMetaSnapshot={handleMetaSnapshot}
         />
       )}
+      </main>
       {deleteTargets ? (
         <DeleteDialog
           targets={deleteTargets}

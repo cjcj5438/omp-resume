@@ -2,6 +2,7 @@
  * 通用小组件：模态对话框（焦点陷阱）、懒渲染折叠块、会话徽章。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import type { SessionSummary } from "../types";
 
 interface ModalProps {
@@ -123,5 +124,34 @@ export function SessionBadges({ s }: { s: SessionSummary }) {
         </Badge>
       ) : null}
     </>
+  );
+}
+
+/**
+ * 全应用唯一的图标封装：统一 family（lucide）、统一描边、默认对辅助技术隐藏。
+ * 纯图标按钮必须自己带 `aria-label`（图标本身恒为装饰）。
+ */
+export function Ico({ icon: Icon, size = 14 }: { icon: LucideIcon; size?: number }) {
+  return <Icon size={size} strokeWidth={1.75} aria-hidden="true" focusable="false" />;
+}
+
+interface EmptyStateProps {
+  icon: LucideIcon;
+  title: string;
+  children?: ReactNode;
+  action?: ReactNode;
+}
+
+/** 空状态：圆形图标 + 标题 + 一句说明 + 可选动作。 */
+export function EmptyState({ icon: Icon, title, children, action }: EmptyStateProps) {
+  return (
+    <div className="empty-state">
+      <span className="empty-state-icon" aria-hidden="true">
+        <Ico icon={Icon} size={26} />
+      </span>
+      <div className="empty-state-title">{title}</div>
+      {children !== undefined ? <p className="empty-state-desc">{children}</p> : null}
+      {action}
+    </div>
   );
 }

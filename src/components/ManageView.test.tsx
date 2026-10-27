@@ -78,7 +78,7 @@ function summaryLines(): string[] {
   const summary = screen.getByRole("list", { name: "全部更新结果" });
   return within(summary)
     .getAllByRole("listitem")
-    .map((li) => li.textContent ?? "");
+    .map((li) => (li.textContent ?? "").trim());
 }
 
 beforeEach(() => {
@@ -147,7 +147,7 @@ describe("App 管理视图进出", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.queryByRole("tablist", { name: "管理视图" })).toBeNull();
-    expect(screen.getByText("从左侧选择一个会话查看详情")).toBeInTheDocument();
+    expect(screen.getByText("选择一个会话")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "管理" }));
     await screen.findByRole("tablist", { name: "管理视图" });
@@ -168,10 +168,10 @@ describe("全部更新", () => {
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     expect(await screen.findByRole("list", { name: "全部更新结果" })).toBeInTheDocument();
     expect(summaryLines()).toEqual([
-      "✔ 更新 marketplace 目录：完成",
-      "✔ 升级插件：全部已是最新",
-      "✔ 更新 registry skills：完成",
-      "✔ 检查 omp 更新：omp 已是最新",
+      "更新 marketplace 目录：完成",
+      "升级插件：全部已是最新",
+      "更新 registry skills：完成",
+      "检查 omp 更新：omp 已是最新",
     ]);
     expect(calls.filter((c) => UPDATE_CMDS.includes(c))).toEqual(UPDATE_CMDS);
     expect(onToast).toHaveBeenCalledWith("全部更新完成", "info");
@@ -194,9 +194,11 @@ describe("全部更新", () => {
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     expect(await screen.findByRole("list", { name: "全部更新结果" })).toBeInTheDocument();
     expect(summaryLines()).toEqual([
-      "✔ 更新 marketplace 目录：完成",
-      "✘ 升级插件：升级炸了",
+      "更新 marketplace 目录：完成",
+      "升级插件：升级炸了",
     ]);
+    // 失败步骤有专属样式（图标已由 SVG 承担，不再靠字形区分）。
+    expect(document.querySelectorAll(".manage-step-fail")).toHaveLength(1);
     expect(calls).not.toContain("omp_skills_update");
     expect(calls).not.toContain("omp_update_check");
     expect(onToast).toHaveBeenCalledWith("全部更新在「升级插件」失败：升级炸了", "error");
@@ -224,7 +226,7 @@ describe("全部更新", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     expect(await screen.findByRole("list", { name: "全部更新结果" })).toBeInTheDocument();
-    expect(summaryLines()).toContain("✔ 检查 omp 更新：omp 已是最新");
+    expect(summaryLines()).toContain("检查 omp 更新：omp 已是最新");
     expect(onCheckOmp).not.toHaveBeenCalled();
     expect(onToast).toHaveBeenCalledWith("全部更新完成", "info");
   });

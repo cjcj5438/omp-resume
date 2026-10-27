@@ -37,6 +37,8 @@ import { AddTagModal, ModelEntryModal } from "./ModelEntryModal";
 import { BenchTagFilter } from "./BenchTagFilter";
 import { BenchToolbar } from "./BenchToolbar";
 import { useAlive, type ToastFn } from "./useOmpOp";
+import { Play } from "lucide-react";
+import { Ico } from "./ui";
 
 
 /** 展示行：模型信息 + 统计 + 综合分，表格排序后的单位。 */
@@ -399,7 +401,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                         benchRunner.enqueue(model.selector);
                       }}
                     >
-                      ▶
+                      <Ico icon={Play} size={12} />
                     </button>
                   </td>
                 </tr>

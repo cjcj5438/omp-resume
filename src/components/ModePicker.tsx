@@ -13,7 +13,8 @@ import { presetOps, refreshPresets, usePresets } from "../modelPresets";
 import type { ModelPreset } from "../types";
 import { popupMenu } from "../nativeMenu";
 import type { ToastFn } from "./useOmpOp";
-import { Modal } from "./ui";
+import { Ico, Modal } from "./ui";
+import { Check } from "lucide-react";
 import "./ModePicker.css";
 
 /** 与后端 `validate_preset_name` 完全同规则（`^[a-zA-Z][\w-]*$` + ≤ 64）。 */
@@ -232,8 +233,8 @@ export function ModePicker({ onToast }: { onToast: ToastFn }) {
                           >
                             <span className="mode-item-name">
                               {isActive ? (
-                                <span className="mode-check" aria-hidden="true">
-                                  ✓
+                                <span className="mode-check">
+                                  <Ico icon={Check} size={12} />
                                 </span>
                               ) : null}
                               {preset.name}

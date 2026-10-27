@@ -17,7 +17,8 @@ import { OMP_CLI_COMMANDS, OMP_CLI_VERSION } from "../ompCliCommands";
 import { OMP_LEARNING_PATHS } from "../ompLearningPaths";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
-import { Modal } from "./ui";
+import { Ico, Modal } from "./ui";
+import { Check } from "lucide-react";
 import { useAlive } from "./useOmpOp";
 import "./CheatSheet.css";
 
@@ -70,7 +71,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
     feedbackTimer.current = window.setTimeout(() => setCopied(null), COPIED_MS);
   }
 
-  /** 复制按钮：同一套「已复制 ✓」时序，key 唯一即可。 */
+  /** 复制按钮：同一套「已复制 + Check 图标」时序，key 唯一即可。 */
   const copyButton = (key: string, text: string, label: string, aria: string): ReactNode => (
     <button
       type="button"
@@ -79,7 +80,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
       title={aria}
       onClick={() => void copy(key, text)}
     >
-      {copied === key ? "已复制 ✓" : label}
+      {copied === key ? <>已复制 <Ico icon={Check} size={12} /></> : label}
     </button>
   );
 
@@ -397,7 +398,7 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
             title={`复制 /${c.name}`}
             onClick={() => void copy(cmdKey, `/${c.name}`)}
           >
-            {copied === cmdKey ? "已复制 ✓" : "复制"}
+            {copied === cmdKey ? <>已复制 <Ico icon={Check} size={12} /></> : "复制"}
           </button>
           {c.args ? (
             <button
@@ -407,7 +408,7 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
               title={`复制 /${c.name} ${c.args}`}
               onClick={() => void copy(tplKey, `/${c.name} ${c.args}`)}
             >
-              {copied === tplKey ? "已复制 ✓" : "参数"}
+              {copied === tplKey ? <>已复制 <Ico icon={Check} size={12} /></> : "参数"}
             </button>
           ) : null}
         </span>
@@ -478,7 +479,7 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
                         title={`复制示例 ${ex}`}
                         onClick={() => void copy(`ex:${group}:${c.name}:${i}`, ex)}
                       >
-                        {copied === `ex:${group}:${c.name}:${i}` ? "已复制 ✓" : "复制"}
+                        {copied === `ex:${group}:${c.name}:${i}` ? <>已复制 <Ico icon={Check} size={12} /></> : "复制"}
                       </button>
                     </li>
                   ))}
