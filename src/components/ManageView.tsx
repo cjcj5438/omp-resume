@@ -158,24 +158,26 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
 
   return (
     <main className="detail manage">
-      <header className="detail-head manage-head">
-        <button type="button" className="btn" onClick={onBack}>
-          返回
-        </button>
-        <h1 className="detail-title">管理</h1>
+      <header className="detail-head">
+        <div className="detail-title-row">
+          <h1 className="detail-title">管理</h1>
+          {busy ? <span className="detail-head-note">正在执行：{op.running}…</span> : null}
+          <span className="detail-actions">
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={busy}
+              onClick={() => void updateAll()}
+            >
+              {busy ? <span className="spinner" aria-hidden="true" /> : null}
+              全部更新
+            </button>
+            <button type="button" className="btn" onClick={onBack}>
+              返回
+            </button>
+          </span>
+        </div>
       </header>
-      <div className="toolbar">
-        <button
-          type="button"
-          className="btn btn-accent"
-          disabled={busy}
-          onClick={() => void updateAll()}
-        >
-          {busy ? <span className="spinner" aria-hidden="true" /> : null}
-          全部更新
-        </button>
-        {busy ? <span className="muted">正在执行：{op.running}…</span> : null}
-      </div>
       {summary !== null ? (
         <ul className="manage-summary" aria-label="全部更新结果">
           {summary.map((s) => (

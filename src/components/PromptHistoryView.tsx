@@ -58,11 +58,13 @@ export function PromptHistoryView({
       <header className="detail-head">
         <div className="detail-title-row">
           <h1 className="detail-title">提示词历史</h1>
-          <button type="button" className="btn" onClick={onBack}>
-            返回
-          </button>
+          <span className="detail-actions">
+            <button type="button" className="btn" onClick={onBack}>
+              返回
+            </button>
+          </span>
         </div>
-        <p className="usage-muted">只读检索 omp 的 history.db；「跳到来源会话」需要该会话已在列表中。</p>
+        <p className="detail-sub">只读检索 omp 的 history.db；「跳到来源会话」需要该会话已在列表中。</p>
       </header>
       <div className="ph-head">
         <input

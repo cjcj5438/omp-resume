@@ -190,7 +190,7 @@ export function ModelsTab(props: { onToast: ToastFn; state: ModelDraftState }): 
         <ModelsSection state={s} />
       </section>
 
-      <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
+      <p className="pane-hint">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</p>
       {specSelector !== null ? (
         <ModelSpecDrawer
           key={specSelector}

@@ -100,7 +100,7 @@ export function AgentsTab(props: { state: ModelDraftState }): ReactNode {
       ) : null}
       <AgentsSection state={s} />
 
-      <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
+      <p className="pane-hint">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</p>
     </div>
   );
 }

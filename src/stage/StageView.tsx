@@ -186,7 +186,9 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
         <header className="detail-head">
           <div className="detail-title-row">
             <h1 className="detail-title">舞台</h1>
-            <button type="button" className="btn" onClick={onBack}>返回</button>
+            <span className="detail-actions">
+              <button type="button" className="btn" onClick={onBack}>返回</button>
+            </span>
           </div>
         </header>
         <div className="stage-empty">
@@ -219,13 +221,14 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
           <h1 className="detail-title">舞台</h1>
           {stage !== null && !stage.inUse ? <span className="stage-badge">回看</span> : null}
           <span className="stage-head-title">{stage?.title ?? selectedTitle ?? "加载中…"}</span>
-          <span className="stage-head-spacer" />
-          {stage !== null ? (
-            <button type="button" className="btn" onClick={() => onOpenSession(stage.path)}>
-              查看会话
-            </button>
-          ) : null}
-          <button type="button" className="btn" onClick={onBack}>返回</button>
+          <span className="detail-actions">
+            {stage !== null ? (
+              <button type="button" className="btn" onClick={() => onOpenSession(stage.path)}>
+                查看会话
+              </button>
+            ) : null}
+            <button type="button" className="btn" onClick={onBack}>返回</button>
+          </span>
         </div>
         {stage !== null ? (
           <div className="detail-meta stage-meta">

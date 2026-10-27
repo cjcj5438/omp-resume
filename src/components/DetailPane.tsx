@@ -53,17 +53,18 @@ export function DetailPane({
   onMetaSnapshot,
 }: DetailPaneProps) {
   const [tab, setTab] = useState<Tab>("conv");
+  // 备注编辑器默认收起：详情头部只留一行动作，编辑态按需展开。
+  const [metaOpen, setMetaOpen] = useState(false);
   const path = session?.path ?? null;
   const formatSupported = session?.formatSupported ?? true;
   const conv = useAsyncData(() => getConversation({ path: path! }), [path, formatSupported, refreshKey], { enabled: path !== null && formatSupported });
 
-  // 切换会话：回到对话标签。
+  // 切换会话：回到对话标签，收起备注编辑器（避免误编辑另一个会话）。
   useEffect(() => {
     setTab("conv");
+    setMetaOpen(false);
   }, [path]);
 
-  // 无会话也允许批量删除（勾选行存在时保留工具栏）。
-  const showToolbar = session != null || checkedCount > 0;
   const itermDisabled = session?.inUse || !session?.cwdExists;
   const itermTip = session?.inUse
     ? "会话正在被另一个 omp 使用"
@@ -83,9 +84,40 @@ export function DetailPane({
           <div className="detail-title-row">
             <h1 className="detail-title">{session.title}</h1>
             <SessionBadges s={session} />
+            <span className="detail-actions">
+              <button
+                type="button"
+                className="btn btn-accent"
+                disabled={itermDisabled}
+                title={itermTip}
+                onClick={() => onOpenIterm(session)}
+              >
+                在 iTerm 继续
+              </button>
+              <button
+                type="button"
+                className={pinned ? "btn btn-toggle-on" : "btn"}
+                aria-pressed={pinned}
+                onClick={onTogglePin}
+              >
+                {pinned ? "已置顶" : "置顶"}
+              </button>
+              <button
+                type="button"
+                className={metaOpen ? "btn btn-toggle-on" : "btn"}
+                aria-expanded={metaOpen}
+                aria-controls="session-meta-editor"
+                onClick={() => setMetaOpen((v) => !v)}
+              >
+                备注
+              </button>
+              <button type="button" className="btn btn-danger" onClick={onDelete}>
+                {checkedCount > 0 ? `删除所选 (${checkedCount})` : "删除"}
+              </button>
+            </span>
           </div>
-          <div className="detail-meta mono">{displayCwd(session.cwd)}</div>
           <div className="detail-meta">
+            <span className="mono">{displayCwd(session.cwd)}</span>
             <button
               type="button"
               className="id-copy mono"
@@ -93,12 +125,13 @@ export function DetailPane({
               aria-label="复制会话 ID"
               onClick={() => void copySessionId(session.id)}
             >
-              {session.id}
+              {session.id.slice(0, 8)}
             </button>
-            <span>创建 {formatFullTime(session.createdAt)}</span>
             <span>修改 {formatFullTime(session.modifiedAt)}</span>
-            <span>{formatSize(session.sizeBytes)}</span>
-            <span>{session.messageCount} 条消息</span>
+            <span>创建 {formatFullTime(session.createdAt)}</span>
+            <span className="detail-meta-group">
+              {formatSize(session.sizeBytes)} · {session.messageCount} 条消息
+            </span>
             {session.occupant != null ? (
               <span>
                 占用：
@@ -127,35 +160,19 @@ export function DetailPane({
           </EmptyState>
         )
       )}
-      {showToolbar ? (
+      {/* 无会话但勾选了行：保留删除入口。 */}
+      {session === null && checkedCount > 0 ? (
         <div className="toolbar">
-          {session ? (
-            <button
-              type="button"
-              className="btn btn-accent"
-              disabled={itermDisabled}
-              title={itermTip}
-              onClick={() => onOpenIterm(session)}
-            >
-              在 iTerm 继续
-            </button>
-          ) : null}
-          {session ? (
-            <button
-              type="button"
-              className={pinned ? "btn btn-accent" : "btn"}
-              aria-pressed={pinned}
-              onClick={onTogglePin}
-            >
-              {pinned ? "已置顶" : "置顶"}
-            </button>
-          ) : null}
           <button type="button" className="btn btn-danger" onClick={onDelete}>
-            {checkedCount > 0 ? `删除所选 (${checkedCount})` : "删除"}
+            {`删除所选 (${checkedCount})`}
           </button>
         </div>
       ) : null}
-      {session ? <SessionMetaEditor sessionId={session.id} entry={metaEntry} revision={metaRevision} loadError={metaError} onSnapshot={onMetaSnapshot} onToast={onToast} /> : null}
+      {session !== null && metaOpen ? (
+        <div id="session-meta-editor">
+          <SessionMetaEditor sessionId={session.id} entry={metaEntry} revision={metaRevision} loadError={metaError} onSnapshot={onMetaSnapshot} onToast={onToast} />
+        </div>
+      ) : null}
       {session ? (
         <>
           <div className="tabs" role="tablist" aria-label="详情视图">

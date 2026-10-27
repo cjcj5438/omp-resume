@@ -103,11 +103,13 @@ export function CleanupView({
       <header className="detail-head">
         <div className="detail-title-row">
           <h1 className="detail-title">清理</h1>
-          <button type="button" className="btn" onClick={onBack}>
-            返回
-          </button>
+          <span className="detail-actions">
+            <button type="button" className="btn" onClick={onBack}>
+              返回
+            </button>
+          </span>
         </div>
-        <p className="cleanup-note">
+        <p className="detail-sub">
           只读扫描本机会话，按规则列出候选；删除走既有永久删除流程（不进废纸篓）。
         </p>
       </header>

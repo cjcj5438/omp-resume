@@ -14,7 +14,7 @@ import type { ModelPreset } from "../types";
 import { popupMenu } from "../nativeMenu";
 import type { ToastFn } from "./useOmpOp";
 import { Ico, Modal } from "./ui";
-import { Check } from "lucide-react";
+import { Check, TriangleAlert } from "lucide-react";
 import "./ModePicker.css";
 
 /** 与后端 `validate_preset_name` 完全同规则（`^[a-zA-Z][\w-]*$` + ≤ 64）。 */
@@ -169,7 +169,7 @@ export function ModePicker({ onToast }: { onToast: ToastFn }) {
     view.status === "loading"
       ? "模式 …"
       : view.status === "error"
-        ? "模式 ⚠"
+        ? "模式"
         : state?.active != null
           ? `模式：${state.active}`
           : "模式：自定义";
@@ -191,6 +191,7 @@ export function ModePicker({ onToast }: { onToast: ToastFn }) {
           setOpen(!open);
         }}
       >
+        {view.status === "error" ? <Ico icon={TriangleAlert} size={12} /> : null}
         {label}
       </button>
       {open ? (

@@ -276,28 +276,33 @@ export function StatsView({ onBack, sessionTitle, onOpenSession }: { onBack: () 
   return (
     <main className="detail">
       <header className="detail-head">
-        <div className="detail-title-row"><h1 className="detail-title">用量统计</h1><button type="button" className="btn" onClick={onBack}>返回</button></div>
-        <p className="usage-muted">只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD</p>
-        <div className="tabs" role="tablist" aria-label="用量统计">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              id={`tab-stats-${t.key}`}
-              aria-selected={tab === t.key}
-              aria-controls={`panel-stats-${t.key}`}
-              className={tab === t.key ? "tab tab-active" : "tab"}
-              onClick={() => {
-                setTab(t.key);
-                if (t.key === "health") setHealthVisited(true);
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="detail-title-row">
+          <h1 className="detail-title">用量统计</h1>
+          <span className="detail-actions">
+            <button type="button" className="btn" onClick={onBack}>返回</button>
+          </span>
         </div>
+        <p className="detail-sub">只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD</p>
       </header>
+      <div className="tabs" role="tablist" aria-label="用量统计">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            id={`tab-stats-${t.key}`}
+            aria-selected={tab === t.key}
+            aria-controls={`panel-stats-${t.key}`}
+            className={tab === t.key ? "tab tab-active" : "tab"}
+            onClick={() => {
+              setTab(t.key);
+              if (t.key === "health") setHealthVisited(true);
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
       <div role="tabpanel" id="panel-stats-cost" aria-labelledby="tab-stats-cost" hidden={tab !== "cost"} className="usage-panel">
         <OverviewPanel range={costRange} onRange={setCostRange} sessionTitle={sessionTitle} onOpenSession={onOpenSession} />
       </div>

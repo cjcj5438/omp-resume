@@ -21,14 +21,14 @@ import {
   type ThemeMode,
 } from "../appearance";
 
-/** 各强调色的示意色块（固定值：预设身份色，不随主题变）。 */
+/** 各强调色的示意色块（与 App.css 的 accent-fill 一致：预设身份色，不随主题变）。 */
 const ACCENT_SWATCH: Record<AccentName, string> = {
-  blue: "#0a5fd0",
-  purple: "#7c3aed",
-  green: "#1a7f37",
-  orange: "#b25a00",
-  pink: "#c2337f",
-  grey: "#5f6368",
+  blue: "#175cd3",
+  purple: "#6d28d9",
+  green: "#15803d",
+  orange: "#b45309",
+  pink: "#be185d",
+  grey: "#4b5058",
 };
 
 function useAppearanceState(): { appearance: Appearance; setMode: (m: ThemeMode) => void; setAccent: (a: AccentName) => void } {

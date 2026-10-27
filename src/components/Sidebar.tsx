@@ -839,22 +839,26 @@ function Row({
         onChange={(e) => onToggleCheck(s.path, e.target.checked)}
       />
       <div className="row-main">
-        <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
-          {renaming ? (
-            <RenameInput
-              initial={alias ?? s.title}
-              busy={renameBusy}
-              onSubmit={onRenameCommit}
-              onCancel={onRenameCancel}
-            />
-          ) : alias ? (
-            <>
-              <span>{alias}</span>
-              <span className="row-title-orig">{s.title}</span>
-            </>
-          ) : (
-            s.title
-          )}
+        <div className="row-title-line">
+          <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
+            {renaming ? (
+              <RenameInput
+                initial={alias ?? s.title}
+                busy={renameBusy}
+                onSubmit={onRenameCommit}
+                onCancel={onRenameCancel}
+              />
+            ) : alias ? (
+              <>
+                <span>{alias}</span>
+                <span className="row-title-orig">{s.title}</span>
+              </>
+            ) : (
+              s.title
+            )}
+          </div>
+          {/* 状态徽章固定跟在标题后：meta 行恒为单行，所有行等高。 */}
+          <SessionBadges s={s} />
         </div>
         <div className="row-meta">
           {projectName ? (
@@ -862,10 +866,12 @@ function Row({
               {projectName}
             </span>
           ) : null}
-          <span>{formatRelativeTime(s.modifiedAt)}</span>
-          <span>{s.messageCount} 条消息</span>
-          <span>{formatSize(s.sizeBytes)}</span>
-          <SessionBadges s={s} />
+          <span
+            className="row-meta-combo"
+            title={`${s.messageCount} 条消息 · ${formatSize(s.sizeBytes)}`}
+          >
+            {formatRelativeTime(s.modifiedAt)} · {s.messageCount} 条 · {formatSize(s.sizeBytes)}
+          </span>
           {shownTags.map((t) => (
             <span key={t} className="badge badge-tag" title={`标签：${t}`}>
               {t}

@@ -101,7 +101,7 @@ export function SkillsPanel({ op, onToast, refreshToken }: SkillsPanelProps) {
           更新 registry skills
         </button>
       </div>
-      <p className="pane-note">仅更新通过 omp skill 从 registry 安装的技能；~/.agents/skills 下的技能由其他工具管理，不受影响。</p>
+      <p className="pane-hint">仅更新通过 omp skill 从 registry 安装的技能；~/.agents/skills 下的技能由其他工具管理，不受影响。</p>
       <h3 className="manage-sub">已安装技能</h3>
       {data.skills.length === 0 ? (
         <div className="pane-note">暂无技能</div>

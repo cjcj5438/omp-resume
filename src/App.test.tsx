@@ -449,7 +449,7 @@ describe("置顶", () => {
     );
     const detailToggle = screen.getByRole("button", { name: "已置顶" });
     expect(detailToggle).toHaveAttribute("aria-pressed", "true");
-    expect(detailToggle).toHaveClass("btn-accent");
+    expect(detailToggle).toHaveClass("btn-toggle-on");
     fireEvent.click(detailToggle);
     expect(storedPins().sessions).toEqual([]);
     expect(screen.getByRole("button", { name: "置顶" })).toHaveAttribute("aria-pressed", "false");
