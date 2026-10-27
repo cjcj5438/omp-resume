@@ -324,7 +324,8 @@ fn split_list(rest: &str) -> Vec<String> {
 /// `model` 支持字符串、块列表与行内 `["a","b"]` 三种写法（字符串不按逗号拆）。
 /// `tools` / `spawns` 支持块列表、逗号分隔与行内列表（`spawns: "*"` → `["*"]`）。
 pub fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
-    let mut lines = text.lines();
+    // UTF-8 BOM：YAML 要求解析器忽略文件开头的 BOM，否则首行 `---` 识别失败。
+    let mut lines = text.strip_prefix('\u{feff}').unwrap_or(text).lines();
     if lines.next()?.trim() != "---" {
         return None;
     }
@@ -421,6 +422,7 @@ const PROMPT_MAX_CHARS: usize = 64 * 1024;
 
 /// frontmatter 之后的正文；无 frontmatter 时取全文。
 fn agent_body(text: &str) -> String {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.lines();
     let starts_with_frontmatter = lines.next().is_some_and(|first| first.trim() == "---");
     let body = if starts_with_frontmatter {
@@ -1131,6 +1133,19 @@ exit 1"#,
         let plain = parse_agent_file("just text\n", "stem");
         assert_eq!(plain.name, "stem");
         assert_eq!(plain.system_prompt, "just text");
+    }
+
+    #[test]
+    fn agent_file_with_bom_parses_frontmatter() {
+        // 回归：UTF-8 BOM 不能破坏 frontmatter 识别（YAML 要求忽略 BOM）。
+        let def = parse_agent_file(
+            "\u{feff}---\nname: scout\ndescription: 调研\ntools:\n  - read\n---\n\n正文\n",
+            "stem",
+        );
+        assert_eq!(def.name, "scout");
+        assert_eq!(def.description, "调研");
+        assert_eq!(def.tools, Some(vec!["read".to_owned()]));
+        assert_eq!(def.system_prompt, "正文");
     }
 
     #[test]

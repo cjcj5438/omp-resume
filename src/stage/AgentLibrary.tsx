@@ -103,7 +103,7 @@ export function AgentLibrary({
   };
 
   const current = keys.includes(picked) ? picked : (keys[0] ?? MAIN_KEY);
-  const overridden = prefs.chars[current] !== undefined;
+  const overridden = Object.hasOwn(prefs.chars, current);
 
   return (
     <Modal
@@ -128,9 +128,7 @@ export function AgentLibrary({
                 <button
                   key={key}
                   type="button"
-                  className={
-                    key === current ? "stage-lib-row stage-lib-row-active" : "stage-lib-row"
-                  }
+                  className="stage-lib-row"
                   aria-pressed={key === current}
                   onClick={() => setPicked(key)}
                 >

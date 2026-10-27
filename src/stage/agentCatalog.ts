@@ -27,13 +27,21 @@ const EMPTY: AgentCatalog = {
 
 export function useAgentCatalog(enabled: boolean): AgentCatalog {
   const [catalog, setCatalog] = useState<AgentCatalog>(EMPTY);
-  // 加载过一次（成功或失败）就不再重复拉 omp。
-  const loaded = useRef(false);
+  // 加载过一次（成功或失败）就不再重复拉 omp；在途请求跨 enabled 开关继续。
+  const started = useRef(false);
+  const mounted = useRef(true);
+
+  // 卸载标记：只有真正的卸载才丢弃结果，enabled 开关不影响在途请求。
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (!enabled || loaded.current) return;
-    loaded.current = true;
-    let alive = true;
+    if (!enabled || started.current) return;
+    started.current = true;
     setCatalog((prev) => ({ ...prev, loading: true }));
 
     void (async () => {
@@ -42,7 +50,7 @@ export function useAgentCatalog(enabled: boolean): AgentCatalog {
         listModels(),
         listAgentDetails(),
       ]);
-      if (!alive) return;
+      if (!mounted.current) return;
       const failure = [config, models, details].find((r) => r.status === "rejected");
       setCatalog({
         loading: false,
@@ -55,10 +63,6 @@ export function useAgentCatalog(enabled: boolean): AgentCatalog {
             : null,
       });
     })();
-
-    return () => {
-      alive = false;
-    };
   }, [enabled]);
 
   return catalog;

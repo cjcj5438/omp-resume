@@ -59,7 +59,6 @@ export function StageCanvas({
   const labelRefs = useRef(new Map<string, HTMLDivElement>());
   const sceneRef = useRef<Scene | null>(null);
   const sceneKey = useRef<string>("");
-  const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
   const [zoomIdx, setZoomIdx] = useState(0);
   const [cssW, setCssW] = useState(0);
@@ -67,7 +66,6 @@ export function StageCanvas({
   const reduced = useRef(false);
 
   const zoom = ZOOMS[zoomIdx];
-  zoomRef.current = zoom;
   // 画布高度由「需要几张工位」决定（与 reconcile 同规则），不随 rAF 抖动。
   const H = sceneHeight(sceneRowsFor(stage));
 

@@ -147,6 +147,9 @@ mod tests {
 
     #[test]
     fn probe_matrix() {
+        // 短超时 + 假脚本子进程：与其他子进程测试串行，避免 macOS 上并发
+        // 冷启动挤占超时（见 `omp_cli::subprocess_test_guard`）。
+        let _processes = crate::omp_cli::subprocess_test_guard();
         let tmp = tempfile::tempdir().unwrap();
         let files = vec![PathBuf::from("/tmp/x.db")];
         let probe = |bin: &Path, timeout: Duration| holders_for_files_with(&files, bin, timeout);
@@ -160,17 +163,19 @@ mod tests {
             ProbeFailed
         );
         // （脚本，超时 /ms，期望）：exit 1 空输出 ⇒ 空闲；exit 0 可解析 ⇒ 持有者；
-        // 垃圾输出 / exit 2 / 超时 ⇒ 失败。
+        // 垃圾输出 / exit 2 / 超时 ⇒ 失败。非 slow 用例给 15s：全套件并发时 macOS
+        // 上 `sh` 冷启动可达秒级，2s 会把“启动慢”误判成用例失败；只有 slow 用例
+        // 验证超时路径（200ms ≪ `sleep 30`，语义不变）。
         let cases = [
-            ("idle", "#!/bin/sh\nexit 1\n", 2000, 0),
+            ("idle", "#!/bin/sh\nexit 1\n", 15_000, 0),
             (
                 "busy",
                 "#!/bin/sh\nprintf 'p4242\\nctest-proc\\nn/tmp/x.db\\n'\n",
-                2000,
+                15_000,
                 1,
             ),
-            ("garbled", "#!/bin/sh\necho '???'\n", 2000, -1),
-            ("err", "#!/bin/sh\nexit 2\n", 2000, -1),
+            ("garbled", "#!/bin/sh\necho '???'\n", 15_000, -1),
+            ("err", "#!/bin/sh\nexit 2\n", 15_000, -1),
             ("slow", "#!/bin/sh\nsleep 30\n", 200, -1),
         ];
         for (name, script, timeout_ms, want) in cases {
@@ -184,7 +189,7 @@ mod tests {
                     assert_eq!(holders[0].command, "test-proc");
                 }
                 (Err(ProbeFailed), -1) => {
-                    assert!(start.elapsed() < Duration::from_secs(10), "{name}")
+                    assert!(start.elapsed() < Duration::from_secs(20), "{name}")
                 }
                 (got, _) => panic!("{name}: unexpected {got:?}"),
             }

@@ -86,11 +86,10 @@ export function useStagePoll(path: string | null, intervalMs = STAGE_INTERVAL_MS
     const stop = startChain(async () => {
       try {
         const data = await getAgentStage(path);
-        if (alive) {
-          failures.current = 0;
-          setStage(data);
-          setError(null);
-        }
+        if (!alive) return intervalMs;
+        failures.current = 0;
+        setStage(data);
+        setError(null);
         return data.inUse ? intervalMs : ENDED_INTERVAL_MS;
       } catch (e: unknown) {
         if (alive) {

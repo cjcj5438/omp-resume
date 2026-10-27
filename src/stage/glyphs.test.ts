@@ -51,6 +51,13 @@ describe("glyphs", () => {
     expect(toolGlyph("web_search", "tool")).toBe("globe");
     expect(toolGlyph("mystery_tool", "tool")).toBe("gear");
   });
+  test("原型链成员名不命中继承属性，未知工具给 gear", () => {
+    expect(toolGlyph("constructor", null)).toBe("gear");
+    expect(toolGlyph("toString", null)).toBe("gear");
+    expect(toolGlyph("hasOwnProperty", null)).toBe("gear");
+    expect(toolGlyph("__proto__", null)).toBe("gear");
+    expect(toolGlyph("constructor", "thinking")).toBe("gear");
+  });
 
   test("无工具时按活动种类，都缺省为 null", () => {
     expect(toolGlyph(null, "thinking")).toBe("dots");

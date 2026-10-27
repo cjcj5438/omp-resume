@@ -96,6 +96,7 @@
 .stage-dot-working { background: var(--stage-run); }
 .stage-dot-waiting { background: var(--stage-queue); }
 .stage-dot-stuck { background: var(--stage-fail); }
+.stage-dot-idle { background: var(--stage-idle); }
 
 .stage-main {
   min-width: 0;

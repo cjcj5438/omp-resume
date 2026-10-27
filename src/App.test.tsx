@@ -622,6 +622,51 @@ describe("记忆库跳转来源会话", () => {
   });
 });
 
+describe("舞台内点侧栏会话", () => {
+  it("重复点击已选中的会话行也会切换舞台目标（不离开舞台）", async () => {
+    // 舞台画布需要 ResizeObserver 与 canvas（jsdom 没有）：只验证切换逻辑，不画画布。
+    globalThis.ResizeObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    } as unknown as typeof ResizeObserver;
+    HTMLCanvasElement.prototype.getContext = () => null;
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S1);
+
+    // 回放真实复现：先选中 S1（行高亮），再打开舞台。
+    // mock 的「运行中」是 sessions[0]（= S1），所以舞台会先落在 S1 上。
+    fireEvent.click(rowOf(S1));
+    fireEvent.click(screen.getByRole("button", { name: "舞台" }));
+    await screen.findByRole("group", { name: "角色卡片" });
+    const headTitle = () => document.querySelector(".stage-head-title")?.textContent;
+    await waitFor(() => {
+      expect(headTitle()).toBe(S1);
+    });
+    // 侧栏点 S2：舞台跟过去（selectedPath 变化，旧代码也能处理）。
+    fireEvent.click(rowOf(S2));
+    await waitFor(() => {
+      expect(headTitle()).toBe(S2);
+    });
+    // 舞台内点左栏「运行中」的 S1：舞台目标切回 S1，但侧栏选中行仍是 S2。
+    const rail = screen.getByRole("complementary", { name: "会话选择" });
+    fireEvent.click(within(rail).getByRole("button", { name: new RegExp(S1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }));
+    await waitFor(() => {
+      expect(headTitle()).toBe(S1);
+    });
+    // 关键：侧栏再点一次 S2 ——selectedPath 从头到尾都是 S2（React 状态不变，
+    // 旧的 prevSelected 方案收不到任何事件），但舞台必须切回 S2。
+    fireEvent.click(rowOf(S2));
+    await waitFor(() => {
+      expect(headTitle()).toBe(S2);
+    });
+    // 全程不离开舞台。
+    expect(screen.getByRole("heading", { name: "运行中" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent 库" })).toBeInTheDocument();
+  });
+});
+
 describe("并发 load 与 toast 上限", () => {
   it("删除时与进行中的 load 并发，删除后列表反映删除", async () => {
     const gate = Promise.withResolvers<ListSessionsResult>();

@@ -44,7 +44,9 @@ export function parseStagePrefs(data: unknown): StagePrefs {
   }
   const chars: Record<string, CharacterId> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (key !== "" && hasCharacter(value)) chars[key] = value;
+    // "__proto__" 经普通赋值写不进自有属性（会被原型 setter 吞掉），直接丢弃。
+    if (key === "" || key === "__proto__") continue;
+    if (hasCharacter(value)) chars[key] = value;
   }
   return { chars };
 }
@@ -79,9 +81,14 @@ export function agentKeyOf(actor: Pick<StageActor, "kind" | "agent">): string {
   return actor.agent ?? "task";
 }
 
-/** agent 键 → 形象：用户偏好 → 内置默认 → 按名字哈希兜底。 */
+/** agent 键 → 形象：用户偏好 → 内置默认 → 按名字哈希兜底（只读自有属性）。 */
 export function charForKey(prefs: StagePrefs, key: string): CharacterId {
-  const picked = prefs.chars[key] ?? DEFAULT_AGENT_CHARS[key];
+  // agent 名来自用户 md 文件，"constructor" 等原型成员名必须走哈希兜底，不能命中继承成员。
+  const picked = Object.hasOwn(prefs.chars, key)
+    ? prefs.chars[key]
+    : Object.hasOwn(DEFAULT_AGENT_CHARS, key)
+      ? DEFAULT_AGENT_CHARS[key]
+      : undefined;
   if (picked !== undefined && hasCharacter(picked)) return picked;
   const fallback = GUEST_POOL[fnv1a(key) % GUEST_POOL.length];
   return hasCharacter(fallback) ? fallback : "coder";

@@ -109,11 +109,11 @@ struct Discovered {
     /// 相对附件目录的 id（去掉 `.jsonl`，`/` 分隔）。
     id: String,
     path: PathBuf,
-    /// 相对附件目录的层级深度（深度 1 = 直接子文件）。
+    /// 相对附件目录的嵌套层数（0 = 直接子文件）。
     depth: usize,
 }
 
-/// 收集附件目录中合格的文件：深度 1 的全部、深度 ≥2 的非 advisor。
+/// 收集附件目录中合格的文件：直接子文件全部、嵌套文件中的非 advisor。
 ///
 /// 每个文件都 canonicalize 并校验前缀（照 `usage/cache.rs`）：逃出会话根目录或
 /// 附件目录 → `OUTSIDE_ROOT`；符号链接已在 `nested_files` 内被跳过。
@@ -140,7 +140,7 @@ fn discover(cfg: &Config, attach: &Path) -> AppResult<(Vec<Discovered>, u32)> {
         };
         let depth = rel.components().count().saturating_sub(1);
         let stem = rel.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-        // 嵌套 advisor（深度 ≥2 的 `__advisor.jsonl`）一律忽略。
+        // 嵌套 advisor（子目录里的 `__advisor.jsonl`）一律忽略。
         if depth >= 1 && stem == "__advisor" {
             continue;
         }
@@ -229,8 +229,12 @@ pub fn build_stage(
     } else {
         (Vec::new(), 0)
     };
-    // 本轮目录列表之外的文件项丢弃。
-    let live: Vec<PathBuf> = discovered.iter().map(|d| d.path.clone()).collect();
+    // 本轮目录列表之外的文件项丢弃（顶层游标保留，避免每轮全量重读主会话）。
+    let live: Vec<PathBuf> = discovered
+        .iter()
+        .map(|d| d.path.clone())
+        .chain(std::iter::once(top.to_path_buf()))
+        .collect();
     slot.files.retain(|p, _| live.contains(p));
 
     // 子代理角色（借用 slot 期间就建好）。
@@ -407,7 +411,7 @@ fn build_actor(
     // worker 在父会话 lifecycle 里的当前动作（子代理/advisor 恒 None）。
     life: Option<&Life>,
     parent_in_use: bool,
-    // 派发它的那一层的 `spawn_info`：depth 1 来自主会话，depth ≥2 来自祖师代理。
+    // 派发它的那一层的 `spawn_info`：直接子文件来自主会话，嵌套文件来自父代理。
     spawn: Option<&HashMap<String, SpawnInfo>>,
     now_secs: i64,
 ) -> StageActor {

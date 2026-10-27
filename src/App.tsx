@@ -58,6 +58,8 @@ function App() {
   const [query, setQuery] = useState("");
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // 舞台内点侧栏会话：即使 path 没变（重复点同一行），seq 递增也会让 StageView 收到切换请求。
+  const [stageTarget, setStageTarget] = useState<{ path: string; seq: number } | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<DeleteTarget[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
@@ -421,6 +423,7 @@ function App() {
         selectedPath={selectedPath}
         onSelect={(path) => {
           if (view !== "stage") showSessions();
+          else setStageTarget((prev) => ({ path, seq: (prev?.seq ?? -1) + 1 }));
           setSelectedPath(path);
         }}
         pins={pins}
@@ -457,6 +460,7 @@ function App() {
         <StageView
           onBack={goBack}
           selectedPath={selectedPath}
+          stageTarget={stageTarget}
           selectedTitle={
             selectedPath === null
               ? null

@@ -848,6 +848,8 @@ mod tests {
     #[test]
     fn bank_remove_manifest_failure_leaves_bank_untouched() {
         let tmp = tempfile::tempdir().unwrap();
+        // 假 lsof 子进程 + 门禁超时：与其他子进程测试串行（见 `omp_cli::subprocess_test_guard`）。
+        let _processes = crate::omp_cli::subprocess_test_guard();
         let banks = tmp.path().join("banks");
         let bank_dir = banks.join("b-1");
         std::fs::create_dir_all(&bank_dir).unwrap();

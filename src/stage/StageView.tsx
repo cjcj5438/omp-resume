@@ -23,6 +23,8 @@ import "./Stage.css";
 export interface StageViewProps {
   onBack: () => void;
   selectedPath: string | null;
+  /** App 转发的侧栏点击请求（path 相同也可能需要切换，seq 区分每次点击）。 */
+  stageTarget: { path: string; seq: number } | null;
   selectedTitle: string | null;
   onOpenSession: (path: string) => void;
 }
@@ -48,7 +50,7 @@ function mmss(totalSecs: number): string {
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function StageView({ onBack, selectedPath, selectedTitle, onOpenSession }: StageViewProps) {
+export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, onOpenSession }: StageViewProps) {
   const running = useRunningSessions();
   const [stagePath, setStagePath] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
@@ -59,6 +61,9 @@ export function StageView({ onBack, selectedPath, selectedTitle, onOpenSession }
     typeof document === "undefined" ? undefined : document.documentElement.dataset.theme,
   );
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
+  // App 的 stageTarget 从不清空：挂载时记住当时的 seq，只消费挂载后发出的新请求，
+  // 否则上次进舞台的旧请求会在挂载时重放，覆盖默认选择。
+  const mountSeq = useRef(stageTarget?.seq ?? -1);
 
   // 默认选择：第一个运行中会话 → App 传入的选中会话 → 都没有则空态。
   // 空态下迟到的运行中会话也会被采纳（否则用户得退回再进来一次）。
@@ -71,15 +76,12 @@ export function StageView({ onBack, selectedPath, selectedTitle, onOpenSession }
   const { stage, error } = useStagePoll(stagePath);
   const catalog = useAgentCatalog(libraryOpen || selectedId !== null);
 
-  // 舞台内点侧栏会话（App 只改 selectedPath）：舞台目标跟着切，不离开舞台。
-  const prevSelected = useRef(selectedPath);
+  // 舞台内点侧栏会话：每次点击都带 seq，即使 path 没变也切换（不离开舞台）。
   useEffect(() => {
-    if (prevSelected.current === selectedPath) return;
-    prevSelected.current = selectedPath;
-    if (selectedPath === null) return;
-    setStagePath(selectedPath);
+    if (stageTarget === null || stageTarget.seq <= mountSeq.current) return;
+    setStagePath(stageTarget.path);
     setSelectedId(null);
-  }, [selectedPath]);
+  }, [stageTarget]);
 
   // 主题变化（外观面板切换）时重取调色板。
   useEffect(() => {

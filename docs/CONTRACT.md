@@ -1982,10 +1982,13 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 陈旧的 `exit` 不能把正在运行的角色显示成已完成。`title` / `title_change` /
 `model_usage`（心跳）不算活动。
 
-`Subagent`/`Advisor`：文件不存在→`queued`；`exit.kind == normal`→`done`；
-其它 exit→`failed`；**无 exit、无未配对工具且最后 stopReason 为 `error`/`aborted`→
-`failed`（终态，不随父会话是否在用而变化；例外：`Advisor` 的 `aborted` 是「顾问被重置」
-的正常机制 → `done`）**；父会话不在用且没有上述终态→`lost`「会话已退出」；
+`Subagent`/`Advisor`（无 action 时的 worker 文件不存在分支也走这里）：文件不存在→
+`queued`；`exit.kind == normal`→`done`；其它 exit→`failed`；**无 exit、无未配对工具
+且最后 stopReason 为 `error`/`aborted`→`failed`（终态，不随父会话是否在用而变化；
+例外：`Advisor` 的 `aborted` 是「顾问被重置」的正常机制 → `done`）**；父会话不在用
+且无未配对工具、最后一条 assistant 已 `stop` 或无 assistant 记录 → `done`（真实
+样本里 advisor 与子代理常缺 `session_exit`，直接判 `lost` 会把已完成的历史会话
+显示成全员异常）；父会话不在用且上述终态/干净收尾都不满足 → `lost`「会话已退出」；
 无 exit 且无未配对工具、最后一条 assistant 已 `stop`、静默超过 `ORPHAN_DONE_SECS`
 （120s）→`done`；其余 `running`。
 
@@ -2002,12 +2005,15 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
 ### 23.4 / 4.57 `get_agent_stage { path } -> AgentStage`
 
 `path` 经 §6 校验（仅顶层文件）。返回 `actors[0]` 恒为主会话（`id="main"`，
-`name="管理员"`），其余按 `startedAt` 升序（缺省排后）、再按 `id`。`current` 取
-「最新未配对工具」，否则（仍在运行且最后一条 assistant 未收尾）为 `thinking`。
-`cost` = Σ assistant `usage.cost.total`（不含 `model_usage`，与 §12.2 口径一致）；
-`contextTokens` = 最后一条 assistant 的 `usage.totalTokens`（缺失时四项相加；
+`name="管理员"`），其余按 `startedAt` 升序（缺省排后）、再按 `id`。`current` 仅对
+`running`/`idle` 的角色（Main 是 `state != done`）计算：取「最新未配对工具」
+（按 `tool_execution_start` 的到达时间），否则（`running` 且最后一条 assistant
+未收尾、`stopReason` 不是 `stop`）为 `thinking`。`cost` = Σ assistant
+`usage.cost.total`（不含 `model_usage`，与 §12.2 口径一致）；
+`contextTokens` = 最近一条非零的 assistant `usage.totalTokens`（缺失时四项相加；
 合计为 0 的出错轮次不覆盖已知值）。`current` 对 `done`/`failed`/`lost` 一律为
-`null`——已收尾的角色不再显示过期的当前活动。
+`null`——已收尾的角色不再显示过期的当前活动（例外：`stuck` 主会话仍在用，
+`state=failed` 但照常显示其未配对工具）。
 顶层 header 非 v3 → `UNSUPPORTED_FORMAT`；文件不存在 → `NOT_FOUND`。
 
 ### 23.5 / 4.58 `list_running_sessions() -> RunningSession[]`
@@ -2018,10 +2024,12 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
 
 ### 23.6 / 4.59 `list_agent_details() -> AgentDetail[]`（只读）
 
-与 `get_model_config` 同源同序（内置 unpack → `~/.omp/agent/agents/*.md`，同名用户文件
-覆盖默认值但 `source` 仍为 `builtin`），并多读三个字段：`tools`（`null` = 未声明 →
-omp 默认工具集；`[]` = 无工具）、`spawns`（`null` = 未声明；`["*"]` = 任意 agent）、
-`systemPrompt`（frontmatter 之后的正文，超过 64K 字符截断）。项目级 `.omp/agents` 不读。
+与 `get_model_config` 同源同序（用户文件缺省 → 内置 unpack（§16.4 顺序），同名用户文件
+覆盖默认值但 `source` 仍为 `builtin`；同名匹配按精确名称，大小写不同视为两个 agent），
+并多读三个字段：`tools`（`null` = 未声明 → omp 默认工具集；`[]` = 无工具）、
+`spawns`（`null` = 未声明；`["*"]` = 任意 agent）、`systemPrompt`（frontmatter
+之后的正文，首尾空白已除，超过 64K 字符截断并追加截断标记；带 frontmatter 但无
+正文 → 空串）。项目级 `.omp/agents` 不读。
 **绝不写 omp 配置**：本命令与 `get_model_config` 共用内置定义缓存，不调用
 `set_raw_value` / `update_model_config` / `update_model_spec` / `mcp_*_save`。
 内置定义来自 `omp agents unpack --dir <临时目录> --json`（临时目录用完即删）。

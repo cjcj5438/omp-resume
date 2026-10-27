@@ -1026,3 +1026,23 @@ fn iso_round_trip() {
         "2026-10-21T01:34:38.305Z"
     );
 }
+
+#[test]
+fn build_stage_keeps_top_cursor_across_rounds() {
+    // 回归：顶层游标必须跨轮保留，否则每轮全量重读主会话。
+    let (_root, cfg, top) = fixture();
+    let cache = StageCache::default();
+    let now = Utc.with_ymd_and_hms(2026, 10, 21, 2, 0, 0).unwrap();
+    let probe = |_: &str| Probe {
+        in_use: true,
+        probe_ok: true,
+    };
+    build_stage(&cfg, &cache, &top, None, &probe, now).unwrap();
+    build_stage(&cfg, &cache, &top, None, &probe, now).unwrap();
+    let sessions = cache.0.lock().unwrap();
+    let slot = sessions.iter().find(|s| s.top == top).unwrap();
+    assert!(
+        slot.files.contains_key(&top),
+        "顶层游标被丢弃：下轮会全量重读主会话"
+    );
+}

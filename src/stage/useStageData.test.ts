@@ -120,4 +120,30 @@ describe("useStagePoll", () => {
     });
     expect(result.current.error?.message).toBe("读取失败");
   });
+
+  test("旧 path 的迟到响应不覆盖新 path 的数据", async () => {
+    const oldGate = Promise.withResolvers<AgentStage>();
+    const newStage = { ...stage(true), path: "/mock/other.jsonl" };
+    getAgentStage.mockImplementationOnce(() => oldGate.promise);
+    getAgentStage.mockResolvedValue(newStage);
+
+    const { result, rerender } = renderHook(
+      ({ path }: { path: string | null }) => useStagePoll(path),
+      { initialProps: { path: "/mock/s.jsonl" as string | null } },
+    );
+    rerender({ path: "/mock/other.jsonl" });
+    // 新 path 的首轮已返回。
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.stage?.path).toBe("/mock/other.jsonl");
+    // 旧 path 的迟到响应落地：不得覆盖。
+    await act(async () => {
+      oldGate.resolve({ ...stage(true), path: "/mock/s.jsonl" });
+    });
+    expect(result.current.stage?.path).toBe("/mock/other.jsonl");
+  });
 });

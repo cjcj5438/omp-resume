@@ -113,7 +113,7 @@ export const GLYPHS: Record<GlyphName, string[]> = {
   ],
 };
 
-/** 工具名 → 图标（前缀匹配到已知分组，未知工具给 `gear`）。 */
+/** 工具名 → 图标（精确匹配到已知分组，未知工具给 `gear`）。 */
 const TOOL_GROUPS: Record<string, GlyphName> = {
   read: "magnifier",
   grep: "magnifier",
@@ -145,7 +145,7 @@ const TOOL_GROUPS: Record<string, GlyphName> = {
  */
 export function toolGlyph(tool: string | null, kind: string | null): GlyphName | null {
   if (tool !== null) {
-    const name = TOOL_GROUPS[tool];
+    const name = Object.hasOwn(TOOL_GROUPS, tool) ? TOOL_GROUPS[tool] : undefined;
     if (name !== undefined) return name;
     return "gear";
   }

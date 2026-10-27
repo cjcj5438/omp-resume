@@ -9,6 +9,7 @@ import {
   charFor,
   charForKey,
   defaultStagePrefs,
+  fnv1a,
   loadStagePrefs,
   parseStagePrefs,
   saveStagePrefs,
@@ -91,5 +92,42 @@ describe("stage prefs", () => {
     expect(charFor(prefs, { kind: "subagent", agent: "scout" })).toBe("ops");
     expect(charFor(prefs, { kind: "main", agent: null })).toBe("admin");
     expect(charFor(prefs, { kind: "subagent", agent: null })).toBe("coder");
+  });
+
+  test("原型键名走哈希兜底，不读继承成员", () => {
+    const prefs = defaultStagePrefs();
+    for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      const got = charForKey(prefs, key);
+      expect(GUEST_POOL).toContain(got);
+      expect(got).toBe(GUEST_POOL[fnv1a(key) % GUEST_POOL.length]);
+    }
+  });
+
+  test("原型键名的用户覆盖仍然生效", () => {
+    const prefs = { chars: { constructor: "ops" as const } };
+    expect(charForKey(prefs, "constructor")).toBe("ops");
+  });
+
+  test("parseStagePrefs 丢弃 __proto__ 且不污染原型", () => {
+    const crafted: unknown = JSON.parse('{"chars": {"__proto__": "ops", "constructor": "ops"}}');
+    const got = parseStagePrefs(crafted);
+    expect(got.chars).toEqual({ constructor: "ops" });
+    expect(Object.hasOwn(got.chars, "__proto__")).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  test("原型污染不影响形象选择（只读自有属性）", () => {
+    const candidates = ["zzz-audit-1", "zzz-audit-2", "zzz-audit-3", "zzz-audit-4", "zzz-audit-5"];
+    const key = candidates.find((k) => GUEST_POOL[fnv1a(k) % GUEST_POOL.length] !== "ops");
+    expect(key).toBeDefined();
+    if (key === undefined) return;
+    const proto = Object.prototype as Record<string, unknown>;
+    proto[key] = "ops";
+    try {
+      expect(charForKey(defaultStagePrefs(), key)).toBe(GUEST_POOL[fnv1a(key) % GUEST_POOL.length]);
+    } finally {
+      delete proto[key];
+    }
+    expect(Object.hasOwn(Object.prototype, key)).toBe(false);
   });
 });
