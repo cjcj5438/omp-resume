@@ -30,6 +30,9 @@ pub const ITEM_TOGGLE_DOCK: &str = "toggle-dock";
 pub const ITEM_QUIT: &str = "quit";
 pub const ITEM_MORE: &str = "more";
 pub const SESSION_PREFIX: &str = "session:";
+/// 「模式」子菜单项 id 前缀。
+pub const MODE_PREFIX: &str = "mode:";
+pub const ITEM_MODES: &str = "modes";
 
 /// 托盘共享状态（Tauri 全局 `manage`，跨线程）。
 pub struct Shared {
@@ -48,6 +51,8 @@ pub struct Shared {
     /// 行文本更新器（会话 id → `set_text` 闭包）：仅时长变化时就地更新，
     /// 结构性重建时整体替换。
     pub row_updaters: Mutex<RowUpdaters>,
+    /// 模型模式列表（`None` = 尚未读到 / 读取失败）。
+    pub modes: Mutex<Option<Vec<super::menu::ModeEntry>>>,
 }
 
 impl Shared {
@@ -62,6 +67,7 @@ impl Shared {
             quitting: AtomicBool::new(false),
             data_dir,
             row_updaters: Mutex::new(Vec::new()),
+            modes: Mutex::new(None),
         }
     }
 }
@@ -114,6 +120,40 @@ pub fn build_menu<R: Runtime>(
             .collect();
         let more = Submenu::with_id_and_items(app, ITEM_MORE, "更多…", true, &refs)?;
         menu.append(&more)?;
+    }
+    if let Some(modes) = &model.modes {
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+        let active = modes.iter().find(|m| m.active).map(|m| m.name.as_str());
+        let title = format!("模式：{}", active.unwrap_or("自定义"));
+        if modes.is_empty() {
+            let empty = MenuItem::new(
+                app,
+                "还没有模式（在主窗口侧栏底部保存）",
+                false,
+                None::<&str>,
+            )?;
+            let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&empty];
+            let sub = Submenu::with_id_and_items(app, ITEM_MODES, title, true, &refs)?;
+            menu.append(&sub)?;
+        } else {
+            let mut built: Vec<CheckMenuItem<R>> = Vec::new();
+            for mode in modes {
+                built.push(CheckMenuItem::with_id(
+                    app,
+                    format!("{MODE_PREFIX}{}", mode.name),
+                    menu_text(&mode.name),
+                    mode.enabled,
+                    mode.active,
+                    None::<&str>,
+                )?);
+            }
+            let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = built
+                .iter()
+                .map(|b| b as &dyn tauri::menu::IsMenuItem<R>)
+                .collect();
+            let sub = Submenu::with_id_and_items(app, ITEM_MODES, title, true, &refs)?;
+            menu.append(&sub)?;
+        }
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(
@@ -170,6 +210,10 @@ pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result
 /// 菜单点击事件路由（注册到 `Builder::on_menu_event`）。
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) {
     let id = event.id().as_ref().to_string();
+    if let Some(name) = id.strip_prefix(MODE_PREFIX) {
+        switch_mode_from_tray(app, name.to_string());
+        return;
+    }
     if let Some(session_id) = id.strip_prefix(SESSION_PREFIX) {
         focus_session(app, session_id.to_string());
         return;
@@ -251,6 +295,71 @@ fn toggle_setting<R: Runtime>(app: &AppHandle<R>, notify: bool) {
         model.notify_on = notify_on;
         model.dock_on = dock_on;
         refresh_tray(app, &shared, &model);
+    }
+}
+
+/// 从托盘切换模型模式（后台线程；结果用系统通知反馈，勾选态回同步）。
+fn switch_mode_from_tray<R: Runtime>(app: &AppHandle<R>, name: String) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        use crate::omp_cli::OmpBusy;
+        let Some(bin) = crate::omp_cli::resolve_omp() else {
+            send_plain(&app, "切换模式失败", "未找到 omp");
+            return;
+        };
+        let busy = app.state::<OmpBusy>();
+        match crate::model_presets::switch_preset_impl(&bin, &busy, &name, None) {
+            Ok(state) => {
+                publish_modes(&app, &state);
+                send_plain(&app, "已切换模式", &format!("当前模式：{name}"));
+            }
+            Err(e) => {
+                send_plain(&app, "切换模式失败", &e.message);
+                // 尽力把勾选态恢复成真实值。
+                if let Ok(state) = crate::model_presets::read_presets_state(&bin) {
+                    publish_modes(&app, &state);
+                }
+            }
+        }
+    });
+}
+
+/// 发布模式列表到托盘（与缓存相同则直接返回；否则按缓存模型重建菜单）。
+pub fn publish_modes<R: Runtime>(app: &AppHandle<R>, state: &crate::model::ModelPresetsState) {
+    let entries = super::menu::mode_entries(state);
+    let Some(shared) = app.try_state::<Shared>() else {
+        return;
+    };
+    {
+        let Ok(mut guard) = shared.modes.lock() else {
+            return;
+        };
+        if guard.as_ref() == Some(&entries) {
+            return;
+        }
+        *guard = Some(entries.clone());
+    }
+    let cached = shared.last_menu.lock().ok().and_then(|g| g.clone());
+    if let Some(mut model) = cached {
+        model.modes = Some(entries);
+        refresh_tray(app, &shared, &model);
+    }
+}
+
+/// 模式列表后台刷新（30 秒一轮；首轮立即执行，失败保留旧值）。
+pub fn spawn_modes_refresher<R: Runtime + 'static>(app: AppHandle<R>) {
+    let spawned = std::thread::Builder::new()
+        .name("menubar-modes".to_string())
+        .spawn(move || loop {
+            if let Some(bin) = crate::omp_cli::resolve_omp() {
+                if let Ok(state) = crate::model_presets::read_presets_state(&bin) {
+                    publish_modes(&app, &state);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        });
+    if let Err(e) = spawned {
+        eprintln!("menubar: 模式刷新线程启动失败：{e}");
     }
 }
 
@@ -476,6 +585,10 @@ pub fn spawn_poller<R: Runtime + 'static>(
                         }
                         // 仅时长文字变化 → 就地 set_text（不关掉用户展开着的菜单）；
                         // 结构性变化（会话增减/状态/排序/标题/勾选）→ 整体重建。
+                        let mut model = model;
+                        if let Ok(guard) = shared.modes.lock() {
+                            model.modes = guard.clone();
+                        }
                         let decision = shared
                             .last_menu
                             .lock()

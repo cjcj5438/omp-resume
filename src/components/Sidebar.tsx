@@ -25,6 +25,7 @@ import {
 import { SessionBadges } from "./ui";
 import { AppearancePanel } from "./AppearancePanel";
 import type { ToastFn } from "./useOmpOp";
+import { ModePicker } from "./ModePicker";
 import { NewTagDialog } from "./NewTagDialog";
 import "./Sidebar.css";
 
@@ -683,8 +684,7 @@ export function Sidebar({
           <span className="footer-count">
             共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
           </span>
-          {/* SHIPB-TMP: ModePicker 接入属 feat(modes)，菜单提交暂隐 */}
-          {/* <ModePicker onToast={onToast} /> */}
+          <ModePicker onToast={onToast} />
           <AppearancePanel />
         </div>
         {ompVersion !== null ? (

@@ -1,0 +1,162 @@
+/* 侧栏底部「模型模式」弹层：与外观面板同形态（向上展开）。 */
+.mode-wrap {
+  position: relative;
+}
+
+.mode-btn {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 侧栏只有 340px 宽，弹层按窗口左下角定位：不会越过侧栏边界被裁掉。 */
+.mode-pop {
+  position: fixed;
+  left: 8px;
+  bottom: 64px;
+  z-index: var(--z-popover);
+  width: 324px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mode-pop-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mode-note {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.mode-note-warn {
+  color: var(--warning, #b25a00);
+}
+
+.mode-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--danger, #c62828);
+}
+
+.mode-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mode-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.mode-item {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mode-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.mode-item-active {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+.mode-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.mode-item-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.mode-check {
+  color: var(--accent);
+}
+
+.mode-item-sub {
+  max-width: 100%;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mode-more {
+  align-self: center;
+  padding: 2px 6px;
+}
+
+.mode-save {
+  align-self: flex-start;
+}
+
+.mode-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode-input {
+  font: inherit;
+  font-size: var(--fs-md);
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input, var(--bg));
+  color: var(--text);
+}
+
+.mode-input[aria-invalid="true"] {
+  border-color: var(--danger, #c62828);
+}
+
+.mode-form-error {
+  font-size: var(--fs-xs);
+  color: var(--danger, #c62828);
+}
+
+.mode-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}

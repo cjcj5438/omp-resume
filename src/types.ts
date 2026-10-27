@@ -579,6 +579,33 @@ export interface UpdateModelConfigResult {
   value: unknown;
 }
 
+// 模型模式（omp `modelPresets`）：整套模型配置的快照与切换。
+
+/** 当前生效的三段配置；切换时作为 `expected` 防覆盖外部修改。 */
+export interface ModelPresetSnapshot {
+  modelRoles: Record<string, unknown>;
+  agentModelOverrides: Record<string, unknown>;
+  defaultThinkingLevel: string | null;
+}
+
+/** 一条模式；`invalidReason` 非空表示格式无效（可删除，不可切换）。 */
+export interface ModelPreset {
+  name: string;
+  modelRoles: Record<string, unknown>;
+  defaultThinkingLevel: string | null;
+  agentModelOverrides: Record<string, unknown> | null;
+  invalidReason: string | null;
+}
+
+/** `list_model_presets` 返回。 */
+export interface ModelPresetsState {
+  /** 已按名称排序（先比小写，再比原文）。 */
+  presets: ModelPreset[];
+  active: string | null;
+  current: ModelPresetSnapshot;
+  rawPresets: unknown;
+}
+
 // 模型规格编辑（CONTRACT §21）：models.yml 非凭据字段的读-改-写。
 
 /** 单个模型的规格快照：只含非凭据字段；`selector` 为 `provider/id`。 */

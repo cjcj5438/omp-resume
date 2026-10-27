@@ -31,6 +31,8 @@ import type {
   ModelConfig,
   ModelInfo,
   ModelPerf,
+  ModelPresetsState,
+  ModelPresetSnapshot,
   ModelSpecPatchRequest,
   ModelSpecUpdateResult,
   ModelSpecsResult,
@@ -343,6 +345,43 @@ export function updateModelConfig(req: {
     key: req.key,
     value: req.value,
     expected: req.expected,
+  });
+}
+
+/** 模型模式列表（omp `modelPresets`）+ 当前激活项 + 两份 expected。 */
+export function listModelPresets(): Promise<ModelPresetsState> {
+  return call("list_model_presets");
+}
+
+/** 把当前模型配置存为模式（`overwrite` 为 true 时覆盖同名）。 */
+export function saveModelPreset(req: {
+  name: string;
+  overwrite: boolean;
+  expectedPresets: unknown;
+}): Promise<ModelPresetsState> {
+  return call("save_model_preset", {
+    name: req.name,
+    overwrite: req.overwrite,
+    expectedPresets: req.expectedPresets,
+  });
+}
+
+/** 切换到某个模式；`expected` 与后端当前值不一致时报 `CONFLICT`。 */
+export function switchModelPreset(req: {
+  name: string;
+  expected: ModelPresetSnapshot;
+}): Promise<ModelPresetsState> {
+  return call("switch_model_preset", { name: req.name, expected: req.expected });
+}
+
+/** 删除某个模式（只删保存记录，不改当前配置）。 */
+export function deleteModelPreset(req: {
+  name: string;
+  expectedPresets: unknown;
+}): Promise<ModelPresetsState> {
+  return call("delete_model_preset", {
+    name: req.name,
+    expectedPresets: req.expectedPresets,
   });
 }
 

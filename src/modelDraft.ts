@@ -12,6 +12,7 @@ import { getModelConfig, getModelSpecs, listModels, normalizeError, updateModelC
 import { useAlive, type ToastFn } from "./components/useOmpOp";
 import { errorText } from "./format";
 import { deepEqual, rawValueText } from "./modelConfig";
+import { emitModelConfigChanged, onModelConfigChanged } from "./modelPresets";
 import type { ModelConfig, ModelInfo } from "./types";
 import {
   SAVE_KEY_LABELS,
@@ -331,6 +332,24 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
     void loadConfig();
   }, [loadConfig]);
 
+  // 模式切换会整体改写 modelRoles / agentModelOverrides / thinking：有草稿时只换基线
+  // （草稿保留，用户改动不丢），无草稿时整页重载。
+  const dirtyRef = useRef(false);
+  dirtyRef.current =
+    config !== null &&
+    draft !== null &&
+    Object.values(deriveDirty(config, draft)).some(Boolean);
+
+  useEffect(
+    () =>
+      onModelConfigChanged((origin) => {
+        if (origin === "presets") {
+          void (dirtyRef.current ? reloadBaseline() : loadConfig());
+        }
+      }),
+    [loadConfig, reloadBaseline],
+  );
+
   // 非强制校验互斥：窗口聚焦与挂载同时触发时只跑一次，避免重复启动慢速 omp。
   const modelsBusy = useRef(false);
 
@@ -395,6 +414,8 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
         saved.push(pairLabel(pair.key));
       }
       await loadConfig();
+      // 草稿写出的是同一份 omp 配置：通知模式弹层重拉，避免它持过期基线。
+      if (saved.length > 0) emitModelConfigChanged("draft");
       onToast(saved.length > 0 ? `已保存（${saved.join("、")}）` : "没有变化", "info");
     } catch (e: unknown) {
       // 失败只重读基线、草稿保留：已写成功的 key 只清其切片的 touched，重试只写失败的 key。

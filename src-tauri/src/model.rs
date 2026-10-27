@@ -839,6 +839,47 @@ pub struct UpdateModelConfigResult {
 }
 
 // ---------------------------------------------------------------------------
+// 模型模式（omp `modelPresets`）
+// ---------------------------------------------------------------------------
+
+/// 当前生效的三段配置快照：切换模式时作为 `expected` 防止覆盖外部修改。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPresetSnapshot {
+    /// 当前 `modelRoles` 原值（对象）。
+    pub model_roles: serde_json::Value,
+    /// 当前 `task.agentModelOverrides` 原值（对象）。
+    pub agent_model_overrides: serde_json::Value,
+    /// 当前 `defaultThinkingLevel`；读不到为 None。
+    pub default_thinking_level: Option<String>,
+}
+
+/// 一条模式。`invalid_reason` 为 Some 表示条目格式无效：可删除但不可切换。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPreset {
+    pub name: String,
+    pub model_roles: serde_json::Map<String, serde_json::Value>,
+    pub default_thinking_level: Option<String>,
+    pub agent_model_overrides: Option<serde_json::Map<String, serde_json::Value>>,
+    pub invalid_reason: Option<String>,
+}
+
+/// `list_model_presets` 返回：预设列表 + 当前激活项 + 两份 expected。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPresetsState {
+    /// 按名称排序：先比小写，再比原文。
+    pub presets: Vec<ModelPreset>,
+    /// 当前配置匹配到的模式名。
+    pub active: Option<String>,
+    /// 切换时的 expected。
+    pub current: ModelPresetSnapshot,
+    /// 保存/删除时的 expected（未设置时为 `{}`）。
+    pub raw_presets: serde_json::Value,
+}
+
+// ---------------------------------------------------------------------------
 // Agent 舞台（CONTRACT §23）
 // ---------------------------------------------------------------------------
 

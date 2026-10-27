@@ -78,6 +78,16 @@ pub struct MenuModel {
     pub dock_on: bool,
     /// 需要用户处理的会话数（等待输入 + 疑似卡住），Dock 角标用；0 = 无角标。
     pub badge_count: usize,
+    /// 模型模式列表；`None` = 尚未读到或读取失败（菜单不显示「模式」子菜单）。
+    pub modes: Option<Vec<ModeEntry>>,
+}
+
+/// 托盘「模式」子菜单的一项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeEntry {
+    pub name: String,
+    pub active: bool,
+    pub enabled: bool,
 }
 
 impl MenuModel {
@@ -91,6 +101,7 @@ impl MenuModel {
             && self.notify_on == other.notify_on
             && self.dock_on == other.dock_on
             && self.badge_count == other.badge_count
+            && self.modes == other.modes
             && self.rows.len() == other.rows.len()
             && self.overflow.len() == other.overflow.len()
             && self
@@ -213,6 +224,7 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         notify_on,
         dock_on,
         badge_count: waiting + stuck,
+        modes: None,
     }
 }
 
@@ -260,6 +272,19 @@ pub fn format_duration(secs: i64) -> String {
 /// 菜单文本转义：muda 把 `&` 当助记符前缀，展示原文需写 `&&`。
 pub fn menu_text(s: &str) -> String {
     s.replace('&', "&&")
+}
+
+/// 预设状态 → 子菜单条目：无效条目标记不可切换，命中激活名的标勾。
+pub fn mode_entries(state: &crate::model::ModelPresetsState) -> Vec<ModeEntry> {
+    state
+        .presets
+        .iter()
+        .map(|p| ModeEntry {
+            name: p.name.clone(),
+            active: state.active.as_deref() == Some(p.name.as_str()),
+            enabled: p.invalid_reason.is_none(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -542,5 +567,88 @@ mod tests {
         let mut other = m.clone();
         other.badge_count += 1;
         assert!(!m.same_structure(&other));
+    }
+}
+
+#[cfg(test)]
+mod modes_tests {
+    use super::*;
+    use crate::model::{ModelPreset, ModelPresetSnapshot, ModelPresetsState};
+
+    fn preset(name: &str, reason: Option<&str>) -> ModelPreset {
+        ModelPreset {
+            name: name.into(),
+            model_roles: serde_json::Map::new(),
+            default_thinking_level: None,
+            agent_model_overrides: None,
+            invalid_reason: reason.map(str::to_owned),
+        }
+    }
+
+    fn state(presets: Vec<ModelPreset>, active: Option<&str>) -> ModelPresetsState {
+        ModelPresetsState {
+            presets,
+            active: active.map(str::to_owned),
+            current: ModelPresetSnapshot {
+                model_roles: serde_json::json!({}),
+                agent_model_overrides: serde_json::json!({}),
+                default_thinking_level: None,
+            },
+            raw_presets: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn mode_entries_marks_active_and_disabled() {
+        let entries = mode_entries(&state(
+            vec![preset("A", None), preset("bad", Some("不是映射"))],
+            Some("A"),
+        ));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0],
+            ModeEntry {
+                name: "A".into(),
+                active: true,
+                enabled: true
+            }
+        );
+        assert_eq!(
+            entries[1],
+            ModeEntry {
+                name: "bad".into(),
+                active: false,
+                enabled: false
+            }
+        );
+    }
+
+    #[test]
+    fn modes_change_rebuilds_menu() {
+        let base = build_model(vec![], true, false);
+        let mut with_modes = base.clone();
+        with_modes.modes = Some(vec![ModeEntry {
+            name: "A".into(),
+            active: true,
+            enabled: true,
+        }]);
+        assert!(!base.same_structure(&with_modes));
+        assert_eq!(refresh_decision(Some(&base), &with_modes), Refresh::Rebuild);
+        // 勾选态变化同样属于结构变化。
+        let mut toggled = with_modes.clone();
+        toggled.modes = Some(vec![ModeEntry {
+            name: "A".into(),
+            active: false,
+            enabled: true,
+        }]);
+        assert!(!with_modes.same_structure(&toggled));
+        assert_eq!(
+            refresh_decision(Some(&with_modes), &toggled),
+            Refresh::Rebuild
+        );
+        assert_eq!(
+            refresh_decision(Some(&with_modes), &with_modes),
+            Refresh::None
+        );
     }
 }

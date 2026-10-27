@@ -27,10 +27,15 @@ pub mod memory;
 /// macOS 菜单栏：运行中 omp 会话的只读检测 + 聚焦（见 CONTRACT §17）。
 pub mod menubar;
 pub mod meta;
+/// 模型「模式」：omp `modelPresets` 的整套模型配置快照与切换。
+pub mod model_presets;
 /// 模型规格编辑（models.yml 行级编辑 + 沙箱校验，见 CONTRACT §21）。
 pub mod model_specs;
 pub mod occupant;
 pub mod omp_cli;
+/// 共享的假 omp 测试替身（仅测试编译）。
+#[cfg(test)]
+pub(crate) mod omp_fake;
 pub mod omp_models;
 pub mod omp_plugins;
 /// OPS 纯原语：删除 / iTerm / 分支标记（命令装配见 `ops::commands`）。
@@ -345,6 +350,7 @@ pub fn run() {
                 poll_cfg.owners_dir.clone(),
                 poll_cfg.sessions_dir.clone(),
             );
+            menubar::tray::spawn_modes_refresher(app.handle().clone());
             Ok(())
         })
         .on_menu_event(menubar::tray::handle_menu_event)
@@ -409,6 +415,10 @@ pub fn run() {
             omp_models::get_model_config,
             omp_models::list_agent_details,
             omp_models::update_model_config,
+            model_presets::list_model_presets,
+            model_presets::save_model_preset,
+            model_presets::switch_model_preset,
+            model_presets::delete_model_preset,
             model_bench::model_bench_run,
             model_bench::model_bench_history,
             model_bench::model_bench_delete,

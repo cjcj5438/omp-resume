@@ -118,7 +118,7 @@ pub fn validate_value(kind: ConfigKind, value: &Value) -> Result<(), AppError> {
 }
 
 /// 读取一个 key 的原始值（`omp config get <key> --json`）。
-fn get_raw_value(bin: &Path, key: &str) -> Result<Value, AppError> {
+pub(crate) fn get_raw_value(bin: &Path, key: &str) -> Result<Value, AppError> {
     let output = require_success(
         run_omp(
             bin,
@@ -143,7 +143,7 @@ fn get_raw_value(bin: &Path, key: &str) -> Result<Value, AppError> {
 }
 
 /// 读取并校验外层形状：record 必须是对象、array 必须是数组；内层值原样保留。
-fn get_shaped_value(bin: &Path, key: &str, kind: ConfigKind) -> Result<Value, AppError> {
+pub(crate) fn get_shaped_value(bin: &Path, key: &str, kind: ConfigKind) -> Result<Value, AppError> {
     let value = get_raw_value(bin, key)?;
     let shape_ok = match kind {
         ConfigKind::StringArray => value.is_array(),
@@ -181,13 +181,28 @@ fn read_retry_status(bin: &Path) -> RetryStatus {
 }
 
 /// record 类型整体覆盖写入（omp 不支持点号子键）：`omp config set <key> <紧凑 JSON>`。
-fn set_raw_value(bin: &Path, key: &str, value: &Value) -> Result<(), AppError> {
+pub(crate) fn set_raw_value(bin: &Path, key: &str, value: &Value) -> Result<(), AppError> {
     let compact =
         serde_json::to_string(value).map_err(|e| invalid(format!("配置值无法序列化：{e}")))?;
     require_success(
         run_omp(
             bin,
             &["config", "set", key, &compact],
+            CHECK_TIMEOUT,
+            &mut |_| {},
+        )?,
+        "写入模型配置失败",
+    )?;
+    Ok(())
+}
+
+/// 字符串标量整体覆盖写入：`omp config set <key> <原样字符串>`（不加 JSON 引号）。
+/// 只用于 `defaultThinkingLevel` 这类枚举字符串标量，键名由调用方保证合法。
+pub(crate) fn set_raw_string(bin: &Path, key: &str, value: &str) -> Result<(), AppError> {
+    require_success(
+        run_omp(
+            bin,
+            &["config", "set", key, value],
             CHECK_TIMEOUT,
             &mut |_| {},
         )?,
@@ -693,74 +708,7 @@ pub async fn update_model_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
-
-    fn write_fake(dir: &Path, body: &str) -> PathBuf {
-        let bin = dir.join("omp");
-        std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        bin
-    }
-
-    /// 有状态假 omp：`config get/set` 以临时目录内文件模拟 config，
-    /// 并把每次 set 的参数记入日志；`agents unpack` 写两个 agent md；
-    /// `--version` 固定；任何未识别子命令都失败。返回 (状态目录, 二进制)。
-    fn fake_stateful() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let state = dir.path().join("state");
-        std::fs::create_dir_all(&state).unwrap();
-        let log = dir.path().join("sets.log");
-        let body = format!(
-            r#"STATE="{state}"
-LOG="{log}"
-if [ "$1" = "--version" ]; then echo "omp/99.0.0-test"; exit 0; fi
-if [ "$1" = "config" ] && [ "$2" = "get" ]; then
-  if [ -f "$STATE/$3" ]; then cat "$STATE/$3"; else printf '{{"key":"%s","value":{{}},"type":"record"}}' "$3"; fi
-  exit 0
-fi
-if [ "$1" = "config" ] && [ "$2" = "set" ]; then
-  printf '{{"key":"%s","value":%s,"type":"x"}}' "$3" "$4" > "$STATE/$3"
-  printf '%s %s\n' "$3" "$4" >> "$LOG"
-  exit 0
-fi
-if [ "$1" = "agents" ]; then
-  mkdir -p "$4"
-  printf '%s\n' '---' 'name: task' 'description: 总控' 'model:' '  - "@task"' 'thinkingLevel: auto' '---' 'body' > "$4/task.md"
-  printf '%s\n' '---' 'name: scout' 'description: 调研' 'model: "@smol"' 'thinkingLevel: medium' '---' 'body' > "$4/scout.md"
-  printf '{{"targetDir":"%s","total":2,"written":[],"skipped":[]}}\n' "$4"
-  exit 0
-fi
-echo "unexpected: $*" >&2
-exit 1"#,
-            state = state.display(),
-            log = log.display(),
-        );
-        let bin = dir.path().join("omp");
-        std::fs::write(&bin, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        (dir, bin)
-    }
-
-    /// 被调用即在 `invoked` 文件留痕，用于断言「绝不触碰 omp」。
-    fn fake_with_marker() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("invoked");
-        let body = format!("echo invoked >> \"{}\"", marker.display());
-        let bin = write_fake(dir.path(), &body);
-        (dir, bin, marker)
-    }
-
-    fn seed(tmp: &Path, key: &str, value: &Value) {
-        std::fs::write(
-            tmp.join("state").join(key),
-            serde_json::json!({"key": key, "value": value, "type": "record"}).to_string(),
-        )
-        .unwrap();
-    }
-
-    fn set_log(tmp: &Path) -> String {
-        std::fs::read_to_string(tmp.join("sets.log")).unwrap_or_default()
-    }
+    use crate::omp_fake::*;
 
     #[test]
     fn whitelist_rejects_unknown_keys_without_touching_omp() {
