@@ -1,16 +1,17 @@
+/* 图表悬浮提示：跟随光标的浮层（含标题 + 多行正文）。 */
+
 .chart-tip {
   position: fixed;
-  z-index: 100;
+  z-index: var(--z-overlay);
   pointer-events: none;
-  max-width: 280px;
-  padding: 6px 10px;
-  font-size: var(--fs-sm);
+  max-width: 300px;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
   line-height: 1.6;
   white-space: pre-line;
   overflow-wrap: anywhere;
   color: var(--text);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--bg-elevated);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   opacity: 1;
@@ -19,5 +20,7 @@
 
 .chart-tip strong {
   display: block;
+  font-size: var(--fs-sm);
   font-weight: 600;
+  margin-bottom: 1px;
 }

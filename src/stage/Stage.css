@@ -114,9 +114,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 46%;
+  min-width: 0;
 }
-
-.stage-head-spacer { flex: 1; }
 
 .stage-badge {
   font-size: var(--fs-xs);
@@ -253,44 +252,52 @@
 
 /* ---- 卡片 ---- */
 
+/* 角色卡：网格列宽自适应（不横向滚动），所有 agent 一眼可见。 */
 .stage-cards {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: var(--sp-2);
   flex: none;
 }
 
 .stage-card {
-  flex: none;
-  width: 138px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px 7px;
+  padding: var(--sp-2) var(--sp-3);
   text-align: left;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--stage-idle);
+  border: none;
   border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  box-shadow: inset 3px 0 0 var(--stage-idle);
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-.stage-card:hover { background: var(--bg-hover); }
+.stage-card:hover { background: var(--bg-inset); }
 
 .stage-card-active {
   background: var(--bg-selected);
-  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
 }
 
-.stage-card-running { border-left-color: var(--stage-run); }
-.stage-card-queued { border-left-color: var(--stage-queue); }
-.stage-card-idle { border-left-color: var(--stage-idle); }
-.stage-card-done { border-left-color: var(--stage-done); }
-.stage-card-failed { border-left-color: var(--stage-fail); }
-.stage-card-lost { border-left-color: var(--stage-lost); }
+.stage-card-running { box-shadow: inset 3px 0 0 var(--stage-run); }
+.stage-card-queued { box-shadow: inset 3px 0 0 var(--stage-queue); }
+.stage-card-idle { box-shadow: inset 3px 0 0 var(--stage-idle); }
+.stage-card-done { box-shadow: inset 3px 0 0 var(--stage-done); }
+.stage-card-failed { box-shadow: inset 3px 0 0 var(--stage-fail); }
+.stage-card-lost { box-shadow: inset 3px 0 0 var(--stage-lost); }
+.stage-card-active.stage-card-running,
+.stage-card-active.stage-card-queued,
+.stage-card-active.stage-card-idle,
+.stage-card-active.stage-card-done,
+.stage-card-active.stage-card-failed,
+.stage-card-active.stage-card-lost {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
+}
 
 .stage-card-top {
   display: flex;
@@ -363,10 +370,9 @@
 }
 
 .stage-panel {
-  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  padding: 6px 8px 8px;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
   min-width: 0;
 }
 
@@ -374,7 +380,7 @@
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-muted);
-  margin: 0 0 4px;
+  margin: 0 0 var(--sp-1);
 }
 
 .stage-timeline {
@@ -564,15 +570,6 @@
   gap: 6px;
   font-size: var(--fs-xs);
   color: var(--text-muted);
-}
-
-.stage-lib-field select {
-  padding: 2px 6px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
 }
 
 .stage-agent-config {

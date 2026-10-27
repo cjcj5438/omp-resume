@@ -1,111 +1,139 @@
-/* 侧栏：顶部搜索/主操作/视图切换、置顶区、批量选择条、组头三态勾选、底部状态条。
- * 只使用 App.css 已有的语义变量，浅深色主题通用。 */
+/* 侧栏：搜索行、主操作、视图切换、分组与选择态、底部状态区。
+ * 只用 App.css 的语义变量；行/组头/徽章的基础样式在 App.css，这里只放侧栏专属。 */
 
-/* ---- 顶部：搜索行（过滤框 + 刷新图标按钮） ---- */
+/* ---- 搜索行：输入框 + 两个图标按钮 ---- */
 .search-row {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .search-row .filter-input {
   flex: 1;
 }
 
-/* ---- 顶部：唯一主操作，全宽强调按钮 ---- */
+/* ---- 主操作：全宽，默认淡强调底（不抢列表视线），悬停转实心 ---- */
 .btn.new-session-btn {
-  justify-content: center;
   width: 100%;
-  font-weight: 600;
+  height: 28px;
+  justify-content: center;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
 }
 
-/* ---- 顶部：视图切换分段条（统计/清理/提示词历史/管理/速查共用一行） ---- */
+.btn.new-session-btn:hover:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  border-color: transparent;
+}
+
+.btn.new-session-btn:active:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+}
+
+.new-session-btn svg {
+  flex: none;
+}
+
+/* ---- 视图切换：3 列网格（两行），图标 + 文字，激活态白底浮起 ---- */
 .view-nav {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--bg-card);
+  background: var(--bg-inset);
 }
 
 .view-nav-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  /* 图标 + 文字：图标不参与压缩，文字过长时省略。 */
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: 3px 4px;
+  gap: var(--sp-1);
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--sp-1);
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: default;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .view-nav-btn svg {
   flex: none;
-  opacity: 0.75;
-}
-
-.view-nav-btn[aria-pressed="true"] svg {
-  opacity: 1;
-}
-
-/* 新会话按钮：图标与文字同一基线，图标不压缩。 */
-.btn.new-session-btn svg {
-  flex: none;
+  opacity: 0.9;
 }
 
 .view-nav-btn:hover {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
 .view-nav-btn[aria-pressed="true"] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--bg-elevated);
+  color: var(--text);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
-/* ---- 图标按钮：刷新（描边）/ 底部检查更新与外观（幽灵） ---- */
+.view-nav-btn[aria-pressed="true"] svg {
+  color: var(--accent);
+}
+
+.view-nav-btn[aria-pressed="true"]:hover {
+  background: var(--bg-elevated);
+}
+
+/* ---- 图标按钮：方形、无边框、hover 才出现底 ---- */
 .btn.icon-btn {
   flex: none;
-  justify-content: center;
-  padding-left: 8px;
-  padding-right: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
 }
 
 .btn.icon-btn-quiet {
   border-color: transparent;
   background: transparent;
-  color: var(--text-muted);
 }
 
 .btn.icon-btn-quiet:hover:not(:disabled) {
+  border-color: transparent;
   background: var(--bg-hover);
   color: var(--text);
 }
 
-/* ---- 多选开关：开启态强调色淡底 + 描边，与视图切换激活态同语言 ---- */
 .btn.icon-btn-multi[aria-pressed="true"] {
   background: var(--accent-soft);
-  border-color: var(--accent);
+  border-color: transparent;
   color: var(--accent);
 }
 
+.btn.icon-btn-multi[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
 /* ---- 勾选框平时隐藏：hover / 聚焦 / 已选 / 批量选择中才显示 ----
- * 仅降透明度（仍占位、可聚焦），批量三态逻辑与可访问名称不变。
- * 作用域限侧栏，避免将来的其他表格误用同名类被隐藏。 */
+ * 仅降透明度（仍占位、可聚焦），批量三态逻辑与可访问名称不变。 */
 .sidebar .row-check,
 .sidebar .group-check {
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 
 .sidebar .row:hover .row-check,
@@ -122,30 +150,25 @@
   opacity: 1;
 }
 
-/* ---- 项目组：组间留白，配合吸顶组头更易扫读 ---- */
+/* ---- 项目组 ---- */
 .group {
-  padding-bottom: 4px;
+  padding-bottom: var(--sp-1);
 }
 
-/* ---- 展开箭头：单个 ▸ 旋转 90° 表示展开 ---- */
 .group-arrow-open {
   transform: rotate(90deg);
 }
 
-/* ---- 置顶区：强调色小标签 + 填充图钉，与普通项目组明显区分 ---- */
+/* 置顶区：与普通项目组区分——底部细线 + 强调色小标题。 */
 .pinned-group {
-  padding-bottom: 6px;
-  margin-bottom: 4px;
+  padding-bottom: var(--sp-2);
+  margin-bottom: var(--sp-1);
   border-bottom: 1px solid var(--border);
-}
-
-.pinned-group .group-header {
-  gap: 5px;
 }
 
 .pinned-pin {
   flex: none;
-  font-size: var(--fs-xs);
+  display: inline-flex;
   color: var(--accent);
 }
 
@@ -153,45 +176,49 @@
   flex: none;
   font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--accent);
 }
 
 .pinned-count {
   flex: none;
-  padding: 0 6px;
+  padding: 0 var(--sp-2);
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
   font-size: var(--fs-xs);
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 17px;
 }
 
-/* 置顶行：仅保留左侧强调色竖条；选中态不变。 */
-.row.row-pinned {
-  border-left-color: var(--accent);
+/* 置顶行：左上角小图钉已表达状态，这里只留极淡强调底。 */
+.row.row-pinned:not(.row-selected) {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.row-pinned:hover:not(.row-selected) {
+  background: color-mix(in srgb, var(--accent-soft) 90%, transparent);
 }
 
 /* 脱离项目上下文的置顶行：小号等宽项目名。 */
 .row-project {
-  max-width: 14em;
+  max-width: 12em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
-  color: var(--text-muted);
+  color: var(--text-faint);
 }
 
-/* ---- 批量选择条：强调色淡底，明确处于选择模式 ---- */
+/* ---- 批量选择条 ---- */
 .select-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  padding: 5px 10px;
+  gap: var(--sp-1) var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-xs);
-  color: var(--text-muted);
+  color: var(--accent);
   border-bottom: 1px solid var(--border);
   background: var(--accent-soft);
 }
@@ -201,41 +228,40 @@
   border: none;
   background: transparent;
   color: var(--accent);
+  font-family: inherit;
   font-size: var(--fs-xs);
-  cursor: default;
+  font-weight: 500;
+  cursor: pointer;
 }
 
 .select-link:hover {
   text-decoration: underline;
 }
 
-.select-link:focus-visible {
-  outline: 2px solid var(--accent);
-  border-radius: var(--radius-xs);
-}
-
-/* ---- 组头三态勾选：与行内勾选框同列（组头行已有 9px 左内边距）。 ---- */
+/* ---- 组头三态勾选：与行内勾选框同列 ---- */
 .group-check {
   flex: none;
   margin: 0;
+  accent-color: var(--accent);
 }
 
-/* 项目会话全部置顶后的占位说明：与行标题同列，克制一行。 */
+/* 项目会话全部置顶后的占位说明。 */
 .group-empty-note {
-  padding: 4px 10px 8px 28px;
+  padding: var(--sp-1) var(--sp-3) var(--sp-3) 26px;
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
-/* ---- 底部状态条：计数…外观 / omp 版本…更新日志，两行收紧 ---- */
+/* ---- 底部状态区：两行紧凑信息 + 操作 ---- */
 .footer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
+  min-height: 22px;
 }
 
 .footer-row + .footer-row {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .footer-count {
@@ -249,20 +275,12 @@
 .footer-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-1);
   margin-left: auto;
 }
 
-/* 外观齿轮比小号按钮字号略大，避免图标显得过小。 */
-.footer-row .appearance-wrap .btn {
-  font-size: var(--fs-md);
-}
-
 .footer-update {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
+  color: var(--text-muted);
 }
 
 .footer-row .changelog-link {
@@ -275,134 +293,25 @@
   right: 0;
 }
 
-/* ---- 键盘焦点：新增/重排的控件一律强调色描边 ---- */
-.view-nav-btn:focus-visible,
-.btn.icon-btn:focus-visible,
-.btn.new-session-btn:focus-visible,
-.group-header:focus-visible,
-.row-check:focus-visible,
-.group-check:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-/* ---- 悬浮反馈：分段条/图标按钮 hover 高亮，激活态 hover 仍有内圈提示 ---- */
-.view-nav-btn,
-.btn.icon-btn-quiet {
-  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
-}
-
-.view-nav-btn[aria-pressed="true"]:hover {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.btn.icon-btn-multi[aria-pressed="true"]:hover:not(:disabled) {
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-/* ---- 悬浮反馈：文字链接过渡统一用 --motion ---- */
-.select-link {
-  transition: color var(--motion, 120ms) ease;
-}
-
-/* ---- 会话行：卡片化的悬停/选中，强化标题与元信息的层级（仅视觉，不动数据） ---- */
-.sidebar .row {
-  margin: 0 4px;
-  padding: 6px 8px;
-  border-left-width: 2px;
-  border-radius: var(--radius-md);
-  transition: background-color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
-}
-
-.sidebar .row + .row {
-  margin-top: 1px;
-}
-
-.sidebar .row:hover {
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.sidebar .row-selected,
-.sidebar .row-selected:hover {
-  box-shadow: inset 0 0 0 1px var(--accent-soft);
-}
-
-.sidebar .row-title {
-  font-size: var(--fs-md);
-  line-height: 1.45;
-}
-
-.sidebar .row-meta {
-  gap: 2px 8px;
-  line-height: 1.5;
-}
-
-/* 置顶行用左侧强调条 + 轻微底色，与「已选中」的实心选中区分开。 */
-.sidebar .row.row-pinned:not(.row-selected) {
-  background: color-mix(in srgb, var(--accent-soft) 40%, transparent);
-}
-
-/* ---- 组头：名称更重、计数胶囊更轻，目录名次级 ---- */
-.sidebar .group-header-row {
-  padding: 5px 4px 5px 9px;
-  border-bottom: 1px solid transparent;
-}
-
-.sidebar .group-header {
-  padding: 3px 6px;
-  border-radius: var(--radius-md);
-}
-
-.sidebar .group-name {
-  font-size: var(--fs-md);
-  letter-spacing: 0.01em;
-}
-
-.sidebar .group-count {
-  border-color: transparent;
-  background: var(--bg-hover);
-}
-
-.sidebar .group:hover .group-header-row {
-  border-bottom-color: var(--border);
-}
-
-/* ---- 顶部：搜索框与图标按钮统一高度，视觉对齐 ---- */
-.sidebar .search-row {
-  align-items: center;
-}
-
-.sidebar .search-row .btn.icon-btn {
-  height: 26px;
-  min-width: 26px;
-}
-
-/* ---- 视图切换：分段条均匀铺满，激活态更明显 ---- */
-.sidebar .view-nav-btn {
-  padding: 4px 4px;
-  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
-}
-
-.sidebar .view-nav-btn[aria-pressed="true"] {
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-/* 右键菜单的目标行/组头：内描边提示当前菜单归属（不改变选中态）。 */
+/* ---- 右键菜单目标：细描边提示归属（不改选中态） ---- */
 .row-menu-target {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* 行内重命名输入框：撑满标题区，聚焦描边沿用全局 :focus-visible。 */
+/* ---- 行内重命名输入框 ---- */
 .row-rename {
   width: 100%;
+  height: 20px;
+  padding: 0 var(--sp-1);
   font: inherit;
+  font-size: var(--fs-md);
 }
 
+/* ---- 小号输入对话框（新建标签等） ---- */
 .dialog-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .dialog-field-label {
@@ -411,13 +320,13 @@
 }
 
 .dialog-field-error {
-  margin-top: 4px;
+  margin-top: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--danger);
 }
 
 .dialog-field-note {
-  margin-top: 4px;
+  margin-top: var(--sp-1);
   font-size: var(--fs-sm);
   color: var(--text-muted);
 }

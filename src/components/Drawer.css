@@ -9,11 +9,11 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
+  background: var(--bg-elevated);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-md);
   outline: none;
-  animation: drawer-in 140ms ease-out;
+  animation: drawer-in var(--motion-base) var(--ease-out);
 }
 
 @keyframes drawer-in {
@@ -25,16 +25,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-sidebar);
 }
 
 .drawer-title {
   margin: 0;
   min-width: 0;
   font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -47,11 +48,12 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 14px 16px;
+  padding: var(--sp-4) var(--sp-5);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
+
 /* 内联形态：作为父级 flex 行的右列，不再贴窗口边缘，也不遮挡左列。 */
 .drawer-inline {
   position: static;
@@ -62,7 +64,7 @@
   border-top: none;
   box-shadow: none;
   border-radius: 0;
-  animation: drawer-in-inline 140ms ease-out;
+  animation: drawer-in-inline var(--motion-base) var(--ease-out);
 }
 
 @keyframes drawer-in-inline {

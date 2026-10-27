@@ -1,10 +1,11 @@
-/* MCP 配置面板：布局与行内 chips；配色沿用 App.css 自定义属性。 */
+/* MCP 配置面板：范围选择 + 条目列表 + 编辑抽屉内容。
+ * 取色/间距一律用 App.css 的语义变量。 */
 
 .mcp-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
   overflow-y: auto;
 }
 
@@ -12,13 +13,13 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .mcp-scope {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--sp-1);
   min-width: 0;
   flex: 1;
 }
@@ -28,122 +29,140 @@
 }
 
 .mcp-path {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
 .mcp-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
+/* 条目行：无边框卡片，靠底色与留白分层。 */
 .mcp-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.mcp-row:hover {
+  background: var(--bg-inset);
 }
 
 .mcp-row-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--sp-2);
   flex-wrap: wrap;
 }
 
 .mcp-name {
+  font-size: var(--fs-md);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .mcp-endpoint {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
 .mcp-keys {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .mcp-key-chip {
   font-size: var(--fs-xs);
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
   color: var(--text-muted);
+  line-height: 17px;
 }
 
 .mcp-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
 }
 
 .mcp-hint {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
 }
 
+/* 被覆盖的用户级同名条目：虚线分隔，弱化。 */
 .mcp-secondary {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border);
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-2);
+  box-shadow: inset 0 1px 0 var(--border);
+  font-size: var(--fs-xs);
 }
 
 .mcp-row-peer {
   flex-direction: row;
   align-items: center;
+  background: transparent;
+  padding: var(--sp-1) var(--sp-2);
 }
 
 .mcp-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
 }
 
+/* 编辑抽屉内的输入：与全局 .filter-input 同形态（这里只补多行差异）。 */
 .mcp-input,
 .mcp-textarea {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-md);
   color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.mcp-input:hover:not(:disabled),
+.mcp-textarea:hover:not(:disabled) {
+  border-color: var(--text-faint);
+}
+
+.mcp-input:focus,
+.mcp-textarea:focus,
+.mcp-input:focus-visible,
+.mcp-textarea:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
 }
 
 .mcp-input:disabled,
 .mcp-textarea:disabled {
-  opacity: 0.6;
+  color: var(--text-muted);
+  background: var(--bg-card);
 }
 
 .mcp-textarea {
   min-height: 220px;
   min-width: min(420px, 100%);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
   resize: vertical;
-}
-
-/* ---- 悬浮反馈：行/输入 hover 高亮，过渡统一用 --motion ---- */
-.mcp-row {
-  transition: border-color var(--motion, 120ms) ease;
-}
-
-.mcp-input,
-.mcp-textarea {
-  transition: border-color var(--motion, 120ms) ease;
-}
-
-.mcp-row:hover {
-  border-color: var(--accent);
-}
-
-.mcp-input:hover:not(:disabled),
-.mcp-textarea:hover:not(:disabled) {
-  border-color: var(--accent);
 }

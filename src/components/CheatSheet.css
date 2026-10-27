@@ -9,56 +9,59 @@
 }
 
 .cheatsheet-version-note {
-  margin: 4px 0 0;
-  padding: 5px 8px;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--badge-inuse-ink);
   background: var(--warn-soft);
   border-radius: var(--radius-md);
 }
 
 .cheatsheet-toolbar {
-  margin: 8px 0 4px;
+  margin: var(--sp-3) 0 var(--sp-1);
 }
 
 .cheatsheet-tabs {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
   flex-wrap: wrap;
 }
 
 .cheatsheet-tab {
-  padding: 3px 14px;
-  font-size: var(--fs-sm);
+  padding: 2px var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  cursor: default;
-  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease, box-shadow var(--motion, 120ms) ease;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .cheatsheet-tab:hover {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
 .cheatsheet-tab.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .cheatsheet-tab.is-active:hover {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--bg-elevated);
 }
 
 .cheatsheet-filter {
   width: 100%;
-  margin-top: 6px;
+  margin-top: var(--sp-2);
 }
 
 .cheatsheet-copy-error {
@@ -68,24 +71,23 @@
 }
 
 .cheatsheet-list {
-  margin-top: 8px;
+  margin-top: var(--sp-2);
 }
 
 /* 分组标题吸顶：长列表滚动时始终知道自己在哪一组。 */
 .cheatsheet-group-title {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin: 16px 0 4px;
-  padding: 4px 0;
+  gap: var(--sp-2);
+  margin: var(--sp-5) 0 var(--sp-1);
+  padding: var(--sp-1) 0;
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--text-muted);
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-elevated);
 }
 
 .cheatsheet-group-title:first-child {
@@ -109,10 +111,9 @@
 .cheatsheet-row {
   display: flex;
   flex-direction: column;
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2) var(--sp-2);
   border-radius: var(--radius-md);
-  transition: background-color var(--motion, 120ms) ease;
+  transition: background-color var(--motion-fast) var(--ease-out);
 }
 
 .cheatsheet-row:hover {
@@ -261,7 +262,7 @@
   background: var(--bg-card);
   color: var(--accent);
   cursor: default;
-  transition: background-color var(--motion, 120ms) ease, border-color var(--motion, 120ms) ease;
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
 
 .cheatsheet-link:hover {
@@ -338,7 +339,7 @@
   gap: 4px;
   align-self: center;
   opacity: 0;
-  transition: opacity var(--motion, 120ms) ease;
+  transition: opacity var(--motion-fast) ease;
 }
 
 .cheatsheet-row:hover .cheatsheet-actions,
@@ -364,7 +365,7 @@
   background: var(--bg);
   color: var(--text-muted);
   cursor: default;
-  transition: background-color var(--motion, 120ms) ease, color var(--motion, 120ms) ease;
+  transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 
 .cheatsheet-copy:hover {
@@ -380,33 +381,31 @@
 /* ---- 组合用法 ---- */
 
 .cheatsheet-combo {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
+  margin-top: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  transition: border-color var(--motion, 120ms) ease;
-}
-
-.cheatsheet-combo:hover {
-  border-color: var(--accent);
 }
 
 .cheatsheet-combo-head {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: flex-start;
   justify-content: space-between;
 }
 
 .cheatsheet-combo-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--fs-md);
+  font-weight: 600;
   margin: 0;
 }
 
 .cheatsheet-combo-when {
   margin: 2px 0 0;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 
