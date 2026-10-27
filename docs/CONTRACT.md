@@ -25,7 +25,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
   4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
   4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）、
-  4.64–4.67 会话右键菜单辅助（§25）。
+  4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）。
 
 ## 1. 配置解析
 
@@ -2043,6 +2043,74 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
   偏好只存 `localStorage`（`omp-resume:stage:v2`，另清掉语义已变的 v1），不写 omp。
 - 配置展示：「选中详情」与「Agent 库」共用 `AgentConfigPanel`，全部只读，没有保存入口。
 - 在舞台视图里点侧栏会话只切换舞台目标，不离开舞台（看详情走头部「查看会话」）。
+
+## 24. 模型模式（§4.60–§4.63）
+
+> 「模式」= 一整套模型配置的快照，切换即整体改写 omp 全局配置。
+> 存储就落在 omp 自己的 `modelPresets` 里，因此终端 `/modelpreset` 与本应用互认。
+
+### 24.1 存储格式
+
+```json
+{ "A": { "modelRoles": {"default": "p/m"}, "defaultThinkingLevel": "high",
+         "agentModelOverrides": {"task": "p/m"} } }
+```
+
+- `modelRoles` / `defaultThinkingLevel` 是 omp 原生字段（`/modelpreset save|switch` 只认这两个）。
+- `agentModelOverrides` 是本应用扩展字段：`task.agentModelOverrides` 不随 `modelRoles`
+  变化，不快照它切完模式子 agent 仍用旧模型。omp 实测会**原样保留**未知字段，
+  但终端 `/modelpreset save` 覆盖同名条目时会丢掉它（已知取舍，UI 用「用当前配置覆盖」修正）。
+- 模式名规则与 omp 完全一致：`^[a-zA-Z][\w-]*$`，另加长度 ≤ 64（不支持中文名，为了和终端通用）。
+- 条目解析**宽容**：格式问题记进 `ModelPreset.invalidReason`，保留条目以便删除，但不可切换。
+
+### 24.2 写规则（与 §16 同构，另加回滚）
+
+- 一律先校验输入 → `OmpBusy::try_acquire()` → 读当前值 → 与调用方 `expected*` 比对
+  （不一致 → `CONFLICT`）→ 写 → 重读返回新状态。
+- 切换会写 2–3 个键（`modelRoles` → `task.agentModelOverrides` → `defaultThinkingLevel`），
+  每成功一步把旧值压入回滚日志；任一步失败则逆序恢复：
+  全成功 → `OMP_FAILED`「切换失败，已恢复原配置：{原因}」；
+  恢复也失败 → `OMP_FAILED`「切换失败且恢复原配置失败（{恢复原因}）…：{原因}」。
+- 切换前若预设的 `default` 不是 `@`/`pi/` 别名，则用 `list_models` 校验它在可用列表里，
+  不在则 `INVALID_INPUT` 且**一个键都不写**（避免切完没有可用主模型）。
+- 只写全局配置，不用 `--config` 叠加；不动 `retry.*`、`task.disabledAgents`、`task.agentAdvisor`。
+
+### 24.3 / 4.60 `list_model_presets() -> ModelPresetsState`（只读）
+
+`ModelPresetsState { presets: ModelPreset[], active: string|null,
+current: ModelPresetSnapshot, rawPresets: unknown }`。
+
+- `presets` 按名称排序（先比小写再比原文）；`active` = 第一个「角色值逐个相等，
+  且（预设带 thinking 时）档位相等，且（预设带 overrides 时）覆盖相等」的有效预设。
+- `current` = 同时刻的三份原值（切换时的 expected）；`rawPresets` = `modelPresets` 原值
+  （保存/删除时的 expected，未设置时 `{}`）。
+- `modelPresets` 形状异常（不是对象/null）→ `OMP_FAILED` 并提示去终端检查；读取失败按未设置处理。
+
+### 24.4 / 4.61 `save_model_preset { name, overwrite, expectedPresets } -> ModelPresetsState`
+
+把**当前**角色模型 + agent 覆盖 + 推理档位存成一条模式。同名且 `overwrite=false` →
+`INVALID_INPUT`；当前没有任何角色模型 → `INVALID_INPUT`；`expectedPresets` 过期 → `CONFLICT`。
+
+### 24.5 / 4.62 `switch_model_preset { name, expected: ModelPresetSnapshot } -> ModelPresetsState`
+
+见 §24.2。名称不存在 → `NOT_FOUND`；条目无效 → `INVALID_INPUT`；`expected` 过期 → `CONFLICT`。
+托盘菜单走同一实现但**不带** `expected`（`None`）：菜单里的勾选反映的是上一轮状态，
+带 expected 会让「刚被终端改过」的场景永远失败。
+
+### 24.6 / 4.63 `delete_model_preset { name, expectedPresets } -> ModelPresetsState`
+
+只删保存记录，不改当前配置。名称只要求非空（允许清理名称不合法的历史条目）；
+不存在 → `NOT_FOUND`；`expectedPresets` 过期 → `CONFLICT`。
+
+### 24.7 前端
+
+- `src/modelPresets.ts` 是模块级 store（`useSyncExternalStore`）：首个订阅者挂载、
+  **弹层打开**、窗口聚焦时拉取；并发拉取复用同一在途请求。
+- 写操作经 `runPresetOp` 串行化（`busy` 期间直接返回）；成功后 `emitModelConfigChanged("presets")`
+  让「管理 → 模型」草稿重载（有脏草稿只换基线，草稿不丢）；草稿保存成功后回通知
+  （`"draft"`）让模式列表重算激活项。
+- 托盘「模式」子菜单由 `spawn_modes_refresher`（30 秒）与三个写命令的
+  `tray::publish_modes` 驱动；`MenuModel.modes = None` 表示尚未读到（不显示子菜单）。
 
 ## 25. 会话右键菜单的辅助命令（§4.64–§4.67）
 
