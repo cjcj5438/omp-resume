@@ -1693,9 +1693,39 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   Esc 正常关抽屉。选中卡「在列表中打开」切回列表并经
   `focusId`（`memoryDetail` 直取，跨分页）置顶展示该记忆。
 
-## 19. 悬浮反馈与动效约定（全应用统一）
+## 19. 视觉系统与交互约定（全应用统一）
 
-（已删除：以代码为准）
+> 唯一来源是 `src/App.css` 顶部的 token 区；组件 CSS 只消费变量，不写字面量。
+> 改色后必须复核对比度：正文/次要文字对所在底色 ≥ 4.5:1（浅深两套都要）。
+
+### 19.1 token
+
+- 表面：`--bg`（主区）/ `--bg-elevated`（浮层、激活段）/ `--bg-sidebar` / `--bg-card`（成组块）/ `--bg-inset`（弱化条、胶囊）。
+- 交互态：`--bg-hover`（悬停）/ `--bg-active`（按下）/ `--bg-selected`（选中行）。
+- 文字：`--text` / `--text-muted`（次要，≥4.5:1）/ `--text-faint`（第三级，仅装饰与非关键标签，浅色 ≥4.6:1）。
+- 边界：`--border`（分割线）/ `--border-strong`（输入框与按钮边界）。
+- 强调：`--accent` / `--accent-fill`（实心按钮）/ `--accent-soft`（淡底）/ `--accent-ring`（焦点、内描边）；6 个预设由 `data-accent` 覆盖。
+- 字号 `--fs-xs..2xl`、间距 `--sp-1..6`、圆角 `--radius-xs..xl`/`full`、动效 `--motion-fast`/`--motion-base`/`--ease-out`、阴影 `--shadow-sm`/`--shadow-md`、层级 `--z-titlebar`/`--z-sticky`/`--z-popover`/`--z-overlay`。
+- 例外：舞台画布内 7/8/9px 与 §12 图形内的字号不受字号刻度约束。
+
+### 19.2 形态规则
+
+- **分层靠底色，不靠边框**：成组内容用 `--bg-card`，悬停转 `--bg-inset`；只有分割线与输入框画 1px 边。
+- **选中用底色**，不用左侧色条；需要归属提示（右键菜单目标、流程图选中）用 `inset` 内描边。
+- 页签是**下划线式**（`.tab::after` 强调色 2px），不用带框 chrome tab。
+- 分段控件（`.seg`、`.segment`、`.bench-segment`）统一：`--bg-inset` 容器 + 透明项，激活项 `--bg-elevated` + `--shadow-sm`。
+- 浮动层（modal/drawer/popover/toast/tooltip）用 `--shadow-md`；流内卡片用 `--shadow-sm` 或不加。
+- 详情头部结构固定为：标题行（标题 + 徽章 + 右对齐 `.detail-actions`）→ `.detail-meta`（一行元信息）→ 用量指标条 → 概要。
+  会话头动作（在 iTerm 继续 / 置顶 / 备注 / 删除）全在标题行右侧，不再单独占一条工具栏。
+- 别名/标签/备注编辑器默认收起（`.detail-actions` 的「备注」按钮展开），切换会话自动收起。
+- 图标一律经 `Ico`（lucide，`strokeWidth 1.75`）；禁止把 emoji/unicode 字形当图标。
+
+### 19.3 动效
+
+- 只用 `--motion-fast`（110ms）/ `--motion-base`（170ms）+ `--ease-out`；不写裸毫秒。
+- 悬停态只改 `background-color`/`color`/`box-shadow`，不改宽高。
+- `prefers-reduced-motion: reduce` 时全局停掉动画与过渡（`App.css` 末尾统一规则）。
+- `prefers-reduced-transparency: reduce` 时侧栏回退为不透明 `--bg-sidebar`。
 
 ## 20. 模型测试器（§4.51–§4.53、§4.56，管理视图「模型」标签页的「测试」区）
 
