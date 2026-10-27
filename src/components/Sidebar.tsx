@@ -1,11 +1,31 @@
-/** 左侧会话列表：置顶区、过滤、标签过滤、分组折叠、批量勾选、刷新。 */
-import { useState } from "react";
+/** 左侧会话列表：置顶区、过滤、标签过滤、分组折叠、批量勾选、刷新、右键菜单。 */
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
 import { checkState, type TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
 import { displayCwd, errorText, formatRelativeTime, formatSize, openOmpChangelog } from "../format";
+import {
+  getMeta,
+  getResumeCommand,
+  normalizeError,
+  openProjectDir,
+  revealSessionFile,
+} from "../api";
+import { copyText } from "../clipboard";
+import { MetaBatchError, TAGS_MAX, applyTag, writeAlias } from "../metaOps";
+import { popupMenu, type MenuSpec } from "../nativeMenu";
+import {
+  buildBatchMenu,
+  buildGroupMenu,
+  buildPinnedGroupMenu,
+  buildSessionMenu,
+  type CopyKind,
+  type SessionMenuActions,
+} from "../sessionMenus";
 import { SessionBadges } from "./ui";
 import { AppearancePanel } from "./AppearancePanel";
+import type { ToastFn } from "./useOmpOp";
+import { NewTagDialog } from "./NewTagDialog";
 import "./Sidebar.css";
 
 interface SidebarProps {
@@ -52,6 +72,14 @@ interface SidebarProps {
   tagCounts: TagCount[];
   activeTags: readonly string[];
   onToggleTag: (tag: string) => void;
+  /** toast 出口（右键菜单反馈）。 */
+  onToast: ToastFn;
+  /** 「在 iTerm 继续」（与详情页同一路径）。 */
+  onOpenIterm: (s: SessionSummary) => void;
+  /** 删除确认（右键菜单「删除…」）。 */
+  onRequestDelete: (paths: string[]) => void;
+  /** 备注写入后的新快照（别名/标签）。 */
+  onMetaSnapshot: (snap: MetaSnapshot) => void;
 }
 
 export function Sidebar({
@@ -93,6 +121,10 @@ export function Sidebar({
   tagCounts,
   activeTags,
   onToggleTag,
+  onToast,
+  onOpenIterm,
+  onRequestDelete,
+  onMetaSnapshot,
 }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const toggleCollapsed = (key: string) =>
@@ -102,10 +134,45 @@ export function Sidebar({
       else next.add(key);
       return next;
     });
+  // 右键菜单的目标（行 path / 组 cwd / 置顶区键）：仅用于画出当前菜单归属。
+  const [menuTarget, setMenuTarget] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [tagTargets, setTagTargets] = useState<string[] | null>(null);
   // 当前可见的全部会话 path（置顶区 + 各组；置顶已从原组移出，不重复）。
   const visiblePaths = pinnedSessions
     .map((s) => s.path)
     .concat(groups.flatMap((g) => g.sessions.map((s) => s.path)));
+  // 右键动作执行时按 path 重新解析会话：列表可能已刷新或会话已被删除。
+  const byPath = useMemo(() => {
+    const map = new Map<string, SessionSummary>();
+    for (const s of pinnedSessions) map.set(s.path, s);
+    for (const g of groups) for (const s of g.sessions) map.set(s.path, s);
+    return map;
+  }, [groups, pinnedSessions]);
+  // 菜单动作在「菜单已弹出、列表又刷新过」之后才执行：闭包里的 byPath 是旧渲染的
+  // 快照，因此用 ref 指向最新映射，动作执行时按 path 重新解析会话。
+  const byPathRef = useRef(byPath);
+  byPathRef.current = byPath;
+  const byIdRef = useRef(new Map<string, SessionSummary>());
+  byIdRef.current = new Map([...byPath.values()].map((s) => [s.id, s]));
+
+  /** 解析当前仍存在的会话；已消失则提示并返回 null（调用方不得再碰后端）。 */
+  const liveSession = (path: string): SessionSummary | null => {
+    const found = byPathRef.current.get(path) ?? null;
+    if (found === null) onToast("会话已不存在", "error");
+    return found;
+  };
+
+  /** 批量动作同样重解析：只保留仍在列表里的目标。 */
+  const liveSessions = (targets: SessionSummary[]): SessionSummary[] =>
+    targets
+      .map((s) => byPathRef.current.get(s.path))
+      .filter((s): s is SessionSummary => s != null);
+  /** 按会话 id 重解析（标签类动作只带 id）。 */
+  const liveById = (ids: string[]): SessionSummary[] =>
+    ids.map((id) => byIdRef.current.get(id)).filter((s): s is SessionSummary => s != null);
+
   const hasUncheckedVisible = visiblePaths.some((p) => !checked.has(p));
   // 多选模式（本地 UI 状态）：打开后全部勾选框常显、选择条常驻（即使 0 选中，
   // 以便一键「全选当前列表」）；有任何勾选时自动视为进入选择态。
@@ -127,6 +194,209 @@ export function Sidebar({
       setMultiMode(true);
     }
   };
+
+  // 会话从列表里消失（刷新/删除）时不要再留下一个悬空的重命名输入框。
+  useEffect(() => {
+    if (renamingPath !== null && !byPath.has(renamingPath)) setRenamingPath(null);
+  }, [byPath, renamingPath]);
+
+  const allTags = tagCounts.map((t) => t.tag);
+
+  async function copy(kind: CopyKind, targets: SessionSummary[], literal?: string): Promise<void> {
+    let text: string;
+    let label: string;
+    switch (kind) {
+      case "id":
+        text = targets.map((s) => s.id).join("\n");
+        label = targets.length > 1 ? `已复制 ${targets.length} 个会话 ID` : "已复制会话 ID";
+        break;
+      case "path":
+        text = targets.map((s) => s.path).join("\n");
+        label = "已复制会话文件路径";
+        break;
+      case "cwd":
+        text = literal ?? targets[0]?.cwd ?? "";
+        label = "已复制项目路径";
+        break;
+      default: {
+        const target = targets[0];
+        if (target == null) return;
+        try {
+          text = await getResumeCommand(target.path);
+        } catch (e: unknown) {
+          onToast(errorText(normalizeError(e)), "error");
+          return;
+        }
+        label = "已复制续聊命令";
+      }
+    }
+    if (text.length === 0) return;
+    if (await copyText(text)) onToast(label, "info");
+    else onToast("复制失败：剪贴板不可用", "error");
+  }
+
+  async function runTag(ids: string[], tag: string, on: boolean): Promise<void> {
+    if (meta === null) return;
+    try {
+      const result = await applyTag(meta, ids, tag, on);
+      onMetaSnapshot(result.snapshot);
+      const skipped =
+        result.skipped > 0 ? `（${result.skipped} 个已满 ${TAGS_MAX} 个标签，已跳过）` : "";
+      onToast(`已更新 ${result.updated} 个会话的标签${skipped}`, "info");
+    } catch (e: unknown) {
+      if (e instanceof MetaBatchError) {
+        const err = normalizeError(e.cause);
+        if (err.code === "CONFLICT") {
+          try {
+            onMetaSnapshot(await getMeta());
+          } catch {
+            // 重新载入也失败：保留旧快照，提示用户重试。
+          }
+          onToast(`备注已被外部修改，已重新载入，请重试（已更新 ${e.updated} 个）`, "error");
+        } else {
+          onMetaSnapshot(e.snapshot);
+          onToast(errorText(err), "error");
+        }
+        return;
+      }
+      onToast(errorText(normalizeError(e)), "error");
+    }
+  }
+
+  async function commitRename(s: SessionSummary, value: string): Promise<void> {
+    if (meta === null) return;
+    const entry = meta.sessions[s.id] ?? null;
+    const trimmed = value.trim();
+    if (trimmed === (entry?.alias ?? s.title)) {
+      setRenamingPath(null);
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      const next = await writeAlias(meta, s.id, trimmed.length === 0 ? null : trimmed);
+      onMetaSnapshot(next);
+      setRenamingPath(null);
+      onToast(
+        trimmed.length === 0 ? "已清除别名" : `已重命名为「${trimmed}」`,
+        "info",
+      );
+    } catch (e: unknown) {
+      const err = normalizeError(e);
+      if (err.code === "CONFLICT") {
+        try {
+          onMetaSnapshot(await getMeta());
+        } catch {
+          // 同上：重载失败时保持编辑框，让用户自己决定。
+        }
+        onToast("备注已被外部修改，已重新载入，请重试", "error");
+      } else {
+        onToast(errorText(err), "error");
+      }
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
+  const actions: SessionMenuActions = {
+    openIterm: (s) => {
+      const live = liveSession(s.path);
+      if (live !== null) onOpenIterm(live);
+    },
+    newSessionIn: (cwd) => onNewSessionIn(cwd),
+    togglePin: (kind, key) => onTogglePin(kind, key),
+    startRename: (path) => {
+      if (liveSession(path) !== null) setRenamingPath(path);
+    },
+    toggleTag: (ids, tag, on) => {
+      // ids 是右键那一刻的集合：只对仍在列表里的会话写入。
+      const live = liveById(ids);
+      if (live.length < ids.length) onToast("会话已不存在", "error");
+      if (live.length === 0) return;
+      void runTag(live.map((entry) => entry.id), tag, on);
+    },
+    newTag: (ids) => {
+      const live = liveById(ids);
+      if (live.length < ids.length) onToast("会话已不存在", "error");
+      if (live.length === 0) return;
+      setTagTargets(live.map((entry) => entry.id));
+    },
+    copy: (kind, targets, literal) => {
+      const live = liveSessions(targets);
+      if (live.length < targets.length) onToast("会话已不存在", "error");
+      if (targets.length > 0 && live.length === 0) return;
+      void copy(kind, live, literal);
+    },
+    revealFile: (path) => {
+      if (liveSession(path) === null) return;
+      revealSessionFile(path).catch((e: unknown) =>
+        onToast(errorText(normalizeError(e)), "error"),
+      );
+    },
+    openProjectDir: (cwd) => {
+      openProjectDir(cwd).catch((e: unknown) =>
+        onToast(errorText(normalizeError(e)), "error"),
+      );
+    },
+    enterSelect: (path) => {
+      setMultiMode(true);
+      onToggleCheck(path, true);
+    },
+    requestDelete: (paths) => {
+      const live = paths.filter((p) => byPathRef.current.has(p));
+      if (live.length === 0) {
+        onToast("会话已不存在", "error");
+        return;
+      }
+      onRequestDelete(live);
+    },
+    selectGroup: (paths) => {
+      setMultiMode(true);
+      onToggleChecks(paths, true);
+    },
+    collapseAll: () => setCollapsed(new Set([PINNED_KEY, ...groups.map((g) => g.cwd)])),
+    expandAll: () => setCollapsed(new Set()),
+  };
+
+  /** 右键一行：勾选中的行（≥2 个勾选）走批量菜单，否则单会话菜单。右键不改选中态。 */
+  function openRowMenu(s: SessionSummary): void {
+    setMenuTarget(s.path);
+    const batch =
+      checked.has(s.path) && checked.size >= 2
+        ? visiblePaths
+            .filter((p) => checked.has(p))
+            .map((p) => byPath.get(p))
+            .filter((x): x is SessionSummary => x != null)
+        : [];
+    const specs =
+      batch.length >= 2
+        ? buildBatchMenu(
+            batch,
+            {
+              metaOf: (id) => meta?.sessions[id] ?? null,
+              pinnedIds: new Set(pins.sessions),
+              allTags,
+              metaReady: meta !== null,
+            },
+            actions,
+          )
+        : buildSessionMenu(
+            s,
+            {
+              meta: meta?.sessions[s.id] ?? null,
+              metaReady: meta !== null,
+              pinned: pins.sessions.includes(s.id),
+              allTags,
+            },
+            actions,
+          );
+    void popupMenu(specs).finally(() => setMenuTarget(null));
+  }
+
+  function openGroupMenu(key: string, specs: MenuSpec[]): void {
+    setMenuTarget(key);
+    void popupMenu(specs).finally(() => setMenuTarget(null));
+  }
+
   return (
     <aside className={selecting ? "sidebar is-selecting" : "sidebar"}>
       <div className="sidebar-top">
@@ -237,7 +507,22 @@ export function Sidebar({
         ) : null}
         {pinnedSessions.length > 0 ? (
           <section className="group pinned-group" aria-label="置顶会话">
-            <div className="group-header-row">
+            <div
+              className={
+                menuTarget === PINNED_KEY ? "group-header-row row-menu-target" : "group-header-row"
+              }
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openGroupMenu(
+                  PINNED_KEY,
+                  buildPinnedGroupMenu(
+                    pinnedSessions.map((s) => s.path),
+                    actions,
+                  ),
+                );
+              }}
+            >
               <GroupCheck
                 label="选择全部置顶会话"
                 paths={pinnedSessions.map((s) => s.path)}
@@ -272,8 +557,14 @@ export function Sidebar({
                     meta={meta?.sessions[s.id] ?? null}
                     checked={checked.has(s.path)}
                     selected={s.path === selectedPath}
+                    menuTargeted={menuTarget === s.path}
+                    renaming={renamingPath === s.path}
+                    renameBusy={renameBusy}
+                    onRenameCommit={(value) => void commitRename(s, value)}
+                    onRenameCancel={() => setRenamingPath(null)}
                     onToggleCheck={onToggleCheck}
                     onSelect={onSelect}
+                    onRowMenu={() => openRowMenu(s)}
                     pinned
                     onTogglePin={() => onTogglePin("session", s.id)}
                     projectName={s.cwd.split("/").filter(Boolean).pop() ?? s.cwd}
@@ -291,7 +582,27 @@ export function Sidebar({
           const pinnedProject = pins.projects.includes(g.cwd);
           return (
             <section className="group" key={g.cwd}>
-              <div className="group-header-row">
+              <div
+                className={
+                  menuTarget === g.cwd ? "group-header-row row-menu-target" : "group-header-row"
+                }
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openGroupMenu(
+                    g.cwd,
+                    buildGroupMenu(
+                      {
+                        cwd: g.cwd,
+                        paths: g.sessions.map((s) => s.path),
+                        dirMissing,
+                        pinned: pinnedProject,
+                      },
+                      actions,
+                    ),
+                  );
+                }}
+              >
                 {g.sessions.length > 0 ? (
                   <GroupCheck
                     label={`选择项目 ${name} 的全部会话`}
@@ -348,8 +659,14 @@ export function Sidebar({
                         meta={meta?.sessions[s.id] ?? null}
                         checked={checked.has(s.path)}
                         selected={s.path === selectedPath}
+                        menuTargeted={menuTarget === s.path}
+                        renaming={renamingPath === s.path}
+                        renameBusy={renameBusy}
+                        onRenameCommit={(value) => void commitRename(s, value)}
+                        onRenameCancel={() => setRenamingPath(null)}
                         onToggleCheck={onToggleCheck}
                         onSelect={onSelect}
+                        onRowMenu={() => openRowMenu(s)}
                         pinned={pins.sessions.includes(s.id)}
                         onTogglePin={() => onTogglePin("session", s.id)}
                       />
@@ -366,6 +683,8 @@ export function Sidebar({
           <span className="footer-count">
             共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
           </span>
+          {/* SHIPB-TMP: ModePicker 接入属 feat(modes)，菜单提交暂隐 */}
+          {/* <ModePicker onToast={onToast} /> */}
           <AppearancePanel />
         </div>
         {ompVersion !== null ? (
@@ -393,6 +712,27 @@ export function Sidebar({
           </div>
         ) : null}
       </footer>
+      {tagTargets !== null ? (
+        <NewTagDialog
+          count={tagTargets.length}
+          existing={[
+            ...new Set(
+              tagTargets.flatMap((id) => meta?.sessions[id]?.tags ?? []).map((t) => t.toLowerCase()),
+            ),
+          ].filter((lower) =>
+            tagTargets.every((id) =>
+              (meta?.sessions[id]?.tags ?? []).some((t) => t.toLowerCase() === lower),
+            ),
+          )}
+          known={allTags}
+          onCancel={() => setTagTargets(null)}
+          onSubmit={(tag) => {
+            const ids = tagTargets;
+            setTagTargets(null);
+            void runTag(ids, tag, true);
+          }}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -431,8 +771,15 @@ interface RowProps {
   meta: SessionMeta | null;
   checked: boolean;
   selected: boolean;
+  /** 该行是当前右键菜单的目标（描边提示）。 */
+  menuTargeted: boolean;
+  renaming: boolean;
+  renameBusy: boolean;
+  onRenameCommit: (value: string) => void;
+  onRenameCancel: () => void;
   onToggleCheck: (path: string, on: boolean) => void;
   onSelect: (path: string) => void;
+  onRowMenu: () => void;
   pinned: boolean;
   onTogglePin: () => void;
   /** 置顶行展示所属项目名；普通行不传。 */
@@ -440,14 +787,43 @@ interface RowProps {
 }
 
 /** 会话行：有别名时别名作主标题、原标题小号灰字附后；至多 3 个标签徽章（多余计 `+N`）。 */
-function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTogglePin, projectName }: RowProps) {
+function Row({
+  s,
+  meta,
+  checked,
+  selected,
+  menuTargeted,
+  renaming,
+  renameBusy,
+  onRenameCommit,
+  onRenameCancel,
+  onToggleCheck,
+  onSelect,
+  onRowMenu,
+  pinned,
+  onTogglePin,
+  projectName,
+}: RowProps) {
   const alias = meta?.alias ?? null;
   const shownTags = (meta?.tags ?? []).slice(0, 3);
   const extraTags = (meta?.tags ?? []).length - shownTags.length;
+  const cls = [
+    "row",
+    selected ? "row-selected" : "",
+    pinned ? "row-pinned" : "",
+    menuTargeted ? "row-menu-target" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div
-      className={`row${selected ? " row-selected" : ""}${pinned ? " row-pinned" : ""}`}
+      className={cls}
       onClick={() => onSelect(s.path)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onRowMenu();
+      }}
     >
       <input
         type="checkbox"
@@ -459,7 +835,14 @@ function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTo
       />
       <div className="row-main">
         <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
-          {alias ? (
+          {renaming ? (
+            <RenameInput
+              initial={alias ?? s.title}
+              busy={renameBusy}
+              onSubmit={onRenameCommit}
+              onCancel={onRenameCancel}
+            />
+          ) : alias ? (
             <>
               <span>{alias}</span>
               <span className="row-title-orig">{s.title}</span>
@@ -490,13 +873,58 @@ function Row({ s, meta, checked, selected, pinned, onToggleCheck, onSelect, onTo
           ) : null}
         </div>
       </div>
-        <PinToggle
-          pinned={pinned}
-          kindLabel="会话"
-          name={alias ?? s.title}
-          onToggle={onTogglePin}
-        />
+      <PinToggle
+        pinned={pinned}
+        kindLabel="会话"
+        name={alias ?? s.title}
+        onToggle={onTogglePin}
+      />
     </div>
+  );
+}
+
+interface RenameInputProps {
+  initial: string;
+  busy: boolean;
+  onSubmit: (value: string) => void;
+  onCancel: () => void;
+}
+
+/** 行内重命名输入框：Enter 或失焦提交，Esc 取消；`committing` 防重复提交。 */
+function RenameInput({ initial, busy, onSubmit, onCancel }: RenameInputProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  const committed = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const commit = (value: string) => {
+    if (committed.current) return;
+    committed.current = true;
+    onSubmit(value);
+  };
+  return (
+    <input
+      ref={ref}
+      type="text"
+      className="row-rename"
+      aria-label="重命名会话"
+      defaultValue={initial}
+      maxLength={80}
+      disabled={busy}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          e.stopPropagation();
+          committed.current = true;
+          onCancel();
+        }
+      }}
+      onBlur={(e) => commit(e.currentTarget.value)}
+    />
   );
 }
 

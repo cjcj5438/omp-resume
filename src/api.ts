@@ -162,6 +162,26 @@ export function newSessionInIterm(cwd: string): Promise<void> {
   return call("new_session_in_iterm", { cwd });
 }
 
+/** 写系统剪贴板（WebView 的 clipboard 在菜单动作里会因缺少用户激活被拒）。 */
+export function copyTextToClipboard(text: string): Promise<void> {
+  return call("copy_text", { text });
+}
+
+/** 生成续聊命令（与「在 iTerm 继续」完全同一套校验，但不做占用探测）。 */
+export function getResumeCommand(path: string): Promise<string> {
+  return call("resume_command_for", { path });
+}
+
+/** 在 Finder 中显示会话文件（选中该 `.jsonl`）。 */
+export function revealSessionFile(path: string): Promise<void> {
+  return call("reveal_session_file", { path });
+}
+
+/** 在 Finder 中打开项目目录。 */
+export function openProjectDir(cwd: string): Promise<void> {
+  return call("open_project_dir", { cwd });
+}
+
 /** 原生选择项目目录；用户取消返回 null。 */
 export function chooseDirectory(): Promise<string | null> {
   return call("choose_directory");

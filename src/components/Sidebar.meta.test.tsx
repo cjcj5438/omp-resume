@@ -55,6 +55,10 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
       tagCounts={meta ? tagCounts : []}
       activeTags={activeTags}
       onToggleTag={onToggleTag}
+      onToast={noop}
+      onOpenIterm={noop}
+      onRequestDelete={noop}
+      onMetaSnapshot={noop}
     />,
   );
   return { onToggleTag };

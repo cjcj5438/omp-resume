@@ -132,13 +132,19 @@ pub fn append_branch_marker_impl(
 // open_in_iterm（CONTRACT §4.8）
 // ---------------------------------------------------------------------------
 
-/// 在 iTerm 开新 tab 续聊。`opener` 为实际打开器（生产用
-/// [`super::iterm::open_tab`]），测试注入桩以断言精确命令串。
-pub fn open_in_iterm_impl(
-    cfg: &Config,
-    path: &str,
-    opener: &dyn Fn(&str) -> Result<(), AppError>,
-) -> Result<(), AppError> {
+/// `open_in_iterm` / `resume_command_for` 共用的目标解析：校验会话路径 →
+/// 读 header 的 cwd → 校验 cwd 为存在的绝对目录、无控制字符 → 会话路径无控制字符。
+///
+/// 抽出来的理由：右键菜单「复制续聊命令」必须用**同一套**校验，
+/// 否则会出现「按钮能开、菜单不能复制」的不一致。
+struct ResumeTarget {
+    /// 规范化后的会话绝对路径。
+    path: std::path::PathBuf,
+    cwd: String,
+    session_id: String,
+}
+
+fn resume_target(cfg: &Config, path: &str) -> Result<ResumeTarget, AppError> {
     let valid = config::validate_session_path(cfg, path)?;
     let info = sessions::header_info(&valid)?;
     let cwd = info.cwd.ok_or_else(|| {
@@ -166,8 +172,23 @@ pub fn open_in_iterm_impl(
             "会话路径含控制字符，拒绝在 iTerm 中打开",
         ));
     }
+    Ok(ResumeTarget {
+        path: valid,
+        cwd,
+        session_id: info.id,
+    })
+}
+
+/// 在 iTerm 开新 tab 续聊。`opener` 为实际打开器（生产用
+/// [`super::iterm::open_tab`]），测试注入桩以断言精确命令串。
+pub fn open_in_iterm_impl(
+    cfg: &Config,
+    path: &str,
+    opener: &dyn Fn(&str) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let target = resume_target(cfg, path)?;
     // 只读打开不占租约：IN_USE 拒绝，PROBE_FAILED 允许继续（CONTRACT §4.8）。
-    let p = crate::lock::probe(&cfg.owners_dir, &info.id);
+    let p = crate::lock::probe(&cfg.owners_dir, &target.session_id);
     if p.in_use {
         return Err(AppError::new(
             ErrorCode::InUse,
@@ -175,10 +196,62 @@ pub fn open_in_iterm_impl(
         ));
     }
     opener(&super::iterm::resume_command(
-        &cwd,
-        &valid.to_string_lossy(),
+        &target.cwd,
+        &target.path.to_string_lossy(),
     ))?;
     Ok(())
+}
+
+/// 只生成续聊命令（右键菜单「复制 ▸ 续聊命令」用），不做占用探测：
+/// 正在运行的会话也可能需要把命令粘到别处。
+pub fn resume_command_impl(cfg: &Config, path: &str) -> Result<String, AppError> {
+    let target = resume_target(cfg, path)?;
+    Ok(super::iterm::resume_command(
+        &target.cwd,
+        &target.path.to_string_lossy(),
+    ))
+}
+
+/// 在 Finder 中显示会话文件（`open -R <path>`）。`run` 可注入，便于测试。
+pub fn reveal_session_file_impl(
+    cfg: &Config,
+    path: &str,
+    run: &dyn crate::menubar::iterm::Runner,
+) -> Result<(), AppError> {
+    let valid = config::validate_session_path(cfg, path)?;
+    let text = valid.to_string_lossy();
+    if text.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "会话路径含控制字符，拒绝在 Finder 中显示",
+        ));
+    }
+    run.run("/usr/bin/open", &["-R", &text])
+        .map(|_| ())
+        .map_err(|s| AppError::new(ErrorCode::Io, format!("无法在 Finder 中显示：{s}")))
+}
+
+/// 在 Finder 中打开项目目录（`open <cwd>`）。校验规则与 `new_session_in_iterm_impl` 相同。
+pub fn open_project_dir_impl(
+    cwd: &str,
+    run: &dyn crate::menubar::iterm::Runner,
+) -> Result<(), AppError> {
+    let cwd_path = Path::new(cwd);
+    if !cwd_path.is_absolute() || !cwd_path.is_dir() {
+        return Err(AppError::new(
+            ErrorCode::CwdMissing,
+            format!("目录不存在或不是目录：{cwd}"),
+        ));
+    }
+    if cwd.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "目录路径含控制字符，拒绝在 Finder 中打开",
+        ));
+    }
+    run.run("/usr/bin/open", &[cwd])
+        .map(|_| ())
+        .map_err(|s| AppError::new(ErrorCode::Io, format!("无法打开项目目录：{s}")))
 }
 
 // ---------------------------------------------------------------------------

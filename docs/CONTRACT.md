@@ -24,7 +24,8 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
   不使用 unix 时间戳。
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
   4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
-  4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）。
+  4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）、
+  4.64–4.67 会话右键菜单辅助（§25）。
 
 ## 1. 配置解析
 
@@ -2042,3 +2043,36 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
   偏好只存 `localStorage`（`omp-resume:stage:v2`，另清掉语义已变的 v1），不写 omp。
 - 配置展示：「选中详情」与「Agent 库」共用 `AgentConfigPanel`，全部只读，没有保存入口。
 - 在舞台视图里点侧栏会话只切换舞台目标，不离开舞台（看详情走头部「查看会话」）。
+
+## 25. 会话右键菜单的辅助命令（§4.64–§4.67）
+
+> 右键菜单用原生菜单（`src/nativeMenu.ts`），动作分两类：纯前端（复制、置顶、折叠）
+> 与需要后端的一条命令。这里只记后端新增的四个。
+
+### 25.1 校验复用
+
+`resume_command_for`、`open_in_iterm` 共用 `resume_target(cfg, path)`：会话路径校验（§6）→
+`header_info` 的 `cwd` → cwd 必须是存在的绝对目录且无控制字符 → 会话路径无控制字符。
+任何一项不过都返回与 §4.8 相同的错误码，**保证「按钮能开」和「菜单能复制」永远一致**。
+
+### 25.2 / 4.64 `resume_command_for { path } -> string`（只读）
+
+返回 `cd '<cwd>' && omp --resume '<abs path>'`（§4.8 同一生成函数）。
+**不做占用探测**：正在运行的会话也需要把命令粘到别处。
+
+### 25.3 / 4.65 `copy_text { text } -> ()`（写系统剪贴板）
+
+走 `/usr/bin/pbcopy` 的 stdin（不拼 shell 命令）。存在理由：WebView 的
+`navigator.clipboard` 需要用户激活，而「复制续聊命令」必须先 await 后端取命令，
+激活态已丢失 → `NotAllowedError`。前端 `copyText` 先试 `navigator.clipboard`，
+失败再落到本命令。
+
+### 25.4 / 4.66 `reveal_session_file { path } -> ()`
+
+`/usr/bin/open -R <path>`（Finder 里选中该 `.jsonl`）。非会话路径 → `OUTSIDE_ROOT`；
+含控制字符 → `INVALID_INPUT`（两者都不调用 Runner）；Runner 失败 → `IO`。
+
+### 25.5 / 4.67 `open_project_dir { cwd } -> ()`
+
+`/usr/bin/open <cwd>`。校验与 `new_session_in_iterm` 相同：
+非绝对路径/不是目录 → `CWD_MISSING`；含控制字符 → `INVALID_INPUT`；Runner 失败 → `IO`。

@@ -175,6 +175,71 @@ async fn new_session_in_iterm(cwd: String) -> Result<(), model::AppError> {
     blocking(move || ops::commands::new_session_in_iterm_impl(&cwd, &ops::iterm::open_tab)).await
 }
 
+/// 写系统剪贴板（WebView 的 `navigator.clipboard` 在菜单动作丢失用户激活后会拒绝，
+/// 续聊命令这类「先 await 再复制」的路径必须走原生）。
+///
+/// 只接受文本，通过 `/usr/bin/pbcopy` 的 stdin 写入，不拼 shell 命令。
+#[tauri::command]
+async fn copy_text(text: String) -> Result<(), model::AppError> {
+    blocking(move || {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/usr/bin/pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| model::AppError::new(ErrorCode::Io, format!("无法启动 pbcopy：{e}")))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| model::AppError::new(ErrorCode::Io, "无法写入剪贴板：管道不可用"))?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| model::AppError::new(ErrorCode::Io, format!("无法写入剪贴板：{e}")))?;
+        drop(stdin);
+        let status = child
+            .wait()
+            .map_err(|e| model::AppError::new(ErrorCode::Io, format!("剪贴板进程失败：{e}")))?;
+        if !status.success() {
+            return Err(model::AppError::new(
+                ErrorCode::Io,
+                "无法写入剪贴板：pbcopy 返回错误",
+            ));
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// 生成续聊命令（右键菜单「复制 ▸ 续聊命令」），不做占用探测。
+#[tauri::command]
+async fn resume_command_for(
+    cfg: tauri::State<'_, config::Config>,
+    path: String,
+) -> Result<String, model::AppError> {
+    let cfg = cfg.inner().clone();
+    blocking(move || ops::commands::resume_command_impl(&cfg, &path)).await
+}
+
+/// 在 Finder 中显示会话文件。
+#[tauri::command]
+async fn reveal_session_file(
+    cfg: tauri::State<'_, config::Config>,
+    path: String,
+) -> Result<(), model::AppError> {
+    let cfg = cfg.inner().clone();
+    blocking(move || {
+        ops::commands::reveal_session_file_impl(&cfg, &path, &menubar::iterm::SystemRunner)
+    })
+    .await
+}
+
+/// 在 Finder 中打开项目目录。
+#[tauri::command]
+async fn open_project_dir(cwd: String) -> Result<(), model::AppError> {
+    blocking(move || ops::commands::open_project_dir_impl(&cwd, &menubar::iterm::SystemRunner))
+        .await
+}
+
 /// 原生选择项目目录；用户取消返回 null。
 #[tauri::command]
 async fn choose_directory() -> Result<Option<String>, model::AppError> {
@@ -311,6 +376,10 @@ pub fn run() {
             list_cleanup_candidates,
             append_branch_marker,
             open_in_iterm,
+            copy_text,
+            resume_command_for,
+            reveal_session_file,
+            open_project_dir,
             new_session_in_iterm,
             choose_directory,
             get_session_recap,

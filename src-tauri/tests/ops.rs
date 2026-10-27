@@ -422,3 +422,111 @@ fn smoke_marker_real() {
     assert_eq!(after.active_path_ids.first(), Some(&node));
     std::fs::remove_dir_all(&owners).unwrap();
 }
+
+#[test]
+fn resume_command_matches_open_in_iterm_and_skips_lock_probe() {
+    let t = tempfile::tempdir().unwrap();
+    let c = cfg(t.path());
+    let proj = t.path().join("proj");
+    let cwd = t.path().join("my dir 未命名'x");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let p = branch_session(&proj, "r.jsonl", "sess-r", &cwd.display().to_string());
+    let ps = p.display().to_string();
+    let valid = config::validate_session_path(&c, &ps).unwrap();
+    let expect = format!(
+        "cd '{}' && omp --resume '{}'",
+        cwd.display().to_string().replace('\'', "'\"'\"'"),
+        valid.display(),
+    );
+    assert_eq!(ops_cmds::resume_command_impl(&c, &ps).unwrap(), expect);
+
+    // 占用中也能拿到命令（菜单「复制续聊命令」不该被 IN_USE 拦住）。
+    let _guard = hold_lock(&c.owners_dir, "sess-r");
+    assert_eq!(ops_cmds::resume_command_impl(&c, &ps).unwrap(), expect);
+
+    // 校验失败仍报 CWD_MISSING。
+    let gone = branch_session(
+        &proj,
+        "rg.jsonl",
+        "sess-rg",
+        &t.path().join("gone").display().to_string(),
+    );
+    let e = ops_cmds::resume_command_impl(&c, &gone.display().to_string()).unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+}
+
+/// 假 Runner：记录每次调用的 (prog, args)，可按需返回错误。
+#[derive(Default)]
+struct RecordRunner {
+    calls: std::sync::Mutex<Vec<(String, Vec<String>)>>,
+    fail: bool,
+}
+
+impl omp_resume_lib::menubar::iterm::Runner for RecordRunner {
+    fn run(&self, prog: &str, args: &[&str]) -> Result<String, String> {
+        self.calls.lock().unwrap().push((
+            prog.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        ));
+        if self.fail {
+            Err("boom".into())
+        } else {
+            Ok(String::new())
+        }
+    }
+}
+
+#[test]
+fn reveal_session_file_and_open_project_dir() {
+    let t = tempfile::tempdir().unwrap();
+    let c = cfg(t.path());
+    let proj = t.path().join("proj");
+    let cwd = t.path().join("projdir");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let p = branch_session(&proj, "v.jsonl", "sess-v", &cwd.display().to_string());
+    let ps = p.display().to_string();
+    let valid = config::validate_session_path(&c, &ps).unwrap();
+
+    let runner = RecordRunner::default();
+    ops_cmds::reveal_session_file_impl(&c, &ps, &runner).unwrap();
+    {
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "/usr/bin/open");
+        assert_eq!(
+            calls[0].1,
+            vec!["-R".to_string(), valid.display().to_string()]
+        );
+    }
+
+    // 非会话路径：拒绝且不再调用 runner。
+    let outside = t.path().join("outside.jsonl");
+    std::fs::write(&outside, "{}").unwrap();
+    let e = ops_cmds::reveal_session_file_impl(&c, &outside.display().to_string(), &runner)
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::OutsideRoot);
+    assert_eq!(runner.calls.lock().unwrap().len(), 1);
+
+    // open_project_dir：合法目录 → `open <cwd>`；不存在 → CWD_MISSING 且不调用。
+    let project_runner = RecordRunner::default();
+    ops_cmds::open_project_dir_impl(&cwd.display().to_string(), &project_runner).unwrap();
+    {
+        let calls = project_runner.calls.lock().unwrap();
+        assert_eq!(calls[0].0, "/usr/bin/open");
+        assert_eq!(calls[0].1, vec![cwd.display().to_string()]);
+    }
+    let gone = t.path().join("gone");
+    let e =
+        ops_cmds::open_project_dir_impl(&gone.display().to_string(), &project_runner).unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+    assert_eq!(project_runner.calls.lock().unwrap().len(), 1);
+
+    // runner 失败 → IO 且文案带用途。
+    let bad = RecordRunner {
+        fail: true,
+        ..Default::default()
+    };
+    let e = ops_cmds::reveal_session_file_impl(&c, &ps, &bad).unwrap_err();
+    assert_eq!(e.code, ErrorCode::Io);
+    assert!(e.message.contains("Finder"), "{}", e.message);
+}

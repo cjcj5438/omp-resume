@@ -68,6 +68,10 @@ function renderSidebar(over: {
       tagCounts={[]}
       activeTags={[]}
       onToggleTag={noop}
+      onToast={noop}
+      onOpenIterm={noop}
+      onRequestDelete={noop}
+      onMetaSnapshot={noop}
     />,
   );
   return { onToggleChecks, onClearChecks, view };

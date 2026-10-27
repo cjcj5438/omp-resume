@@ -367,6 +367,25 @@ function App() {
     }
   }, [addToast]);
 
+  const handleOpenIterm = useCallback(
+    (s: SessionSummary) => {
+      openInIterm({ path: s.path })
+        .then(() => addToast("已在 iTerm 打开", "info"))
+        .catch((e: unknown) => addToast(errorText(normalizeError(e)), "error"));
+    },
+    [addToast],
+  );
+
+  const handleRequestDelete = useCallback(
+    (paths: string[]) => {
+      const targets = paths
+        .map((p) => byPath.get(p))
+        .filter((s): s is SessionSummary => s != null);
+      if (targets.length > 0) setDeleteTargets(targets);
+    },
+    [byPath],
+  );
+
   const deleteTargetsFrom = useCallback(
     (checkedPaths: Set<string>, selPath: string | null) => {
       const paths = checkedPaths.size > 0 ? [...checkedPaths] : selPath ? [selPath] : [];
@@ -438,6 +457,10 @@ function App() {
         tagCounts={tagCounts}
         activeTags={activeTags}
         onToggleTag={handleToggleTag}
+        onToast={addToast}
+        onOpenIterm={handleOpenIterm}
+        onRequestDelete={handleRequestDelete}
+        onMetaSnapshot={handleMetaSnapshot}
       />
       {view === "history" ? (
         <PromptHistoryView
@@ -491,11 +514,7 @@ function App() {
           gone={selectedGone}
           checkedCount={checked.size}
           refreshKey={refreshKey}
-          onOpenIterm={(s) => {
-            openInIterm({ path: s.path })
-              .then(() => addToast("已在 iTerm 打开", "info"))
-              .catch((e: unknown) => addToast(errorText(normalizeError(e)), "error"));
-          }}
+          onOpenIterm={handleOpenIterm}
           onDelete={() => {
             const targets = deleteTargetsFrom(checked, selectedPath);
             if (targets.length > 0) setDeleteTargets(targets);
