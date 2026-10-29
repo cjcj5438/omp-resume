@@ -351,6 +351,7 @@ pub fn run() {
                 poll_cfg.sessions_dir.clone(),
             );
             menubar::tray::spawn_modes_refresher(app.handle().clone());
+            menubar::tray::spawn_extras_refresher(app.handle().clone());
             Ok(())
         })
         .on_menu_event(menubar::tray::handle_menu_event)

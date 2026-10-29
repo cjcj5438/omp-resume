@@ -58,6 +58,8 @@ pub struct Snapshot {
     pub subagents: u32,
     pub unpaired: u32,
     pub duration_secs: i64,
+    /// 距最后一条有意义记录的秒数（无记录时自创建/首次看到起）。
+    pub idle_secs: i64,
 }
 
 /// 各层耗时（毫秒）。
@@ -288,6 +290,7 @@ impl Poller {
                 subagents: tail.running_subagents(),
                 unpaired: tail.unpaired_tool_calls(),
                 duration_secs: (now - created).max(0),
+                idle_secs: (now - tail.last().map(|l| l.at).unwrap_or(created)).max(0),
             });
         }
         timings.t2_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -316,7 +319,7 @@ impl Poller {
                 focusable: s.focusable,
                 focus_block_reason: focus_block_reason(s),
                 subagents_running: s.subagents,
-                duration_secs: s.duration_secs,
+                idle_secs: s.idle_secs,
             })
             .collect();
         let menu = menu::build_model(rows, notify_on, dock_on);

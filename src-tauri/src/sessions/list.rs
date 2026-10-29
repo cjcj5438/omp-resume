@@ -64,6 +64,70 @@ pub fn scan_top_level(sessions_dir: &Path) -> Result<(PathBuf, Vec<(String, Path
     Ok((root, files))
 }
 
+/// 托盘用：会话文件按 mtime 倒序（并列按路径排序）。
+fn files_by_mtime_desc(sessions_dir: &Path) -> Result<Vec<PathBuf>, AppError> {
+    let (_root, files) = scan_top_level(sessions_dir)?;
+    let mut stamped: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for (_dir, path) in files {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        let Ok(mtime) = meta.modified() else {
+            continue;
+        };
+        stamped.push((mtime, path));
+    }
+    stamped.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    Ok(stamped.into_iter().map(|(_, p)| p).collect())
+}
+
+/// 托盘「最近会话」：按 mtime 倒序，取前 `limit` 个可见（summarize 非 None）且未被占用的会话。
+pub fn recent_sessions(cfg: &Config, limit: usize) -> Result<Vec<SessionSummary>, AppError> {
+    let mut out = Vec::new();
+    for path in files_by_mtime_desc(&cfg.sessions_dir)? {
+        if out.len() >= limit {
+            break;
+        }
+        let Ok(parsed) = parse::parse_file(&path) else {
+            continue;
+        };
+        let Ok(modified_at) = mtime_iso(&path) else {
+            continue;
+        };
+        let Ok(size) = file_size(&path) else {
+            continue;
+        };
+        if let Some(s) = summarize(&path, &parsed, size, &modified_at, cfg) {
+            if !s.in_use {
+                out.push(s);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 托盘「新建会话」：按 mtime 倒序，取前 `limit` 个不同、且目录仍存在的项目 cwd（只读 header）。
+pub fn recent_projects(cfg: &Config, limit: usize) -> Result<Vec<String>, AppError> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in files_by_mtime_desc(&cfg.sessions_dir)? {
+        if out.len() >= limit {
+            break;
+        }
+        let Ok(info) = crate::sessions::header_info(&path) else {
+            continue;
+        };
+        let Some(cwd) = info.cwd else { continue };
+        if cwd.is_empty() || !Path::new(&cwd).is_dir() {
+            continue;
+        }
+        if seen.insert(cwd.clone()) {
+            out.push(cwd);
+        }
+    }
+    Ok(out)
+}
+
 /// 列出全部会话（每个文件只解析一次）。
 pub fn list_sessions(cfg: &Config) -> Result<ListSessionsResult, AppError> {
     let (root, files) = scan_top_level(&cfg.sessions_dir)?;
@@ -406,11 +470,11 @@ mod tests {
         assert!(!is_top_jsonl(".jsonl"));
     }
 
-    fn write_session(proj: &std::path::Path, name: &str, id: &str) {
+    fn write_session(proj: &std::path::Path, name: &str, id: &str, cwd: &str) {
         std::fs::create_dir_all(proj).unwrap();
         let lines = [
             serde_json::json!({"type":"title","v":1,"title":"占用者测试","source":"auto","updatedAt":"2026-10-14T00:00:00.000Z","pad":"   "}).to_string(),
-            serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":"/tmp"}).to_string(),
+            serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-10-14T00:00:00.000Z","cwd":cwd}).to_string(),
             serde_json::json!({"type":"message","id":"u1","parentId":null,"timestamp":"2026-10-14T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}).to_string(),
         ];
         std::fs::write(proj.join(name), lines.join("\n") + "\n").unwrap();
@@ -431,6 +495,7 @@ mod tests {
             &sessions.join("-p"),
             "2026-10-14T00-00-00-000Z_sess-occ-free.jsonl",
             "sess-occ-free",
+            "/tmp",
         );
         let cfg = Config {
             sessions_dir: sessions,
@@ -453,6 +518,7 @@ mod tests {
             &sessions.join("-p"),
             "2026-10-14T00-00-00-000Z_sess-occ-held.jsonl",
             "sess-occ-held",
+            "/tmp",
         );
         let owners = t.path().join("owners");
         std::fs::create_dir_all(&owners).unwrap();
@@ -484,5 +550,70 @@ mod tests {
             assert_eq!(o.pid, std::process::id());
         }
         std::mem::forget(holder);
+    }
+
+    fn touch(path: &std::path::Path, secs: u64) {
+        let t = filetime::FileTime::from_unix_time(secs as i64, 0);
+        filetime::set_file_mtime(path, t).unwrap();
+    }
+
+    #[test]
+    fn recent_sessions_newest_first_skips_hidden() {
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        let proj = sessions.join("-p");
+        // 最新的文件只有 header、无标题无用户消息 → 隐藏，应跳过。
+        std::fs::create_dir_all(&proj).unwrap();
+        let hidden = proj.join("2026-10-14T00-00-03-000Z_hidden.jsonl");
+        std::fs::write(
+            &hidden,
+            serde_json::json!({"type":"session","version":3,"id":"hidden","timestamp":"2026-10-14T00:00:00.000Z","cwd":"/tmp"}).to_string() + "\n",
+        )
+        .unwrap();
+        write_session(&proj, "2026-10-14T00-00-02-000Z_s2.jsonl", "s2", "/tmp");
+        write_session(&proj, "2026-10-14T00-00-01-000Z_s1.jsonl", "s1", "/tmp");
+        touch(&hidden, 300);
+        touch(&proj.join("2026-10-14T00-00-02-000Z_s2.jsonl"), 200);
+        touch(&proj.join("2026-10-14T00-00-01-000Z_s1.jsonl"), 100);
+        let cfg = Config {
+            sessions_dir: sessions,
+            owners_dir: t.path().join("owners"),
+        };
+        let out = recent_sessions(&cfg, 1).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "s2");
+        // limit 放大：s1 也可见，hidden 始终跳过。
+        let out = recent_sessions(&cfg, 10).unwrap();
+        let ids: Vec<&str> = out.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["s2", "s1"]);
+    }
+
+    #[test]
+    fn recent_projects_dedupes_and_skips_missing() {
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        let proj = sessions.join("-p");
+        let dir_a = t.path().join("proj-a");
+        let dir_c = t.path().join("proj-c");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_c).unwrap();
+        let missing = t.path().join("gone");
+        let a = dir_a.to_string_lossy().into_owned();
+        let c = dir_c.to_string_lossy().into_owned();
+        let m = missing.to_string_lossy().into_owned();
+        // 最新→最旧：A, A, 不存在, C。
+        write_session(&proj, "2026-10-14T00-00-04-000Z_p4.jsonl", "p4", &a);
+        write_session(&proj, "2026-10-14T00-00-03-000Z_p3.jsonl", "p3", &a);
+        write_session(&proj, "2026-10-14T00-00-02-000Z_p2.jsonl", "p2", &m);
+        write_session(&proj, "2026-10-14T00-00-01-000Z_p1.jsonl", "p1", &c);
+        touch(&proj.join("2026-10-14T00-00-04-000Z_p4.jsonl"), 400);
+        touch(&proj.join("2026-10-14T00-00-03-000Z_p3.jsonl"), 300);
+        touch(&proj.join("2026-10-14T00-00-02-000Z_p2.jsonl"), 200);
+        touch(&proj.join("2026-10-14T00-00-01-000Z_p1.jsonl"), 100);
+        let cfg = Config {
+            sessions_dir: sessions,
+            owners_dir: t.path().join("owners"),
+        };
+        assert_eq!(recent_projects(&cfg, 5).unwrap(), vec![a, c]);
     }
 }

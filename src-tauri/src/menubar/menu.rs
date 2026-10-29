@@ -10,6 +10,12 @@ use super::classify::SessionStatus;
 pub const MAX_ROWS: usize = 8;
 /// 行内标题最大字符数（超出截断加 `…`）。
 pub const TITLE_MAX_CHARS: usize = 32;
+/// 托盘「最近会话」子菜单最多条目数。
+pub const RECENT_LIMIT: usize = 5;
+/// 托盘「新建会话」子菜单最多项目数。
+pub const PROJECT_LIMIT: usize = 5;
+/// 今日花费菜单项 id，同时作为就地更新器的键（会话 id 不会与之冲突）。
+pub const COST_ITEM_ID: &str = "today-cost";
 
 /// 单个会话行的输入快照（由轮询组装）。
 #[derive(Debug, Clone)]
@@ -26,8 +32,8 @@ pub struct RowInput {
     /// 不可聚焦的原因（`focusable == false` 时展示，如“仅 iTerm 可聚焦”）。
     pub focus_block_reason: Option<String>,
     pub subagents_running: u32,
-    /// 会话持续秒数（自 header 创建时间起）。
-    pub duration_secs: i64,
+    /// 距最后活动秒数。
+    pub idle_secs: i64,
 }
 
 /// 单个会话行的展示数据。
@@ -37,7 +43,9 @@ pub struct RowInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowModel {
     pub session_id: String,
-    /// 时长之前（状态符、标题、应用名；已截断，未做 `&` 转义）。
+    /// 运行状态（装配时映射为原生状态图标）。
+    pub status: SessionStatus,
+    /// 时长之前（标题、应用名、状态文字；已截断，未做 `&` 转义）。
     pub head: String,
     /// 时长文字（唯一高频变化的部分）。
     pub duration_text: String,
@@ -58,6 +66,7 @@ impl RowModel {
     /// 形状相同 = 只可能差时长文字（可就地 `set_text`，不重建菜单）。
     fn same_shape(&self, other: &RowModel) -> bool {
         self.session_id == other.session_id
+            && self.status == other.status
             && self.head == other.head
             && self.tail == other.tail
             && self.enabled == other.enabled
@@ -80,6 +89,8 @@ pub struct MenuModel {
     pub badge_count: usize,
     /// 模型模式列表；`None` = 尚未读到或读取失败（菜单不显示「模式」子菜单）。
     pub modes: Option<Vec<ModeEntry>>,
+    /// 附加数据；None = 尚未统计（不显示花费行与最近会话）。
+    pub extras: Option<Extras>,
 }
 
 /// 托盘「模式」子菜单的一项。
@@ -90,10 +101,34 @@ pub struct ModeEntry {
     pub enabled: bool,
 }
 
+/// 托盘「最近会话」子菜单的一项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentEntry {
+    pub session_id: String,
+    pub path: String,
+    pub text: String,
+}
+
+/// 托盘「新建会话」子菜单的一项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectEntry {
+    pub cwd: String,
+    pub text: String,
+}
+
+/// 60 秒慢刷新的附加数据。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Extras {
+    pub cost_text: Option<String>,
+    pub recent: Vec<RecentEntry>,
+    pub projects: Vec<ProjectEntry>,
+}
+
 impl MenuModel {
     /// 结构性变化检测：会话增减 / 状态 / 排序 / 标题 / 设置勾选任一变化即 false
-    /// （头部与图标标题含计数，状态变化必改它们；行的形状含标题与状态符）。
-    /// 返回 true 时两个模型只可能差行内时长文字。
+    /// （头部与图标标题含计数，状态变化必改它们；行的形状含标题与状态文字）。
+    /// 花费行是否出现算结构变化，但其金额数字的变化不算（由 [`refresh_decision`]
+    /// 就地更新文字）。返回 true 时两个模型只可能差行内时长文字与花费文字。
     pub fn same_structure(&self, other: &MenuModel) -> bool {
         self.header == other.header
             && self.tray_title == other.tray_title
@@ -114,6 +149,14 @@ impl MenuModel {
                 .iter()
                 .zip(&other.overflow)
                 .all(|(a, b)| a.same_shape(b))
+            && self
+                .extras
+                .as_ref()
+                .map(|e| (&e.recent, &e.projects, e.cost_text.is_some()))
+                == other
+                    .extras
+                    .as_ref()
+                    .map(|e| (&e.recent, &e.projects, e.cost_text.is_some()))
     }
 }
 
@@ -122,8 +165,9 @@ impl MenuModel {
 pub enum Refresh {
     /// 模型一致：不动菜单。
     None,
-    /// 结构不变、行文本变化：`(会话 id, 新完整行文本)`，就地 `set_text`
+    /// 结构不变、文字变化：`(项 id, 新完整文本)`，就地 `set_text`
     /// 更新（NSMenu 展开时改文字安全，不关闭菜单）。
+    /// 会话行用会话 id，花费行用 [`COST_ITEM_ID`]。
     Texts(Vec<(String, String)>),
     /// 结构性变化：整体重建菜单（`set_menu`，会关闭已展开的菜单）。
     Rebuild,
@@ -149,6 +193,14 @@ pub fn refresh_decision(prev: Option<&MenuModel>, new: &MenuModel) -> Refresh {
     {
         if a.text() != b.text() {
             texts.push((b.session_id.clone(), b.text()));
+        }
+    }
+    if let (Some(a), Some(b)) = (
+        prev.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
+        new.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
+    ) {
+        if a != b {
+            texts.push((COST_ITEM_ID.to_string(), b.clone()));
         }
     }
     Refresh::Texts(texts)
@@ -204,6 +256,7 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         let (head, duration_text, tail) = row_parts(input);
         let row = RowModel {
             session_id: input.session_id.clone(),
+            status: input.status,
             head,
             duration_text,
             tail,
@@ -225,18 +278,24 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         dock_on,
         badge_count: waiting + stuck,
         modes: None,
+        extras: None,
     }
 }
 
 /// 行文本三段：(时长前、时长、时长后)。见 [`RowModel`]。
+///
+/// 格式：`{标题} · [{应用} · ]{状态} · {距最后活动} [· 子代理 N][（原因）]`；
+/// iTerm2 占用不写应用名（默认情形），状态图标由装配层加原生点。
 fn row_parts(input: &RowInput) -> (String, String, String) {
     let title = crate::sessions::truncate_chars(&input.title, TITLE_MAX_CHARS);
-    let app = match (&input.app_label, input.pid) {
-        (Some(app), _) => app.clone(),
-        (None, Some(pid)) => format!("PID {pid}"),
-        (None, None) => "占用中".to_string(),
-    };
-    let head = format!("{} {} · {} · ", input.status.glyph(), title, app);
+    let mut head = format!("{title} · ");
+    match (&input.app_label, input.pid) {
+        (Some(app), _) if app == "iTerm2" => {}
+        (Some(app), _) => head.push_str(&format!("{app} · ")),
+        (None, Some(pid)) => head.push_str(&format!("PID {pid} · ")),
+        (None, None) => head.push_str("占用中 · "),
+    }
+    head.push_str(&format!("{} · ", input.status.label()));
     let mut tail = String::new();
     if input.subagents_running > 0 {
         tail.push_str(&format!(" · 子代理 {}", input.subagents_running));
@@ -246,10 +305,10 @@ fn row_parts(input: &RowInput) -> (String, String, String) {
             tail.push_str(&format!("（{reason}）"));
         }
     }
-    (head, format_duration(input.duration_secs), tail)
+    (head, format_duration(input.idle_secs), tail)
 }
 
-/// 持续时长展示：`刚刚` / `X分` / `X小时Y分` / `X天`。
+/// 距最后活动展示：`刚刚` / `X分` / `X小时Y分` / `X天`。
 pub fn format_duration(secs: i64) -> String {
     let secs = secs.max(0);
     if secs < 60 {
@@ -287,6 +346,42 @@ pub fn mode_entries(state: &crate::model::ModelPresetsState) -> Vec<ModeEntry> {
         .collect()
 }
 
+/// 今日花费行文本。
+pub fn cost_text(total_usd: f64) -> String {
+    format!("今日花费 ${total_usd:.2}")
+}
+
+/// 会话摘要 → 「最近会话」条目（标题截断 + 项目末级目录名）。
+pub fn recent_entry(s: &crate::model::SessionSummary) -> RecentEntry {
+    let mut text = crate::sessions::truncate_chars(&s.title, TITLE_MAX_CHARS);
+    if !s.cwd.is_empty() {
+        if let Some(last) = s.cwd.rsplit('/').next().filter(|c| !c.is_empty()) {
+            text.push_str(&format!(" · {last}"));
+        }
+    }
+    RecentEntry {
+        session_id: s.id.clone(),
+        path: s.path.clone(),
+        text,
+    }
+}
+
+/// 项目目录 → 「新建会话」条目（`$HOME` 缩写为 `~` 后截断 48 字）。
+pub fn project_entry(cwd: &str, home: Option<&str>) -> ProjectEntry {
+    let short = match home {
+        Some(h) if !h.is_empty() && cwd == h => "~".to_string(),
+        Some(h) if !h.is_empty() => match cwd.strip_prefix(&format!("{h}/")) {
+            Some(rest) => format!("~/{rest}"),
+            None => cwd.to_string(),
+        },
+        _ => cwd.to_string(),
+    };
+    ProjectEntry {
+        cwd: cwd.to_string(),
+        text: crate::sessions::truncate_chars(&short, 48),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,7 +396,7 @@ mod tests {
             focusable: true,
             focus_block_reason: None,
             subagents_running: 0,
-            duration_secs: 150,
+            idle_secs: 150,
         }
     }
 
@@ -365,13 +460,14 @@ mod tests {
         let mut r = row("x", SessionStatus::Working);
         r.title = "加长标题测试会话".to_string();
         r.subagents_running = 2;
-        r.duration_secs = 3700;
+        r.idle_secs = 3700;
         let m = build_model(vec![r], true, false);
         assert_eq!(
             m.rows[0].text(),
-            "▶ 加长标题测试会话 · iTerm2 · 1小时1分 · 子代理 2"
+            "加长标题测试会话 · 工作中 · 1小时1分 · 子代理 2"
         );
         assert!(m.rows[0].enabled);
+        assert_eq!(m.rows[0].status, SessionStatus::Working);
     }
 
     #[test]
@@ -424,9 +520,11 @@ mod tests {
             "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四".to_string();
         assert!(r.title.chars().count() > TITLE_MAX_CHARS);
         let m = build_model(vec![r], true, false);
-        let title_part = m.rows[0].text().split(" · ").next().unwrap().to_string();
-        assert_eq!(title_part.chars().count(), 2 + TITLE_MAX_CHARS); // glyph + 空格 + 32
+        let text = m.rows[0].text();
+        let title_part = text.split(" · ").next().unwrap().to_string();
+        assert_eq!(title_part.chars().count(), TITLE_MAX_CHARS);
         assert!(title_part.ends_with('…'), "{title_part}");
+        assert!(text.starts_with(&format!("{title_part} · ")), "{text}");
     }
 
     #[test]
@@ -450,30 +548,30 @@ mod tests {
     fn row_text_parts() {
         let mut r = row("x", SessionStatus::Working);
         r.subagents_running = 1;
-        r.duration_secs = 3660;
+        r.idle_secs = 3660;
         let m = build_model(vec![r], true, false);
         let row = &m.rows[0];
-        assert_eq!(row.head, "▶ 会话x · iTerm2 · ");
+        assert_eq!(row.head, "会话x · 工作中 · ");
         assert_eq!(row.duration_text, "1小时1分");
         assert_eq!(row.tail, " · 子代理 1");
-        assert_eq!(row.text(), "▶ 会话x · iTerm2 · 1小时1分 · 子代理 1");
+        assert_eq!(row.text(), "会话x · 工作中 · 1小时1分 · 子代理 1");
     }
 
     #[test]
     fn duration_only_change_is_text_update() {
         let mut a = row("a", SessionStatus::Working);
-        a.duration_secs = 3590;
+        a.idle_secs = 3590;
         let mut b = row("b", SessionStatus::Idle);
-        b.duration_secs = 3590;
+        b.idle_secs = 3590;
         let old = build_model(vec![a.clone(), b.clone()], true, false);
-        a.duration_secs = 3660; // 只有 a 跨分钟/小时边界，文本变化
+        a.idle_secs = 3660; // 只有 a 跨分钟/小时边界，文本变化
         let new = build_model(vec![a, b], true, false);
         assert!(old.same_structure(&new));
         assert_eq!(
             refresh_decision(Some(&old), &new),
             Refresh::Texts(vec![(
                 "a".to_string(),
-                "▶ 会话a · iTerm2 · 1小时1分".to_string()
+                "会话a · 工作中 · 1小时1分".to_string()
             )])
         );
     }
@@ -484,10 +582,10 @@ mod tests {
             .map(|i| row(&format!("s{i:02}"), SessionStatus::Working))
             .collect();
         let mut old_inputs = inputs.clone();
-        old_inputs[8].duration_secs = 59;
+        old_inputs[8].idle_secs = 59;
         let old = build_model(old_inputs, true, false);
         let mut new_inputs = inputs;
-        new_inputs[8].duration_secs = 120;
+        new_inputs[8].idle_secs = 120;
         let new = build_model(new_inputs, true, false);
         assert!(old.same_structure(&new));
         match refresh_decision(Some(&old), &new) {
@@ -503,7 +601,7 @@ mod tests {
     #[test]
     fn structural_changes_rebuild() {
         let old = build_model(vec![row("a", SessionStatus::Idle)], true, false);
-        // 状态变化（头部计数与行状态符都变）。
+        // 状态变化（头部计数、行状态文字与原生图标都变）。
         let new = build_model(vec![row("a", SessionStatus::Working)], true, false);
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
         // 标题变化。
@@ -567,6 +665,23 @@ mod tests {
         let mut other = m.clone();
         other.badge_count += 1;
         assert!(!m.same_structure(&other));
+    }
+
+    #[test]
+    fn iterm_app_omitted_other_app_shown() {
+        // iTerm2 是默认情形，不写应用名。
+        let m = build_model(vec![row("a", SessionStatus::Working)], true, false);
+        assert_eq!(m.rows[0].text(), "会话a · 工作中 · 2分");
+        // 非 iTerm 应用保留在标题与状态之间。
+        let mut r = row("v", SessionStatus::WaitingInput);
+        r.app_label = Some("VS Code".to_string());
+        r.focusable = false;
+        r.focus_block_reason = Some("仅 iTerm 可聚焦".to_string());
+        let m = build_model(vec![r], true, false);
+        assert_eq!(
+            m.rows[0].text(),
+            "会话v · VS Code · 等待输入 · 2分（仅 iTerm 可聚焦）"
+        );
     }
 }
 
@@ -650,5 +765,108 @@ mod modes_tests {
             refresh_decision(Some(&with_modes), &with_modes),
             Refresh::None
         );
+    }
+}
+
+#[cfg(test)]
+mod extras_tests {
+    use super::*;
+
+    fn extras(cost: &str) -> Extras {
+        Extras {
+            cost_text: Some(cost.to_string()),
+            recent: vec![RecentEntry {
+                session_id: "s1".into(),
+                path: "/tmp/s1.jsonl".into(),
+                text: "标题一 · proj".into(),
+            }],
+            projects: vec![ProjectEntry {
+                cwd: "/tmp/proj".into(),
+                text: "/tmp/proj".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn cost_change_is_text_update() {
+        let mut old = build_model(vec![], true, false);
+        old.extras = Some(extras("今日花费 $1.20"));
+        let mut new = old.clone();
+        new.extras = Some(extras("今日花费 $1.50"));
+        assert!(old.same_structure(&new));
+        assert_eq!(
+            refresh_decision(Some(&old), &new),
+            Refresh::Texts(vec![("today-cost".into(), "今日花费 $1.50".into())])
+        );
+    }
+
+    #[test]
+    fn recent_change_rebuilds() {
+        let mut old = build_model(vec![], true, false);
+        old.extras = Some(extras("今日花费 $1.50"));
+        // 最近会话变化 → 重建。
+        let mut new = old.clone();
+        new.extras.as_mut().unwrap().recent.clear();
+        assert!(!old.same_structure(&new));
+        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
+        // 项目变化 → 重建。
+        let mut new = old.clone();
+        new.extras.as_mut().unwrap().projects.clear();
+        assert!(!old.same_structure(&new));
+        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
+        // 花费行出现/消失 → 重建（但金额变化只就地更新）。
+        let mut new = old.clone();
+        new.extras.as_mut().unwrap().cost_text = None;
+        assert!(!old.same_structure(&new));
+        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
+        let mut new = old.clone();
+        new.extras = None;
+        assert!(!old.same_structure(&new));
+        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
+    }
+
+    #[test]
+    fn project_entry_abbreviates_home() {
+        let home = Some("/Users/x");
+        assert_eq!(project_entry("/Users/x", home).text, "~");
+        assert_eq!(project_entry("/Users/x/proj", home).text, "~/proj");
+        // 同前缀但不是 home 子目录：不缩写。
+        assert_eq!(project_entry("/Users/xy", home).text, "/Users/xy");
+        assert_eq!(project_entry("/tmp/proj", home).text, "/tmp/proj");
+        // home 缺失：原文。
+        assert_eq!(project_entry("/Users/x/proj", None).text, "/Users/x/proj");
+        // 超长截断 48 字。
+        let long = format!("/Users/x/{}", "a".repeat(60));
+        let e = project_entry(&long, home);
+        assert_eq!(e.cwd, long);
+        assert_eq!(e.text.chars().count(), 48);
+    }
+
+    #[test]
+    fn recent_entry_appends_project_name() {
+        let s = crate::model::SessionSummary {
+            id: "s1".into(),
+            path: "/tmp/s1.jsonl".into(),
+            cwd: "/Users/x/my/omp-resume".into(),
+            cwd_exists: true,
+            title: "Inspect custom omp conf".into(),
+            created_at: String::new(),
+            modified_at: String::new(),
+            size_bytes: 0,
+            message_count: 0,
+            branch_count: 0,
+            in_use: false,
+            probe_ok: true,
+            occupant: None,
+            fork: None,
+            format_supported: true,
+            version: Some(3),
+            bad_lines: 0,
+            first_user_message: None,
+        };
+        let e = recent_entry(&s);
+        assert_eq!(e.session_id, "s1");
+        assert_eq!(e.path, "/tmp/s1.jsonl");
+        assert_eq!(e.text, "Inspect custom omp conf · omp-resume");
     }
 }

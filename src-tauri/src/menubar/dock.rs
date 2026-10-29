@@ -16,12 +16,13 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
-use muda::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use muda::{ContextMenu, IconMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSApplication;
 use tauri::{AppHandle, Manager, Wry};
 
+use super::classify::SessionStatus;
 use super::menu::{menu_text, MenuModel};
 use super::tray::{Shared, ITEM_MORE, ITEM_OPEN_WINDOW, SESSION_PREFIX};
 
@@ -108,10 +109,11 @@ fn build_dock_menu_ptr() -> *mut c_void {
         return std::ptr::null_mut();
     }
     for row in &model.rows {
-        let item = MenuItem::with_id(
+        let item = IconMenuItem::with_id_and_native_icon(
             format!("{SESSION_PREFIX}{}", row.session_id),
             menu_text(&row.text()),
             row.enabled,
+            Some(dock_status_icon(row.status)),
             None,
         );
         if menu.append(&item).is_err() {
@@ -121,10 +123,11 @@ fn build_dock_menu_ptr() -> *mut c_void {
     if !model.overflow.is_empty() {
         let mut built = Vec::with_capacity(model.overflow.len());
         for row in &model.overflow {
-            built.push(MenuItem::with_id(
+            built.push(IconMenuItem::with_id_and_native_icon(
                 format!("{SESSION_PREFIX}{}", row.session_id),
                 menu_text(&row.text()),
                 row.enabled,
+                Some(dock_status_icon(row.status)),
                 None,
             ));
         }
@@ -151,4 +154,14 @@ fn build_dock_menu_ptr() -> *mut c_void {
         *cell.borrow_mut() = Some(menu);
     });
     ptr
+}
+
+/// 会话状态 → 原生状态图标（与托盘菜单同映射）。
+fn dock_status_icon(s: SessionStatus) -> muda::NativeIcon {
+    match s {
+        SessionStatus::Working => muda::NativeIcon::StatusAvailable,
+        SessionStatus::WaitingInput => muda::NativeIcon::StatusPartiallyAvailable,
+        SessionStatus::Stuck => muda::NativeIcon::StatusUnavailable,
+        SessionStatus::Idle => muda::NativeIcon::StatusNone,
+    }
 }

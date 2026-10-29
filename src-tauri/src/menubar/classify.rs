@@ -52,16 +52,6 @@ impl SessionStatus {
             SessionStatus::Idle => 3,
         }
     }
-
-    /// 菜单行首状态符（单字窄符号）。
-    pub fn glyph(self) -> &'static str {
-        match self {
-            SessionStatus::Working => "▶",
-            SessionStatus::WaitingInput => "⏸",
-            SessionStatus::Idle => "○",
-            SessionStatus::Stuck => "⚠",
-        }
-    }
 }
 
 /// iTerm 标题携带的状态信号（`π <状态符> … (omp)`）。
