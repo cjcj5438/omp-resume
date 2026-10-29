@@ -683,6 +683,10 @@ header `.title`、每个 `title_change` 的 `.title`。
   CSP（`app.security.csp`）：`default-src 'self' customprotocol:; script-src 'self'; style-src 'self'
   'unsafe-inline'; img-src 'self' asset: data: https: http:; font-src 'self' data:; connect-src ipc:
   http://ipc.localhost`（dev 另有 `devCsp` 放行 localhost，见 `tauri.conf.json`）。
+- 发版：`v*` tag 触发 `.github/workflows/release.yml`（`fetch-depth: 0`），
+  「Release notes」步取上一个 tag 到本 tag 的 `feat|fix|perf|style` 提交标题
+  （无则 `- 维护性更新`），经 `releaseBody` 写进 `latest.json` 的 notes
+  在更新弹窗展示；Release 仍为草稿（`releaseDraft: true`），人工核对资产后手动发布。
 
 ## 11. 纯前端功能（无后端命令）
 
@@ -951,6 +955,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   与置顶按钮并排，tooltip「在此项目新会话」）直接用该组 `cwd`。目录不存在时禁用。
   成功 / 失败提示沿用「在 iTerm 继续」的 toast 处理。
   `api.ts`：`newSessionInIterm(cwd)` 与 `chooseDirectory()`。
+  托盘「新建会话 ▸」走同一 iTerm 原语（见 §17.3 ⑥），只执行 `omp`，同样不带任何参数。
 
 ### 13.1 `get_session_recap { sessionId } -> string | null`
 
@@ -1179,6 +1184,13 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   带来的目录变化。
   模型选择器按 provider 分组、可搜索；当前值不在列表（别名 / 已下线）时
   原样显示并标「未知值 · 保留」，用户不动就不改写。
+- 模型隐藏（仅本应用，不写 omp 配置）：模型库每行眼形按钮「隐藏」
+  （`aria-label` 为 `隐藏 <selector>`）；被隐藏的 selector 从模型库与所有
+  模型选择器下拉中消失，但选择器当前值即使已隐藏仍照常显示、保留在列表里。
+  隐藏存 localStorage `omp-resume:hidden-models:v1`（精确 `provider/id`
+  字符串数组），绝不写 `models.yml`/`config.yml`，无删除入口；
+  与置顶同口径，dev 构建与 .app 不互通。模型库工具栏「显示已隐藏 (N)」/
+  「收起已隐藏」切换，被隐藏行置灰、带「已隐藏」徽章，按钮变为「取消隐藏」。
 
 ### 16.4 / 4.37 `get_model_config() -> ModelConfig`
 
@@ -1245,10 +1257,12 @@ provider 通配三种；`retry.modelFallback`（默认 true）是兜底总开关
 
 ## 17. macOS 菜单栏：运行中 omp 会话（本次追加）
 
-> 在菜单栏查看并管理**当前正在运行**的 omp 会话（只读检测 + 聚焦）。
-> MVP 控制动作只有「聚焦」；**绝不** kill / 发信号 / 停止任何进程，
-> **绝不**向任何 iTerm session `write text` / 发送按键，绝不安装 omp hooks。
-> iTerm 只允许 `activate` + `select`（已对 `Iterm2.sdef` 核对：select =
+> 在菜单栏查看并管理**当前正在运行**的 omp 会话（只读检测 + 聚焦 + 新开标签页）。
+> 会话行只做「聚焦」；「新建会话 ▸」「最近会话 ▸」在新 iTerm 标签页里跑命令
+> （与主窗口同一原语 `ops::iterm::open_tab`：新建跑 `cd '<dir>' && omp`，
+> 最近跑 `omp --resume '<path>'`）。**绝不** kill / 发信号 / 停止任何进程，
+> **绝不**向已存在的 iTerm session `write text` / 发送按键，绝不安装 omp hooks。
+> 已存在标签页只允许 `activate` + `select`（已对 `Iterm2.sdef` 核对：select =
 > "Make receiver visible and selected."）。不聊天、不调 LLM、不写会话 .jsonl、
 > 不读凭据（models.yml / models.json 禁止读取，不运行 `omp config list`）。
 > `omp ps` 管的是后台守护进程而非交互式会话，**不用作数据源**。
@@ -1322,6 +1336,9 @@ classify:
   每轮一次 osascript **批量**取回全部 `tty → 标题`（单脚本遍历全部
   window→tab→session，绝不逐会话一次）。AppleScript 里不能直接用 `tab` 常量
   （会被解析为 iTerm 的 tab 类），用 `character id 9` 作分隔（实测验证）。
+- 最近会话 / 项目目录 / 今日花费由后台线程每 60 秒重算一次（用量统计口径，
+  首次统计完成前花费行不显示）；花费变化就地更新行文字，
+  最近会话与项目目录列表变化则重建菜单（见 §17.3）。
 
 ### 17.3 菜单结构与图标标题（`menubar::menu`，纯函数 + 单测）
 
@@ -1340,21 +1357,35 @@ classify:
 
 下拉菜单自上而下：①头部（禁用项）`omp 会话 · 占用 N · 工作中 X · 等待输入 Y`
 （含疑似卡住时追加 `· 疑似卡住 Z`；无占用：`没有运行中的 omp 会话`）；
-②分隔线；③会话行按 疑似卡住 → 等待输入 → 工作中 → 空闲 排序，
-每行 `<状态符> <标题去 π 前缀与 (omp) 后缀，截断 32 字> · <应用名> · <持续时长>`
-（持续时长自会话 header 创建时间起：`刚刚/X分/X小时Y分/X天`），
+②今日花费行（禁用项）`今日花费 $X.XX`（用量统计的当日花费，见 §17.2；
+首次统计完成前不显示本行）；③分隔线；④会话行按 疑似卡住 → 等待输入 →
+工作中 → 空闲 排序，每行 `<原生状态圆点> <标题去 π 前缀与 (omp) 后缀，`
+截断 32 字> · <应用名，iTerm2 时省略> · <状态> · <距上次活动>`
+（距上次活动自最后一条有意义记录起，`刚刚/X分/X小时Y分/X天`），
 有子代理在跑时行尾加 `· 子代理 n`；最多 8 行，超出进「更多…」子菜单；
+状态圆点为 macOS 原生 NSImage 状态图标（IconMenuItem）：工作中绿、等待输入黄、
+疑似卡住红、空闲灰（取代旧文本字形 ▶ ⏸ ○ ⚠）；
 点击行 = 聚焦该会话所在 iTerm 标签（`activate` + 按 tty `select`）；
 非 iTerm 占用者行置灰不可点，行内注明原因（`仅 iTerm 可聚焦` /
-`未找到占用进程` / `未找到终端`）；④分隔线；⑤「打开主窗口」；
-⑥勾选项「完成时通知」（默认开）、「在 Dock 显示图标」（默认关）；
-⑦分隔线；⑧「退出 omp-resume」。菜单项 id 编码会话 id（`session:<id>`）路由事件。
+`未找到占用进程` / `未找到终端`）；⑤分隔线（仅有会话行时出现）；
+⑥「新建会话 ▸」（最近 ≤5 个仍存在的项目目录，`~` 缩写，末项「选择目录…」，
+点选即在该目录新开 iTerm 标签跑 `cd '<dir>' && omp`，§13.0 同一语义）；
+⑦「最近会话 ▸」（最近 ≤5 个非运行中会话 `标题 · 项目名`，无则「没有最近会话」，
+点选即在新 iTerm 标签跑 `omp --resume '<path>'`，§4.8 同一语义）；
+⑧「模式：<name> ▸」（不变，见 §24）；⑨分隔线；⑩「打开主窗口」；
+⑪「设置 ▸」（✓「完成时通知」（默认开）、✓「在 Dock 显示图标」（默认关）、
+分隔线、「检查更新…」，点后拉起主窗口并发出 `check-app-update` 事件走手动检查：
+有新版弹「发现新版本 X」，已是最新 toast「已是最新版本 X」，
+失败 toast「检查更新失败：<msg>」；侧栏底部 `omp-resume <version>` 行的
+「检查应用更新」按钮走同一流程，版本经 `@tauri-apps/api/app` `getVersion` 读取，
+启动时静默检查不变）；⑫分隔线；⑬「退出 omp-resume」。
+菜单项 id 编码会话 id（`session:<id>`）路由事件。
 菜单刷新（`menu::refresh_decision`，纯函数 + 单测）：模型一致不动；
-**仅行内时长文字变化**时用已装配菜单项的 `set_text` **就地更新**
-（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
-**结构性变化**（会话增减 / 状态变化 / 排序变化 / 标题变化 / 设置勾选变化，
-任一都会改头部计数、图标标题或行形状）才 `set_menu` 整体重建
-（重建会关闭已展开的菜单，故仅限结构变化时发生）。
+**仅行内文字（距上次活动 / 今日花费）变化**时用已装配菜单项的 `set_text`
+**就地更新**（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
+**结构性变化**（会话增减 / 状态变化 / 排序变化 / 标题变化 / 设置勾选变化 /
+最近会话与项目目录列表变化，任一都会改头部计数、图标标题或行形状）才 `set_menu`
+整体重建（重建会关闭已展开的菜单，故仅限结构变化时发生）。
 聚焦失败（找不到 tty / iTerm 未运行 / 无 Automation 权限）以系统通知明示
 （文案含「系统设置 → 隐私与安全性 → 自动化」指引），不静默。
 
@@ -1448,9 +1479,11 @@ classify:
   一次（每轮至多一次，不按动作数重复）。判定沿用通知的开关/30 秒门槛/防抖，
   macOS 在应用已激活时忽略跳动（系统行为）。
 - 右键菜单：Dock 右键弹出与托盘同内容的精简菜单——禁用头行、会话行
-  （同文案/同 enabled/同 id `session:<id>`，超 8 行进「更多…」子菜单）、
-  分隔线、「打开主窗口」（`open-window`）；无 toggles/quit（Dock 自带
-  选项/退出）。点击走既有 `handle_menu_event`（聚焦 iTerm 标签 / 显示主窗口）。
+  （同文案/同 enabled/同 id `session:<id>`，同原生状态图标，
+  超 8 行进「更多…」子菜单）、分隔线、「打开主窗口」（`open-window`）；
+  无 toggles/quit（Dock 自带选项/退出），亦无「新建会话」「最近会话」
+  「模式」「设置」等新子菜单。点击走既有 `handle_menu_event`
+  （聚焦 iTerm 标签 / 显示主窗口）。
 - 实现（`menubar::dock`，仅 macOS，直连 `muda 0.20` / `objc2 0.6` /
   `objc2-app-kit 0.3`，版本与 Cargo.lock 一致）：tauri/tao 无 Dock 菜单 API，
   且 tao 的 delegate 类未定义 `applicationDockMenu:`，故在 setup（主线程）对
@@ -1719,13 +1752,18 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   会话头动作（在 iTerm 继续 / 置顶 / 备注 / 删除）全在标题行右侧，不再单独占一条工具栏。
 - 别名/标签/备注编辑器默认收起（`.detail-actions` 的「备注」按钮展开），切换会话自动收起。
 - 图标一律经 `Ico`（lucide，`strokeWidth 1.75`）；禁止把 emoji/unicode 字形当图标。
+- 侧栏材质：仅深色主题透明（macOS sidebar vibrancy，
+  `:root[data-vibrancy="on"][data-theme="dark"] .sidebar`）；浅色主题侧栏为实色
+  `--bg-sidebar`（#f7f8fa），因浅色材质（≈#e7e9ea）会与不透明的组头 / 输入框 /
+  计数胶囊叠出脏灰。
 
 ### 19.3 动效
 
 - 只用 `--motion-fast`（110ms）/ `--motion-base`（170ms）+ `--ease-out`；不写裸毫秒。
 - 悬停态只改 `background-color`/`color`/`box-shadow`，不改宽高。
 - `prefers-reduced-motion: reduce` 时全局停掉动画与过渡（`App.css` 末尾统一规则）。
-- `prefers-reduced-transparency: reduce` 时侧栏回退为不透明 `--bg-sidebar`。
+- `prefers-reduced-transparency: reduce` 时深色侧栏回退为不透明 `--bg-sidebar`
+  （浅色侧栏本就不透明，不受影响）。
 
 ## 20. 模型测试器（§4.51–§4.53、§4.56，管理视图「模型」标签页的「测试」区）
 
@@ -1957,6 +1995,8 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 （已删除：以代码为准；类型引用保留）
 - `src/types.ts` 镜像 §21.2–§21.3 类型；`src/api.ts` 封装 `getModelSpecs()` /
   `updateModelSpec(req)`（参数透传 `provider/id/patch/expectedRevision`）。
+- 模型库「隐藏」是纯前端状态（见 §16.3），不经本章命令、不改 models.yml，
+  无删除入口。
 
 ## 22. 管理视图信息架构（`ManageView` 六个标签页）
 

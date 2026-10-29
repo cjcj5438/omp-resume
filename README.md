@@ -97,7 +97,7 @@ Model **specs** are editable row by row in `models.yml`, with value-shape valida
 
 ### Cheat sheet
 
-A searchable reference pinned to **omp 18.12.6**: 87 built-in slash commands with aliases, argument hints and examples, 3 bundled extension commands, 51 terminal subcommands, plus curated learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
+A searchable reference pinned to **omp 18.13.3**: 88 built-in slash commands with aliases, argument hints and examples, 3 bundled extension commands, 51 terminal subcommands, plus curated learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
 
 ![Cheat sheet](docs/media/cheatsheet.jpg)
 
@@ -105,11 +105,11 @@ A searchable reference pinned to **omp 18.12.6**: 87 built-in slash commands wit
 
 The tray icon watches **sessions that are running right now** — determined from flock ownership plus the JSONL tail, never from mtime — and classifies them as `working` / `waiting for input` / `idle` / `possibly stuck`. It shows a compact badge (`2·1`), can notify you when a session starts waiting for input, and can focus the owning iTerm2 tab.
 
-The tray itself never kills, signals or types into anything; its only iTerm2 capability is `activate` + `select`.
+The tray menu shows today's cost, the running sessions with native macOS status dots, "new session" and "recent sessions" submenus, a mode switcher, and a settings submenu. Session rows only focus the owning tab (`activate` + `select`); the new/recent submenus open a new iTerm2 tab and run the command there via the same primitive as the main window (`ops::iterm::open_tab`). The tray never kills or signals processes, and never types into an existing tab.
 
 ### Appearance
 
-System / light / dark theme, six accent colors, all stored locally. Both themes are first-class — the screenshots above are dark by choice, not by necessity.
+System / light / dark theme, six accent colors, all stored locally. The dark theme uses a translucent macOS sidebar material; the light theme keeps the sidebar solid. Both themes are first-class — the screenshots above are dark by choice, not by necessity.
 
 ![Light theme](docs/media/light.jpg)
 
@@ -127,7 +127,7 @@ Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/r
 
 The bundle carries no Developer ID and is not notarized. If Gatekeeper blocks it: **right-click → Open** in Applications, once.
 
-The app checks for updates on launch (Tauri updater, minisign-verified) and installs in place.
+The app checks for updates on launch (Tauri updater, minisign-verified) and installs in place. You can also check manually from the sidebar footer (`omp-resume <version>` row) or the tray's Settings submenu.
 
 ### From source
 
@@ -163,7 +163,7 @@ node scripts/check-versions.mjs
 git tag v0.2.3 && git push origin v0.2.3
 ```
 
-Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle and creates a **draft** release with updater artifacts. Publish it manually after verifying the assets — `/latest` only resolves to published releases.
+Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
 
 The updater signing key lives in the `TAURI_SIGNING_PRIVATE_KEY` CI secret and has no passphrase. **If that private key is lost, already-installed copies can never be updated again.**
 
@@ -243,5 +243,5 @@ Everything is resolved from omp's own defaults; every path can be overridden for
 - **Session format version 3 only.** Older sessions are listed but marked as unsupported.
 - **Deletion is permanent** — no trash, no undo.
 - **The Agent Stage polls** the JSONL every 1.5 s rather than subscribing to events, so it lags reality by up to ~2 s and cannot show background bash jobs or omp-internal queues.
-- **Pins and appearance prefs live in WebView localStorage**, so the dev build and the `.app` do not share them.
+- **Pins, hidden models and appearance prefs live in WebView localStorage**, so the dev build and the `.app` do not share them.
 - Detailed edge cases live in [docs/CONTRACT.md](docs/CONTRACT.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
