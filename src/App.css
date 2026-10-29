@@ -2103,27 +2103,23 @@ pre.mono {
   text-wrap: balance;
 }
 
-/* ---- 半透明侧栏材质（macOS sidebar effect） ----
- * 窗口透明 + 原生 NSVisualEffectView；侧栏让出底色，主区域自己铺 --bg。
- * 材质亮度：浅色 ≈ #e7e9ea，深色 ≈ #505252 —— 次要文字需要更实的颜色才够 4.5:1。 */
+/* ---- 半透明侧栏材质（macOS sidebar effect，仅深色主题） ----
+ * 窗口透明 + 原生 NSVisualEffectView。浅色下材质 ≈ #e7e9ea，会与不透明的组头、
+ * 输入框、计数胶囊叠成脏灰，所以浅色侧栏保持实色 --bg-sidebar（.sidebar 默认值）。
+ * 深色侧栏让出底色显示材质（≈ #505252），次要文字需要更实的颜色才够 4.5:1。 */
 :root[data-vibrancy="on"] html,
 :root[data-vibrancy="on"] body {
   background: transparent;
 }
 
-:root[data-vibrancy="on"] .sidebar {
-  background: transparent;
-  --text-muted: #4e5158;
-  --text-faint: #5f626a;
-}
-
 :root[data-vibrancy="on"][data-theme="dark"] .sidebar {
+  background: transparent;
   --text-muted: #d3d5db;
   --text-faint: #bfc2c9;
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-vibrancy="on"] .sidebar {
+  :root[data-vibrancy="on"][data-theme="dark"] .sidebar {
     background: var(--bg-sidebar);
   }
 }
