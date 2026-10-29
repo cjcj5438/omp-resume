@@ -12,15 +12,15 @@
 .lib-toolbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .lib-search { max-width: 320px; }
 .lib-table-wrap { overflow: auto; max-height: 520px; }
-.lib-table { table-layout: fixed; min-width: 920px; }
+.lib-table { table-layout: fixed; min-width: 952px; }
 .lib-table thead th { position: sticky; top: 0; background: var(--bg-elevated); z-index: var(--z-sticky); }
-/* 模型列弹性兜底 280px，其余列宽锁死；表头 sticky。操作列 212px 保住三按钮。 */
+/* 模型列弹性兜底 280px，其余列宽锁死；表头 sticky。操作列 244px 保住四按钮。 */
 .lib-col-model { min-width: 280px; }
 .lib-col-context { width: 64px; }
 .lib-col-max { width: 84px; }
 .lib-col-cost { width: 100px; }
 .lib-col-thinking { width: 132px; }
-.lib-col-act { width: 212px; }
+.lib-col-act { width: 244px; }
 .lib-table td { overflow: hidden; text-overflow: ellipsis; }
 /* 思考档位列：每个档位是一个不可断行的片段，换行只发生在档位之间。 */
 .lib-levels { display: flex; flex-wrap: wrap; gap: 2px var(--sp-1); }
@@ -48,6 +48,7 @@
 .lib-act-cell { white-space: nowrap; }
 .lib-actions { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .lib-row { cursor: default; }
+.lib-row-hidden td:not(.lib-act-cell) { opacity: 0.55; }
 
 /* 规格抽屉。 */
 .spec-facts { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); }

@@ -2,14 +2,16 @@
  * 模型库：全部模型的只读一览表（搜索 + 用途徽章 + 加入测试/单测/规格入口）。
  * 纯渲染组件：模型来自 ModelDraftState，规格来自 ModelsTab 的 getModelSpecs 快照，
  * 用途由 config.roles 反查（selector base 命中即算在用）。
+ * 支持仅本应用的隐藏（hiddenModels：localStorage，不改 omp 配置）。
  */
 import { useState } from "react";
 import type { ModelInfo, ModelSpec } from "../types";
+import { setModelHidden, useHiddenModels } from "../hiddenModels";
 import { benchRunner, type BenchConfig } from "../modelBench";
 import { selectorBase } from "../roleCards";
 import { formatContextWindow, roleInfo } from "../roleCards";
 import type { ToastFn } from "./useOmpOp";
-import { Play } from "lucide-react";
+import { Eye, EyeOff, Play } from "lucide-react";
 import { Ico } from "./ui";
 
 interface ModelLibraryProps {
@@ -74,11 +76,15 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
   const { models, modelsLoading, modelsError, roles, agentOverrides, specs, bench, onAddBench, onOpenSpec, onToast } = props;
   const [query, setQuery] = useState("");
   const inBench = new Set(bench.entries.map((e) => e.selector));
+  const hidden = useHiddenModels();
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenCount = models.filter((m) => hidden.has(m.selector)).length;
+  const pool = showHidden ? models : models.filter((m) => !hidden.has(m.selector));
 
   const needle = query.trim().toLowerCase();
   const visible = needle === ""
-    ? models
-    : models.filter(
+    ? pool
+    : pool.filter(
         (m) =>
           m.name.toLowerCase().includes(needle) ||
           m.provider.toLowerCase().includes(needle) ||
@@ -98,15 +104,26 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
           onChange={(e) => setQuery(e.target.value)}
         />
         <span className="muted">
-          {needle === "" ? `共 ${models.length} 个` : `命中 ${visible.length} / ${models.length} 个`}
+          {needle === "" ? `共 ${pool.length} 个` : `命中 ${visible.length} / ${pool.length} 个`}
         </span>
+        {hiddenCount > 0 ? (
+          <button type="button" className="btn btn-small" aria-pressed={showHidden} onClick={() => setShowHidden((v) => !v)}>
+            {showHidden ? "收起已隐藏" : `显示已隐藏 (${hiddenCount})`}
+          </button>
+        ) : null}
       </div>
       {modelsLoading && models.length === 0 ? (
         <div className="pane-note">模型列表加载中（首次加载可能需要几秒）…</div>
       ) : modelsError !== null && models.length === 0 ? (
         <div className="pane-note">模型列表加载失败：{modelsError}</div>
       ) : visible.length === 0 ? (
-        <div className="pane-note">{models.length === 0 ? "还没有可用模型。" : "没有命中筛选的模型。"}</div>
+        <div className="pane-note">
+          {models.length === 0
+            ? "还没有可用模型。"
+            : pool.length === 0
+              ? "所有模型都已隐藏，点「显示已隐藏」查看。"
+              : "没有命中筛选的模型。"}
+        </div>
       ) : (
         <div className="lib-table-wrap">
           <table className="manage-table lib-table">
@@ -134,8 +151,9 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
                 const context = formatContextCompact(spec?.contextWindow ?? m.contextWindow);
                 const maxTokens = spec?.maxTokens ?? m.maxTokens;
                 const cost = formatCostCompact(spec?.costInput ?? m.costInput, spec?.costOutput ?? m.costOutput);
+                const isHidden = hidden.has(m.selector);
                 return (
-                  <tr key={m.selector} className="lib-row" onClick={() => onOpenSpec(m.selector)}>
+                  <tr key={m.selector} className={isHidden ? "lib-row lib-row-hidden" : "lib-row"} onClick={() => onOpenSpec(m.selector)}>
                     <td>
                       <span className="lib-model">
                         <span className="lib-model-top">
@@ -145,6 +163,7 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
                           <span className="lib-id muted mono" title={m.selector}>{m.selector}</span>
                           {m.reasoning ? <span className="badge badge-branch">推理</span> : null}
                           {spec !== null ? <span className="badge badge-fork">可编辑</span> : null}
+                          {isHidden ? <span className="badge badge-grey">已隐藏</span> : null}
                           <UsageBadges roles={roles} agentOverrides={agentOverrides} base={m.selector} />
                         </span>
                       </span>
@@ -206,6 +225,22 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
                           }}
                         >
                           规格
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-small"
+                          aria-label={isHidden ? `取消隐藏 ${m.selector}` : `隐藏 ${m.selector}`}
+                          title={isHidden ? "取消隐藏" : "隐藏（仅本应用，不改 omp 配置）"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setModelHidden(m.selector, !isHidden);
+                            onToast(
+                              isHidden ? `已取消隐藏：${m.selector}` : `已隐藏：${m.selector}（可在「显示已隐藏」中恢复）`,
+                              "info",
+                            );
+                          }}
+                        >
+                          <Ico icon={isHidden ? Eye : EyeOff} size={12} />
                         </button>
                       </span>
                     </td>

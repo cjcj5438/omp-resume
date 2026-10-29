@@ -3,11 +3,13 @@
  * 显示友好名 + provider 徽章 + 上下文/价格提示；当前值不在模型列表
  * （别名 / 已下线模型）时原样显示「未知值 · 保留」；
  * `allowUnset` 提供「未设置 / 不覆盖」（保存时删除该条目）。
+ * 模型库里隐藏的模型不进下拉列表，但当前值即使已隐藏也照常显示、保留在列表里。
  */
 import { useEffect, useRef, useState } from "react";
 import "./ModelPicker.css";
 import type { ModelInfo } from "../types";
 import { formatContextWindow, formatCost } from "../roleCards";
+import { useHiddenModels } from "../hiddenModels";
 interface ModelPickerProps {
   models: ModelInfo[];
   /** 当前 selector；null 表示未设置（不覆盖）。 */
@@ -67,15 +69,17 @@ export function ModelPicker(props: ModelPickerProps) {
     return () => document.removeEventListener("mousedown", close);
   }, [open, inline]);
 
+  const hidden = useHiddenModels();
+  const pickable = models.filter((m) => m.selector === value || !hidden.has(m.selector));
   const needle = query.trim().toLowerCase();
   const visible = needle
-    ? models.filter(
+    ? pickable.filter(
         (m) =>
           m.name.toLowerCase().includes(needle) ||
           m.selector.toLowerCase().includes(needle) ||
           m.provider.toLowerCase().includes(needle),
       )
-    : models;
+    : pickable;
   const groups = groupByProvider(visible);
   const current = value !== null ? models.find((m) => m.selector === value) ?? null : null;
 

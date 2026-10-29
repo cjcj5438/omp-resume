@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BENCH_CONFIG_KEY } from "../modelBench";
+import { HIDDEN_MODELS_KEY } from "../hiddenModels";
 import type { BenchRound, ModelConfig, ModelInfo, ModelSpec } from "../types";
 import { useModelDraft } from "../modelDraft";
 import { ModelsTab } from "./ModelsTab";
@@ -215,6 +216,23 @@ describe("模型库", () => {
     expect(within(sub as HTMLElement).getByText("sonic")).toBeInTheDocument();
   });
 
+  it("隐藏模型：移出模型库，可在「显示已隐藏」恢复", async () => {
+    stub();
+    const onToast = await renderTab();
+    const lib = screen.getByRole("region", { name: "模型库" });
+    fireEvent.click(within(lib).getByRole("button", { name: "隐藏 p/fast" }));
+    expect(within(lib).queryByText("Fast")).toBeNull();
+    expect(onToast).toHaveBeenCalledWith("已隐藏：p/fast（可在「显示已隐藏」中恢复）", "info");
+
+    fireEvent.click(within(lib).getByRole("button", { name: "显示已隐藏 (1)" }));
+    const fastRow = within(lib).getByText("Fast").closest("tr");
+    if (fastRow === null) throw new Error("找不到 Fast 行");
+    expect(within(fastRow).getByText("已隐藏")).toBeInTheDocument();
+
+    fireEvent.click(within(fastRow).getByRole("button", { name: "取消隐藏 p/fast" }));
+    expect(within(lib).queryByRole("button", { name: /显示已隐藏|收起已隐藏/ })).toBeNull();
+    expect(localStorage.getItem(HIDDEN_MODELS_KEY)).toBe("[]");
+  });
 });
 
 describe("测试 → 角色分配", () => {
