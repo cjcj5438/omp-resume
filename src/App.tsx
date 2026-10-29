@@ -38,7 +38,8 @@ import { OmpUpdateDialog } from "./components/OmpUpdateDialog";
 import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetDialog } from "./components/CheatSheetDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
-import { checkForUpdate, type Update } from "./update";
+import { checkForUpdate, checkForUpdateManually, onCheckAppUpdateRequest, type Update } from "./update";
+import { getVersion } from "@tauri-apps/api/app";
 
 interface Toast {
   id: number;
@@ -84,8 +85,11 @@ function App() {
   // 清理候选项在每次删除后要重新扫描（只读命令，代价可接受）。
   const [cleanupVersion, setCleanupVersion] = useState(0);
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
-  // 手动重新检查：重启应用即可。
+  // 手动检查：侧栏「检查应用更新」/托盘「检查更新…」。
   const [update, setUpdate] = useState<Update | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [appChecking, setAppChecking] = useState(false);
+  const appCheckingRef = useRef(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [pins, setPins] = useState<Pins>(() => loadPins());
   // 应用侧备注快照（别名/标签/备注）：启动加载，向下传；保存后用返回快照更新。
@@ -189,6 +193,13 @@ function App() {
   useEffect(() => {
     getOmpVersion()
       .then((v) => setOmpVersion(v.version))
+      .catch(() => {});
+  }, []);
+
+  // 本应用版本（侧栏版本行）；读不到就不显示。
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
       .catch(() => {});
   }, []);
 
@@ -367,6 +378,41 @@ function App() {
     }
   }, [addToast]);
 
+  const handleCheckApp = useCallback(async () => {
+    // 更新窗已开或检查进行中：不重复检查。
+    if (update !== null || appCheckingRef.current) return;
+    appCheckingRef.current = true;
+    setAppChecking(true);
+    try {
+      const u = await checkForUpdateManually();
+      if (u) setUpdate(u);
+      else addToast(appVersion ? `已是最新版本 ${appVersion}` : "已是最新版本", "info");
+    } catch (e: unknown) {
+      addToast(`检查更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
+    } finally {
+      appCheckingRef.current = false;
+      setAppChecking(false);
+    }
+  }, [addToast, appVersion, update]);
+
+  // 托盘「设置 ▸ 检查更新…」：Rust 拉起主窗口后发事件，这里走与侧栏按钮相同的流程。
+  const checkAppRef = useRef(handleCheckApp);
+  checkAppRef.current = handleCheckApp;
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    onCheckAppUpdateRequest(() => void checkAppRef.current())
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const handleOpenIterm = useCallback(
     (s: SessionSummary) => {
       openInIterm({ path: s.path })
@@ -452,6 +498,9 @@ function App() {
         ompVersion={ompVersion}
         ompChecking={ompChecking}
         onCheckOmp={handleCheckOmp}
+        appVersion={appVersion}
+        appChecking={appChecking}
+        onCheckApp={() => void handleCheckApp()}
         onOpenCheatSheet={() => setShowCheatSheet(true)}
         onNewSession={() => void handleNewSession(null)}
         onNewSessionIn={(cwd) => void handleNewSession(cwd)}

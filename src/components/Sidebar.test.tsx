@@ -60,6 +60,9 @@ function renderSidebar(over: {
       ompVersion={over.ompVersion === undefined ? null : over.ompVersion}
       ompChecking={false}
       onCheckOmp={noop}
+      appVersion={null}
+      appChecking={false}
+      onCheckApp={noop}
       onNewSession={noop}
       onNewSessionIn={noop}
       historyActive={false}

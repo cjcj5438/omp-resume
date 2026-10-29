@@ -1,10 +1,15 @@
 /**
- * 应用内自动更新：启动时静默检查一次，失败一律静默忽略（不打扰列表加载）。
+ * 应用内自动更新：启动时静默检查一次（失败静默，不打扰列表加载）；
+ * 侧栏按钮与托盘「检查更新…」走手动检查，失败要提示。
  */
+import { listen } from "@tauri-apps/api/event";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 export type { Update };
+
+/** 托盘「设置 ▸ 检查更新…」发给主窗口的事件名（Rust 侧 tray.rs 同名字面量）。 */
+export const CHECK_APP_UPDATE_EVENT = "check-app-update";
 
 /**
  * 检查更新。开发模式不联网；任何失败（离线、无 IPC、响应异常）都返回 null，
@@ -17,6 +22,16 @@ export async function checkForUpdate(): Promise<Update | null> {
   } catch {
     return null;
   }
+}
+
+/** 手动检查：不跳过开发模式；失败原样抛出，由调用方提示。 */
+export async function checkForUpdateManually(): Promise<Update | null> {
+  return check();
+}
+
+/** 订阅托盘的检查更新请求；返回取消订阅函数。 */
+export function onCheckAppUpdateRequest(cb: () => void): Promise<() => void> {
+  return listen(CHECK_APP_UPDATE_EVENT, () => cb());
 }
 
 /**

@@ -1,6 +1,7 @@
 /**
  * 自动更新测试（mock updater/process IPC）：
  * 有更新→弹窗展示版本→下载安装→提供重启；无更新→无弹窗；检查失败→静默。
+ * 手动检查（侧栏按钮 / 托盘事件）：已是最新→提示；失败→报错提示；有更新→弹窗。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks } from "@tauri-apps/api/mocks";
@@ -12,6 +13,19 @@ import { installMockBackend } from "./dev/mockBackend";
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
+vi.mock("@tauri-apps/api/app", async (orig) => ({
+  ...(await orig<object>()),
+  getVersion: vi.fn().mockResolvedValue("0.1.0"),
+}));
+// 必须展开原模块：@tauri-apps/api/window 内部也 import event 模块。
+let trayHandler: (() => void) | null = null;
+vi.mock("@tauri-apps/api/event", async (orig) => ({
+  ...(await orig<object>()),
+  listen: vi.fn(async (_event: string, handler: () => void) => {
+    trayHandler = handler;
+    return () => {};
+  }),
+}));
 
 const mockCheck = vi.mocked(check);
 const mockRelaunch = vi.mocked(relaunch);
@@ -30,6 +44,7 @@ function fakeUpdate(): Update {
 beforeEach(() => {
   clearMocks();
   vi.clearAllMocks();
+  trayHandler = null;
   // 生产行为：允许启动检查联网（默认 DEV 下会跳过）。
   vi.stubEnv("DEV", false);
 });
@@ -75,5 +90,37 @@ describe("自动更新", () => {
     expect(screen.queryByText(/发现新版本/)).toBeNull();
     // 无错误 toast，无异常冒泡。
     expect(screen.queryByText(/offline/)).toBeNull();
+  });
+});
+
+describe("手动检查更新", () => {
+  it("侧栏按钮：已是最新→提示当前版本", async () => {
+    mockCheck.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    await installMockBackend();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "检查应用更新" }));
+    expect(await screen.findByText("已是最新版本 0.1.0")).toBeInTheDocument();
+    expect(mockCheck).toHaveBeenCalledTimes(2);
+  });
+
+  it("侧栏按钮：检查失败→报错提示", async () => {
+    mockCheck.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("offline"));
+    await installMockBackend();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "检查应用更新" }));
+    expect(await screen.findByText("检查更新失败：offline")).toBeInTheDocument();
+  });
+
+  it("托盘事件：有新版本→弹窗", async () => {
+    mockCheck.mockResolvedValueOnce(null).mockResolvedValueOnce(fakeUpdate());
+    await installMockBackend();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "检查应用更新" });
+    await vi.waitFor(() => expect(trayHandler).not.toBeNull());
+    trayHandler?.();
+    expect(await screen.findByText("发现新版本 0.2.0")).toBeInTheDocument();
   });
 });

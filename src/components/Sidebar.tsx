@@ -64,6 +64,10 @@ interface SidebarProps {
   ompVersion: string | null;
   ompChecking: boolean;
   onCheckOmp: () => void;
+  /** 本应用版本；null 时不显示版本行。 */
+  appVersion: string | null;
+  appChecking: boolean;
+  onCheckApp: () => void;
   onNewSession: () => void;
   onNewSessionIn: (cwd: string) => void;
   historyActive: boolean;
@@ -115,6 +119,9 @@ export function Sidebar({
   ompVersion,
   ompChecking,
   onCheckOmp,
+  appVersion,
+  appChecking,
+  onCheckApp,
   onNewSession,
   onNewSessionIn,
   historyActive,
@@ -692,6 +699,22 @@ export function Sidebar({
           <ModePicker onToast={onToast} />
           <AppearancePanel />
         </div>
+        {appVersion !== null ? (
+          <div className="footer-row">
+            <span className="mono muted">omp-resume {appVersion}</span>
+            <div className="footer-actions">
+              <button
+                type="button"
+                className="btn btn-small footer-update"
+                disabled={appChecking}
+                onClick={onCheckApp}
+              >
+                {appChecking ? <span className="spinner" aria-hidden="true" /> : null}
+                检查应用更新
+              </button>
+            </div>
+          </div>
+        ) : null}
         {ompVersion !== null ? (
           <div className="footer-row">
             <span className="mono muted">omp {ompVersion}</span>
