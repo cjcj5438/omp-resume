@@ -111,6 +111,11 @@ export const PART_1: Record<string, OmpCommandDetail> = {
     ],
     related: ["resume", "memory", "btw"],
   },
+  local: {
+    when: "agent 把计划、报告等写进了会话的 local:// 文件，想直接在自己的编辑器里查看或修改时用。",
+    params: [{ token: "name", zh: "local:// 下的文件名；缺省先弹出选择列表。" }],
+    related: ["export", "copy"],
+  },
   clear: {
     when: "当前会话的上下文已经很臃肿、回答开始变慢变差，但话题本身还要继续时用；会话记录保留，只清空上下文。",
     cautions: ["会整段清空模型上下文且不生成摘要，之前的细节模型完全看不到；重要结论先记下来。"],

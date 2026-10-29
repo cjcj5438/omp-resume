@@ -1,7 +1,7 @@
 /**
  * omp 终端子命令速查数据（手写静态表，单一分组、按 name 字母序）。
  *
- * 基准：omp 18.12.6 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
+ * 基准：omp 18.13.3 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
  * 复核方法：
  * 1. `omp --help` 的 COMMANDS 段落给出全部子命令与一行英文说明；
  * 2. 逐条 `omp <name> --help` 核对参数与 flag，示例只用那里真实出现的形式；
@@ -108,14 +108,14 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
   {
     name: "compress",
     args: "FILES...",
-    zh: "把文本文件改写成密集的提示语register，并报告丢弃了什么",
+    zh: "把文本文件改写成高密度的提示词文体，并报告丢弃了哪些内容",
     examples: ["omp compress notes.md -o notes.compressed.md", "omp compress 'src/prompts/**/*.md' -i"],
   },
   {
     name: "config",
     args: "[list|get|set|reset|path|init-xdg] [KEY] [VALUE]",
     zh: "管理配置项：列出、读取、设置、重置、查看路径",
-    examples: ["omp config list", "omp config get <key>", "omp config path"],
+    examples: ["omp config list", "omp config get <key>", "omp config path", "omp config list --scope global"],
   },
   {
     name: "dry-balance",
@@ -139,7 +139,7 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
     name: "gc",
     args: "",
     zh: "运行存储垃圾回收（默认 dry-run，加 --apply 才落盘）",
-    examples: ["omp gc", "omp gc --apply", "omp gc --apply --blobs --archive --wal"],
+    examples: ["omp gc", "omp gc --apply", "omp gc --apply --blobs --archive --wal", "omp gc --compress --apply"],
   },
   {
     name: "git",

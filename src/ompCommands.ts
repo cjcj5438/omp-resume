@@ -1,24 +1,24 @@
 /**
  * omp 内置斜杠命令速查数据（手写静态表）。
  *
- * 基准：omp 18.12.6 编译产物内嵌的统一内置注册表（87 条内置命令）。
+ * 基准：omp 18.13.3 编译产物内嵌的统一内置注册表（88 条内置命令）。
  * 复核方法：
  * 1. `echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
  *    返回启动帧 `available_commands_update` 与命令回包中机器可读的
  *    [{name, description, input.hint, aliases, subcommands}]，但只覆盖可在
- *    RPC 下执行的子集（18.12.6 实测 52 条非 skill 命令；/autoresearch、/init、
+ *    RPC 下执行的子集（18.13.3 实测 52 条非 skill 命令；/autoresearch、/init、
  *    /annotate、/green、/review 的 source 分别为 extension / file / custom，不在统一
  *    内置注册表内，其中随包发布的 review/green/annotate 单列「扩展命令」分组，
  *    /skill:* 与本机自定义命令仍不收录——见文件尾脚注口径）。
  * 2. TUI 补全列表覆盖全部内置命令：输入 `/` 后按前缀滚动，可从每行的名称、
  *    图标与英文说明核对；再对每条命令按 Tab，用输入行的参数提示（ghost hint）
  *    校对 args。
- * 3. 上游源码 tag v18.12.6 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
- *    即统一内置注册表本身：v18.12.3 → v18.12.6 无内置命令新增/更名/移除
- *    （CHANGELOG 18.12.4–18.12.6 的斜杠命令条目均为行为修复）。
+ * 3. 上游源码 tag v18.13.3 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
+ *    即统一内置注册表本身：v18.12.6 → v18.13.3 新增内置 `/local`，`/hub` 新增
+ *    别名 `/subagents`（编译产物内嵌注册表核对）。
  * 改动本表后请用这几种方式抽查名称拼写、参数提示与别名。
  */
-export const OMP_VERSION = "18.12.6";
+export const OMP_VERSION = "18.13.3";
 
 export interface OmpCommand {
   /** 不带前导 `/` 的命令名，如 "compact"。 */
@@ -64,6 +64,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "export", aliases: [], args: "[--themes] [path]", zh: "导出会话为 HTML 文件", examples: ["/export", "/export <输出路径>", "/export --themes"] },
       { name: "dump", aliases: [], args: "[all|anon]", zh: "复制会话记录到剪贴板，并写出 LLM 请求 JSON（all/anon 打包含子 agent 的 zip）", examples: ["/dump", "/dump all", "/dump anon"] },
       { name: "seance", aliases: [], args: "[session id|path] [--model selector]", zh: "只读咨询另一个已保存的会话，不恢复它", examples: ["/seance", "/seance 01a0285c", "/seance <会话路径> --model <provider/model>"] },
+      { name: "local", aliases: [], args: "[name]", zh: "在编辑器中打开本会话的 local:// 文件，不带名称时先列出供挑选", examples: ["/local", "/local <文件名>"] },
     ],
   },
   {
@@ -113,7 +114,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "todo", aliases: [], args: "<edit|copy|expand|collapse|export|import|append|start|done|drop|rm>", zh: "查看或修改待办：增删、标记完成、导入导出", examples: ["/todo", "/todo append <待办内容>", "/todo done <待办内容>"] },
       { name: "jobs", aliases: [], args: "[full|kill <id>|kill all]", zh: "查看后台异步任务状态", examples: ["/jobs", "/jobs full", "/jobs kill <任务 id>"] },
       { name: "agents", aliases: [], args: "", zh: "打开 agent 中心，管理模型与交接", examples: ["/agents"] },
-      { name: "hub", aliases: [], args: "", zh: "打开实时 agent 总览", examples: ["/hub"] },
+      { name: "hub", aliases: ["subagents"], args: "", zh: "打开实时 agent 总览", examples: ["/hub", "/subagents"] },
       { name: "computer", aliases: [], args: "[on|off|status]", zh: "开关桌面操控执行环境", examples: ["/computer", "/computer status"] },
       { name: "pause", aliases: [], args: "", zh: "冻结全部 agent 直到恢复", examples: ["/pause"] },
       { name: "forget-approvals", aliases: [], args: "", zh: "清除 Ask and remember 记住的文件/目录审批，下次读写重新询问", examples: ["/forget-approvals"] },

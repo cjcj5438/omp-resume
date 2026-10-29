@@ -100,7 +100,7 @@ describe("版本提示", () => {
   });
 
   it("OMP_VERSION 固定为速查基准版本", () => {
-    expect(OMP_VERSION).toBe("18.12.6");
+    expect(OMP_VERSION).toBe("18.13.3");
   });
 });
 
@@ -156,7 +156,7 @@ describe("使用示例", () => {
   it("内置命令表本身不含扩展命令（扩展命令只在扩展分组里）", () => {
     const builtin = OMP_COMMANDS.filter((g) => g.group !== "扩展命令");
     const names = builtin.flatMap((g) => g.commands.map((c) => c.name));
-    expect(names).toHaveLength(87);
+    expect(names).toHaveLength(88);
     for (const n of ["review", "green", "annotate"]) expect(names).not.toContain(n);
   });
 });
