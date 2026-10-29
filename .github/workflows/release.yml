@@ -31,7 +31,10 @@ jobs:
     permissions:
       contents: write # tauri-action 需要写权限来创建 Release 并上传资产
     steps:
+      # 完整历史：生成更新说明要找上一个 tag。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -50,6 +53,20 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      # 更新说明：上一个 tag 到本 tag 之间的 feat/fix/perf/style 提交标题；会写进 latest.json 的 notes，应用更新弹窗里显示。
+      - name: Release notes
+        id: notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          RANGE="${PREV:+$PREV..}${GITHUB_REF_NAME}"
+          NOTES=$(git log --no-merges --format='- %s' "$RANGE" | grep -E '^- (feat|fix|perf|style)(\(|:)' || true)
+          [ -n "$NOTES" ] || NOTES="- 维护性更新"
+          {
+            echo 'body<<NOTES_EOF'
+            echo "$NOTES"
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       # 构建 + 创建 Release + 上传资产（含 updater 的 latest.json，前提是 tauri.conf.json 已配 updater）。
       # 先建草稿（releaseDraft: true），人工核对资产后再手动发布。
       - uses: tauri-apps/tauri-action@v0
@@ -59,5 +76,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'omp-resume ${{ github.ref_name }}'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
