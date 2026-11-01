@@ -348,7 +348,7 @@ fn new_session_in_iterm_refusals_and_command() {
     // 合法目录（空格 + 单引号 + 中文）：仅 `cd && omp`，无任何参数。
     let cwd = t.path().join("my dir 未命名'x");
     std::fs::create_dir_all(&cwd).unwrap();
-    ops_cmds::new_session_in_iterm_impl(&cwd.display().to_string(), &opener).unwrap();
+    ops_cmds::new_session_in_iterm_impl(&cwd.display().to_string(), None, &opener).unwrap();
     assert_eq!(
         got.borrow().as_deref(),
         Some(
@@ -363,21 +363,58 @@ fn new_session_in_iterm_refusals_and_command() {
     // CWD_MISSING：不存在 / 是文件 / 相对路径；opener 均不得被调用。
     got.replace(None);
     let gone = t.path().join("gone");
-    let e = ops_cmds::new_session_in_iterm_impl(&gone.display().to_string(), &opener).unwrap_err();
+    let e = ops_cmds::new_session_in_iterm_impl(&gone.display().to_string(), None, &opener)
+        .unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
     let f = t.path().join("afile");
     std::fs::write(&f, "x").unwrap();
-    let e = ops_cmds::new_session_in_iterm_impl(&f.display().to_string(), &opener).unwrap_err();
+    let e =
+        ops_cmds::new_session_in_iterm_impl(&f.display().to_string(), None, &opener).unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
-    let e = ops_cmds::new_session_in_iterm_impl("relative/dir", &opener).unwrap_err();
+    let e = ops_cmds::new_session_in_iterm_impl("relative/dir", None, &opener).unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
     assert!(got.borrow().is_none(), "拒绝路径不应调用 opener");
 
     // 含换行的路径：拒绝（转义会静默剥离换行，改变 cd 目标）。
     let nl = t.path().join("a\nb");
     std::fs::create_dir_all(&nl).unwrap();
-    let e = ops_cmds::new_session_in_iterm_impl(&nl.display().to_string(), &opener).unwrap_err();
+    let e =
+        ops_cmds::new_session_in_iterm_impl(&nl.display().to_string(), None, &opener).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
+    assert!(got.borrow().is_none());
+
+    // 模型参数：合法 selector 追加 --model（转义），空串等同 None。
+    got.replace(None);
+    ops_cmds::new_session_in_iterm_impl(
+        &cwd.display().to_string(),
+        Some("5438/deepseek-v4.1-flash"),
+        &opener,
+    )
+    .unwrap();
+    assert_eq!(
+        got.borrow().as_deref(),
+        Some(
+            format!(
+                "cd '{}' && omp --model '5438/deepseek-v4.1-flash'",
+                cwd.display().to_string().replace('\'', "'\"'\"'")
+            )
+            .as_str()
+        ),
+    );
+    ops_cmds::new_session_in_iterm_impl(&cwd.display().to_string(), Some("  "), &opener).unwrap();
+    assert!(got
+        .borrow()
+        .as_deref()
+        .is_some_and(|c| c.ends_with("&& omp")));
+
+    // 非法模型：超长 / 控制字符 / 以 `-` 开头；opener 不得被调用。
+    got.replace(None);
+    let long = "m".repeat(257);
+    for bad in [long.as_str(), "a\nb", "-x"] {
+        let e = ops_cmds::new_session_in_iterm_impl(&cwd.display().to_string(), Some(bad), &opener)
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidInput, "{bad:?}");
+    }
     assert!(got.borrow().is_none());
 }
 
@@ -529,4 +566,46 @@ fn reveal_session_file_and_open_project_dir() {
     let e = ops_cmds::reveal_session_file_impl(&c, &ps, &bad).unwrap_err();
     assert_eq!(e.code, ErrorCode::Io);
     assert!(e.message.contains("Finder"), "{}", e.message);
+}
+
+#[test]
+fn reveal_file_accepts_only_absolute_existing_files() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("mcp.json");
+    std::fs::write(&file, "{}").unwrap();
+    let path = file.display().to_string();
+    let runner = RecordRunner::default();
+    ops_cmds::reveal_file_impl(&path, &runner).unwrap();
+    {
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "/usr/bin/open");
+        assert_eq!(calls[0].1, vec!["-R".to_string(), path.clone()]);
+    }
+    // 相对路径 / 不存在 / 目录 / 控制字符：拒绝且不再调用 runner。
+    assert_eq!(
+        ops_cmds::reveal_file_impl("rel/mcp.json", &runner)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        ops_cmds::reveal_file_impl(&t.path().join("gone").display().to_string(), &runner)
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        ops_cmds::reveal_file_impl(&t.path().display().to_string(), &runner)
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        ops_cmds::reveal_file_impl(&format!("{path}\n"), &runner)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(runner.calls.lock().unwrap().len(), 1);
 }

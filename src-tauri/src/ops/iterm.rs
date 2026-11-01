@@ -55,10 +55,15 @@ pub fn resume_command(cwd: &str, session_path: &str) -> String {
     )
 }
 
-/// 新开会话命令：`cd '<cwd>' && omp`。**不带任何参数、不带 prompt**，
-/// 只启动 omp 交互界面（与「在 iTerm 继续」的 `--resume` 区分）。
-pub fn new_session_command(cwd: &str) -> String {
-    format!("cd {} && omp", shell_quote(cwd))
+/// 新开会话命令：`cd '<cwd>' && omp [--model '<model>']`。
+/// `model` 为 Some(非空) 时追加 `--model`（经 shell 单引号转义）；
+/// None/空 = 裸 `omp`。**除此之外不带 prompt、不自动发送任何内容**。
+pub fn new_session_command(cwd: &str, model: Option<&str>) -> String {
+    let base = format!("cd {} && omp", shell_quote(cwd));
+    match model.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(m) => format!("{base} --model {}", shell_quote(m)),
+        None => base,
+    }
 }
 
 /// 生成驱动 iTerm 的完整 AppleScript（纯函数，便于单测锁定脚本形状）。
@@ -186,26 +191,41 @@ mod tests {
 
     #[test]
     fn new_session_command_has_no_args() {
-        assert_eq!(new_session_command("/tmp"), "cd '/tmp' && omp");
+        assert_eq!(new_session_command("/tmp", None), "cd '/tmp' && omp");
         assert_eq!(
-            new_session_command("/Users/x/My Project"),
+            new_session_command("/Users/x/My Project", None),
             "cd '/Users/x/My Project' && omp"
         );
         assert_eq!(
-            new_session_command("/Users/x/it's 中文"),
+            new_session_command("/Users/x/it's 中文", Some("  ")),
             "cd '/Users/x/it'\"'\"'s 中文' && omp"
         );
-        // 末尾只能是裸 `omp`：不带 --resume、prompt 或其他参数。
-        assert!(new_session_command("/tmp/a b").ends_with("&& omp"));
+        // 无模型时末尾只能是裸 `omp`：不带 --resume、prompt 或其他参数。
+        assert!(new_session_command("/tmp/a b", None).ends_with("&& omp"));
+    }
+
+    #[test]
+    fn new_session_command_with_model() {
+        assert_eq!(
+            new_session_command("/tmp", Some("5438/deepseek-v4.1-flash")),
+            "cd '/tmp' && omp --model '5438/deepseek-v4.1-flash'"
+        );
+        // 模型名单引号同样 shell 转义。
+        assert_eq!(
+            new_session_command("/tmp", Some("it's")),
+            "cd '/tmp' && omp --model 'it'\"'\"'s'"
+        );
     }
 
     #[test]
     fn new_session_command_survives_applescript() {
         // 引号与反斜杠先经 shell 单引号保护，再经 AppleScript 字符串转义。
-        let cmd = new_session_command("/Users/x/say \"hi\"\\中文");
+        let cmd = new_session_command("/Users/x/say \"hi\"\\中文", Some("p/m"));
         let script = build_script(&cmd);
         assert!(
-            script.contains("write text \"cd '/Users/x/say \\\"hi\\\"\\\\中文' && omp\""),
+            script.contains(
+                "write text \"cd '/Users/x/say \\\"hi\\\"\\\\中文' && omp --model 'p/m'\""
+            ),
             "{script}"
         );
     }
@@ -413,6 +433,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         crate::ops::commands::new_session_in_iterm_impl(
             &dir.display().to_string(),
+            None,
             &crate::ops::iterm::open_tab,
         )
         .expect("new_session_in_iterm_impl");

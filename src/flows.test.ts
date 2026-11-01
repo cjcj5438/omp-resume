@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { SessionSummary } from "./types";
-import { planDelete, runContinueFromNode, type ContinueDeps } from "./flows";
+import { cleanupDialogInfo, planDelete, runContinueFromNode, type ContinueDeps, type DeleteTarget } from "./flows";
 
 function summary(path: string, inUse: boolean): SessionSummary {
   return {
@@ -25,6 +25,8 @@ function summary(path: string, inUse: boolean): SessionSummary {
     version: 3,
     badLines: 0,
     firstUserMessage: null,
+    model: null,
+    tokens: null,
   };
 }
 
@@ -47,6 +49,36 @@ describe("planDelete", () => {
     ]);
     const plan = planDelete(byPath, ["/s/a.jsonl", "/s/b.jsonl"]);
     expect(plan.deletable).toEqual([]);
+  });
+});
+
+describe("cleanupDialogInfo", () => {
+  const target = (over: Partial<DeleteTarget> = {}): DeleteTarget => ({
+    path: "/s/a.jsonl",
+    id: "a",
+    title: "会话 A",
+    cwd: "/w/p",
+    sizeBytes: 1000,
+    messageCount: 1,
+    inUse: false,
+    ...over,
+  });
+
+  it("清理页发起：有 cleanup 来源就返回汇总 kv（数量/字节合计/发起方被排除数）", () => {
+    expect(
+      cleanupDialogInfo([
+        target({ path: "/s/a.jsonl", sizeBytes: 1000, source: "cleanup", excluded: 2 }),
+        target({ path: "/s/b.jsonl", id: "b", sizeBytes: 2000, source: "cleanup", excluded: 2 }),
+      ]),
+    ).toEqual({ count: 2, bytes: 3000, excluded: 2 });
+  });
+
+  it("清理页发起：未填 excluded 时回落 0", () => {
+    expect(cleanupDialogInfo([target({ source: "cleanup" })])).toEqual({ count: 1, bytes: 1000, excluded: 0 });
+  });
+
+  it("会话页发起：无 source 返回 null，走默认会话形态", () => {
+    expect(cleanupDialogInfo([target(), target({ path: "/s/b.jsonl", id: "b" })])).toBeNull();
   });
 });
 

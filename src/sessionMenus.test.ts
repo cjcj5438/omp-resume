@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildBatchMenu,
   buildGroupMenu,
-  buildPinnedGroupMenu,
   buildSessionMenu,
   type SessionMenuActions,
 } from "./sessionMenus";
@@ -49,6 +48,8 @@ function session(over: Partial<SessionSummary> = {}): SessionSummary {
     version: 3,
     badLines: 0,
     firstUserMessage: null,
+    model: null,
+    tokens: null,
     ...over,
   };
 }
@@ -83,24 +84,24 @@ function runOf(items: MenuSpec[], text: string): () => void {
 }
 
 describe("buildSessionMenu", () => {
-  it("在用会话禁用「在 iTerm 继续」与「删除…」", () => {
+  it("在用会话：「在 iTerm2 恢复」与「删除…」可点（走确认框解释）", () => {
     const specs = buildSessionMenu(
       session({ inUse: true }),
       { meta: meta(null, []), metaReady: true, pinned: false, allTags: [] },
       actions(),
     );
-    expect(itemEnabled(specs, "在 iTerm 继续")).toBe(false);
-    expect(itemEnabled(specs, "删除…")).toBe(false);
+    expect(itemEnabled(specs, "在 iTerm2 恢复")).toBe(true);
+    expect(itemEnabled(specs, "删除…")).toBe(true);
     expect(itemEnabled(specs, "在 Finder 中打开项目目录")).toBe(true);
   });
 
-  it("cwd 缺失时禁用继续、新建、打开目录与续聊命令", () => {
+  it("cwd 缺失时禁用恢复、新建、打开目录与续聊命令", () => {
     const specs = buildSessionMenu(
       session({ cwdExists: false }),
       { meta: meta(null, []), metaReady: true, pinned: false, allTags: [] },
       actions(),
     );
-    expect(itemEnabled(specs, "在 iTerm 继续")).toBe(false);
+    expect(itemEnabled(specs, "在 iTerm2 恢复")).toBe(false);
     expect(itemEnabled(specs, "在此项目新建会话")).toBe(false);
     expect(itemEnabled(specs, "在 Finder 中打开项目目录")).toBe(false);
     expect(itemEnabled(specs, "续聊命令")).toBe(false);
@@ -184,13 +185,13 @@ describe("buildBatchMenu", () => {
     expect(some.togglePin).toHaveBeenCalledWith("session", "b");
   });
 
-  it("全部禁用（在用）时删除项禁用；部分可用时启用", () => {
+  it("G5：全部在用时删除项仍可点（确认框解释并排除）", () => {
     const allBusy = buildBatchMenu(
       [session({ id: "a", inUse: true }), session({ id: "b", inUse: true })],
       ctx([]),
       actions(),
     );
-    expect(itemEnabled(allBusy, "删除 2 个会话…")).toBe(false);
+    expect(itemEnabled(allBusy, "删除 2 个会话…")).toBe(true);
 
     const mixed = buildBatchMenu(
       [session({ id: "a", inUse: true }), session({ id: "b" })],
@@ -225,16 +226,5 @@ describe("buildGroupMenu", () => {
       actions(),
     );
     expect(itemEnabled(specs, "选择组内全部会话")).toBe(false);
-  });
-});
-
-describe("buildPinnedGroupMenu", () => {
-  it("选择全部置顶会话并折叠/展开", () => {
-    const a = actions();
-    const specs = buildPinnedGroupMenu(["/a"], a);
-    runOf(specs, "选择全部置顶会话")();
-    expect(a.selectGroup).toHaveBeenCalledWith(["/a"]);
-    runOf(specs, "折叠全部")();
-    expect(a.collapseAll).toHaveBeenCalled();
   });
 });

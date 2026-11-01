@@ -231,6 +231,36 @@ pub fn reveal_session_file_impl(
         .map_err(|s| AppError::new(ErrorCode::Io, format!("无法在 Finder 中显示：{s}")))
 }
 
+/// 通用「在 Finder 中显示文件」（`open -R <path>`，CONTRACT §4.72）：绝对路径 +
+/// 存在 + 是文件 + 无控制字符才执行；`run` 可注入，便于测试。
+pub fn reveal_file_impl(
+    path: &str,
+    run: &dyn crate::menubar::iterm::Runner,
+) -> Result<(), AppError> {
+    let file = Path::new(path);
+    if !file.is_absolute() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "只能在 Finder 中显示绝对路径",
+        ));
+    }
+    if path.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "路径含控制字符，拒绝在 Finder 中显示",
+        ));
+    }
+    if !file.is_file() {
+        return Err(AppError::new(
+            ErrorCode::NotFound,
+            format!("文件不存在：{path}"),
+        ));
+    }
+    run.run("/usr/bin/open", &["-R", path])
+        .map(|_| ())
+        .map_err(|s| AppError::new(ErrorCode::Io, format!("无法在 Finder 中显示：{s}")))
+}
+
 /// 在 Finder 中打开项目目录（`open <cwd>`）。校验规则与 `new_session_in_iterm_impl` 相同。
 pub fn open_project_dir_impl(
     cwd: &str,
@@ -255,14 +285,20 @@ pub fn open_project_dir_impl(
 }
 
 // ---------------------------------------------------------------------------
-// new_session_in_iterm（新开会话，无参数、不带 prompt）
+// new_session_in_iterm（新开会话；除可选 --model 外不带参数、不带 prompt）
 // ---------------------------------------------------------------------------
 
-/// 在 iTerm 于 `cwd` 新开 omp 会话（仅执行 `cd '<cwd>' && omp`）。
+/// 模型名上限（字符数，见 CONTRACT §9 `MODEL_ARG_MAX`）。
+pub const MODEL_ARG_MAX_CHARS: usize = 256;
+
+/// 在 iTerm 于 `cwd` 新开 omp 会话（`cd '<cwd>' && omp [--model '<model>']`）。
 /// `cwd` 须为存在的绝对目录（否则 `CWD_MISSING`）；含控制字符则拒绝
 /// （AppleScript 转义会静默剥离它们，可能改变实际 cd 目标）。
+/// `model` 为空/全空白时等同 None（裸 `omp`）；否则须 ≤256 字、无控制字符、
+/// 不以 `-` 开头（否则 `INVALID_INPUT`，防 `--model` 后跟出任意 flag）。
 pub fn new_session_in_iterm_impl(
     cwd: &str,
+    model: Option<&str>,
     opener: &dyn Fn(&str) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     let cwd_path = Path::new(cwd);
@@ -278,5 +314,62 @@ pub fn new_session_in_iterm_impl(
             "目录路径含控制字符，拒绝在 iTerm 中打开",
         ));
     }
-    opener(&super::iterm::new_session_command(cwd))
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    if let Some(m) = model {
+        if m.chars().count() > MODEL_ARG_MAX_CHARS || m.chars().any(char::is_control) {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "模型名不合法（≤256 字、无控制字符）",
+            ));
+        }
+        if m.starts_with('-') {
+            return Err(AppError::new(
+                ErrorCode::InvalidInput,
+                "模型名不能以 `-` 开头",
+            ));
+        }
+    }
+    opener(&super::iterm::new_session_command(cwd, model))
+}
+
+// ---------------------------------------------------------------------------
+// focus_iterm_tab（在用恢复确认框的「切到正在运行的标签页」）
+// ---------------------------------------------------------------------------
+
+/// 聚焦占用会话的 iTerm 标签：校验 → probe（须 inUse）→ occupant（须 iTerm2）→
+/// tty → `focus_tty`（只 activate+select，绝不写键）。
+/// `run` 为命令执行器（生产用 `menubar::iterm::SystemRunner`）。
+pub fn focus_iterm_tab_impl(
+    cfg: &Config,
+    path: &str,
+    run: &dyn crate::menubar::iterm::Runner,
+) -> Result<(), AppError> {
+    let valid = config::validate_session_path(cfg, path)?;
+    let id = sessions::session_id_of(&sessions::parse::parse_file(&valid)?, &valid);
+    let p = crate::lock::probe(&cfg.owners_dir, &id);
+    if !p.probe_ok {
+        return Err(AppError::new(
+            ErrorCode::ProbeFailed,
+            "占用探测失败，不敢聚焦",
+        ));
+    }
+    if !p.in_use {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "该会话当前未被占用，无需聚焦",
+        ));
+    }
+    let occ = crate::occupant::resolve_occupants(&cfg.owners_dir, std::slice::from_ref(&id))
+        .remove(&id)
+        .ok_or_else(|| AppError::new(ErrorCode::ItermFailed, "未找到占用进程，无法聚焦"))?;
+    if occ.app.as_deref() != Some("iTerm2") {
+        return Err(AppError::new(
+            ErrorCode::ItermFailed,
+            "仅 iTerm 中的会话可聚焦",
+        ));
+    }
+    let tty = crate::menubar::iterm::tty_of_pid(occ.pid, run)
+        .ok_or_else(|| AppError::new(ErrorCode::ItermFailed, "未找到占用进程的终端，无法聚焦"))?;
+    crate::menubar::iterm::focus_tty(&tty, run)
+        .map_err(|e| AppError::new(ErrorCode::ItermFailed, e.message()))
 }

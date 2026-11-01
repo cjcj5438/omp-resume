@@ -33,6 +33,8 @@ function s(over: Partial<SessionSummary> & { path: string }): SessionSummary {
     version: 3,
     badLines: 0,
     firstUserMessage: null,
+    model: null,
+    tokens: null,
     ...over,
   };
 }
@@ -191,49 +193,37 @@ describe("applyPins", () => {
 
   it("项目置顶上浮；置顶之间保持后端顺序，其余保持原顺序", () => {
     const out = applyPins(base, { projects: ["/w/c", "/w/a"], sessions: [] });
-    expect(out.groups.map((g) => g.cwd)).toEqual(["/w/a", "/w/c", "/w/b"]);
-    expect(out.pinnedSessions).toEqual([]);
+    expect(out.map((g) => g.cwd)).toEqual(["/w/a", "/w/c", "/w/b"]);
   });
 
-  it("会话置顶跨项目聚合，并从原组移出（不出现两次）", () => {
+  it("会话置顶组内上浮，不移出原组", () => {
     const out = applyPins(base, { projects: [], sessions: ["/p/a2", "/p/c1"] });
-    expect(order(out.groups)).toEqual([
-      ["/w/a", "/p/a1"],
+    expect(order(out)).toEqual([
+      ["/w/a", "/p/a2", "/p/a1"],
       ["/w/b", "/p/b1", "/p/b2"],
-      ["/w/c", "/p/c2"],
+      ["/w/c", "/p/c1", "/p/c2"],
     ]);
-    expect(out.pinnedSessions.map((x) => x.path)).toEqual(["/p/c1", "/p/a2"]);
   });
 
-  it("置顶区按修改时间新→旧，与置顶先后无关", () => {
-    const out = applyPins(base, { projects: [], sessions: ["/p/a1", "/p/c2", "/p/b2"] });
-    expect(out.pinnedSessions.map((x) => x.path)).toEqual(["/p/c2", "/p/b2", "/p/a1"]);
-  });
-
-  it("会话全部置顶后保留空组壳（组头入口不丢）", () => {
-    const out = applyPins(base, { projects: [], sessions: ["/p/b1", "/p/b2"] });
-    expect(out.groups.map((g) => [g.cwd, g.sessions.length])).toEqual([
-      ["/w/a", 2],
-      ["/w/b", 0],
-      ["/w/c", 2],
-    ]);
+  it("组内置顶保持后端相对顺序，与置顶先后无关", () => {
+    const out = applyPins(base, { projects: [], sessions: ["/p/b2", "/p/b1"] });
+    expect(order(out)[1]).toEqual(["/w/b", "/p/b1", "/p/b2"]);
   });
 
   it("不修改入参", () => {
     const snapshot = order(base);
     const out = applyPins(base, { projects: ["/w/c"], sessions: ["/p/a2"] });
-    expect(out.groups).not.toBe(base);
+    expect(out).not.toBe(base);
     expect(order(base)).toEqual(snapshot);
   });
 
   it("空置顶保持原有顺序", () => {
-    expect(applyPins(base, { projects: [], sessions: [] }).groups).toEqual(base);
+    expect(applyPins(base, { projects: [], sessions: [] })).toEqual(base);
   });
 
   it("忽略无对应项的置顶键", () => {
     const out = applyPins(base, { projects: ["/w/none"], sessions: ["/p/none"] });
-    expect(out.groups).toEqual(base);
-    expect(out.pinnedSessions).toEqual([]);
+    expect(out).toEqual(base);
   });
 });
 
@@ -348,18 +338,35 @@ describe("filterGroupsByStatus", () => {
   });
 });
 
-describe("filterSessionsByStatus / statusCounts", () => {
-  it("pinned 原样返回；counts 在全量上计数", async () => {
-    const { filterSessionsByStatus, statusCounts } = await import("./listUtils");
+describe("statusCounts", () => {
+  it("在全量上计数", async () => {
+    const { statusCounts } = await import("./listUtils");
     const sessions = [
       s({ path: "/p/a.jsonl", inUse: true }),
       s({ path: "/p/b.jsonl", badLines: 1 }),
       s({ path: "/p/c.jsonl" }),
     ];
     const pins = { projects: [], sessions: ["/p/c.jsonl"] };
-    expect(filterSessionsByStatus(sessions, "pinned", pins)).toBe(sessions);
-    expect(filterSessionsByStatus(sessions, "running", pins).map((x) => x.path)).toEqual(["/p/a.jsonl"]);
     const gs: ProjectGroup[] = [{ cwd: "/w/p", dirName: "p", sessions }];
     expect(statusCounts(gs, pins)).toEqual({ all: 3, running: 1, pinned: 1, issues: 1 });
+  });
+
+  it("已置顶 chip 跨所有项目组列出全部置顶会话（原置顶区功能的替代入口）", async () => {
+    const { applyPins, filterGroupsByStatus } = await import("./listUtils");
+    const gs: ProjectGroup[] = [
+      {
+        cwd: "/w/p1",
+        dirName: "p1",
+        sessions: [s({ path: "/p/a.jsonl", id: "a", cwd: "/w/p1" }), s({ path: "/p/b.jsonl", id: "b", cwd: "/w/p1" })],
+      },
+      {
+        cwd: "/w/p2",
+        dirName: "p2",
+        sessions: [s({ path: "/p/c.jsonl", id: "c", cwd: "/w/p2" })],
+      },
+    ];
+    const pins = { projects: [], sessions: ["a", "c"] };
+    const out = filterGroupsByStatus(applyPins(gs, pins), "pinned", pins);
+    expect(out.flatMap((g) => g.sessions.map((x) => x.path))).toEqual(["/p/a.jsonl", "/p/c.jsonl"]);
   });
 });

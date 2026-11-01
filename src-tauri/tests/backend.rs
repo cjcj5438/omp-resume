@@ -160,12 +160,30 @@ fn list_tree_conversation_kitchen_sink() {
             omp_resume_lib::model::ConversationItem::Compaction(_) => "compaction",
             omp_resume_lib::model::ConversationItem::BranchSummary(_) => "branchSummary",
             omp_resume_lib::model::ConversationItem::Other(_) => "other",
+            omp_resume_lib::model::ConversationItem::Usage(_) => "usage",
         })
         .collect();
     assert_eq!(
         kinds,
         vec!["user", "assistant", "toolResult", "branchSummary", "user"]
     );
+    // B4：全部条目带 id；B7：该夹具无分支。
+    assert_eq!(conv.branch_point_id, None);
+    let ids: Vec<&str> = conv
+        .items
+        .iter()
+        .map(|i| match i {
+            omp_resume_lib::model::ConversationItem::User(u) => u.id.as_str(),
+            omp_resume_lib::model::ConversationItem::Assistant(a) => a.id.as_str(),
+            omp_resume_lib::model::ConversationItem::ToolResult(t) => t.id.as_str(),
+            omp_resume_lib::model::ConversationItem::BashExecution(b) => b.id.as_str(),
+            omp_resume_lib::model::ConversationItem::Compaction(c) => c.id.as_str(),
+            omp_resume_lib::model::ConversationItem::BranchSummary(b) => b.id.as_str(),
+            omp_resume_lib::model::ConversationItem::Other(o) => o.id.as_str(),
+            omp_resume_lib::model::ConversationItem::Usage(u) => u.id.as_str(),
+        })
+        .collect();
+    assert_eq!(ids, vec!["u1", "a1", "t1", "bs1", "u3"]);
 
     // assistant 块：thinking/text/toolCall，未知块跳过
     if let omp_resume_lib::model::ConversationItem::Assistant(a) = &conv.items[1] {

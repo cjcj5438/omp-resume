@@ -153,34 +153,19 @@ function pinnedFirst<T>(items: T[], isPinned: (item: T) => boolean): T[] {
   return [...items.filter(isPinned), ...items.filter((item) => !isPinned(item))];
 }
 
-export interface PinnedSplit {
-  /** 跨项目聚合的置顶会话，按 modifiedAt 新→旧；已从 `groups` 中移出，不重复出现。 */
-  pinnedSessions: SessionSummary[];
-  /** 项目置顶上浮后、移出置顶会话的分组；被掏空的组保留组壳（由调用方展示占位）。 */
-  groups: ProjectGroup[];
-}
 
 /**
- * 置顶拆分：项目组按置顶稳定上浮；会话按 id 跨项目聚合为置顶区，
- * 从原组移出（不出现两次），置顶区内按 modifiedAt 新→旧。
+ * 置顶整理（设计稿口径：组内置顶排序，无独立置顶区）：
+ * 项目组按置顶稳定上浮；组内会话按置顶稳定上浮（其余保持后端顺序）。
  * 不修改入参，未知键忽略。
  */
-export function applyPins(groups: ProjectGroup[], pins: Pins): PinnedSplit {
+export function applyPins(groups: ProjectGroup[], pins: Pins): ProjectGroup[] {
   const pinnedProjects = new Set(pins.projects);
   const pinnedIds = new Set(pins.sessions);
-  const pinnedSessions: SessionSummary[] = [];
-  const rest = pinnedFirst(groups, (g) => pinnedProjects.has(g.cwd)).map((g) => ({
+  return pinnedFirst(groups, (g) => pinnedProjects.has(g.cwd)).map((g) => ({
     ...g,
-    sessions: g.sessions.filter((s) => {
-      if (!pinnedIds.has(s.id)) return true;
-      pinnedSessions.push(s);
-      return false;
-    }),
+    sessions: pinnedFirst(g.sessions, (s) => pinnedIds.has(s.id)),
   }));
-  pinnedSessions.sort((a, b) =>
-    a.modifiedAt < b.modifiedAt ? 1 : a.modifiedAt > b.modifiedAt ? -1 : 0,
-  );
-  return { pinnedSessions, groups: rest };
 }
 
 /** 组头三态复选：组内可见会话相对勾选集的状态；空组视为 none（无可选项）。 */
@@ -246,18 +231,6 @@ export function filterGroupsByStatus(
   return out;
 }
 
-/**
- * 会话级状态过滤（置顶区用）：`all` 返回同一引用。
- * pinned 语义：置顶区全部保留（调用方已限定为置顶会话）。
- */
-export function filterSessionsByStatus(
-  sessions: SessionSummary[],
-  f: SessionFilter,
-  pins: Pins,
-): SessionSummary[] {
-  if (f === "all" || f === "pinned") return sessions;
-  return sessions.filter((s) => sessionPassesStatus(s, f, pins, false));
-}
 
 /**
  * 各状态计数：在置顶拆分前、不受搜索和标签影响的全量上计数。

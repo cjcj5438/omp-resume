@@ -1,5 +1,6 @@
-/** 批量恢复确认：列出将打开 / 跳过 / 超限三份，确认后由 App 顺序打开 iTerm。 */
+/** 批量恢复确认：逐会话明细 + 安心说明 + 跳过/超限三分（扩展保留）。 */
 import { MAX_BULK_RESUME, type BulkResumePlan } from "../bulkResume";
+import { displayCwd } from "../format";
 import { Modal } from "./ui";
 
 interface BulkResumeDialogProps {
@@ -19,15 +20,20 @@ export function BulkResumeDialog({ total, plan, onCancel, onConfirm }: BulkResum
   return (
     <Modal
       title={`恢复 ${total} 个会话`}
+      sub={
+        <>
+          每个会话都会在新的 iTerm2 标签页中执行 <code>omp --resume</code>，互不影响。
+        </>
+      }
       onClose={onCancel}
       footer={
         <>
-          <button type="button" className="btn" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
             取消
           </button>
           <button
             type="button"
-            className="btn btn-accent"
+            className="btn btn-primary"
             disabled={plan.open.length === 0}
             onClick={onConfirm}
           >
@@ -36,7 +42,19 @@ export function BulkResumeDialog({ total, plan, onCancel, onConfirm }: BulkResum
         </>
       }
     >
-      <p>{`将打开 ${plan.open.length} 个 iTerm 标签页。`}</p>
+      {plan.open.length > 0 ? (
+        <div className="dlg-kv">
+          {plan.open.map((s) => (
+            <div key={s.path}>
+              <span>{s.title}</span>
+              <span>{displayCwd(s.cwd)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="inline-note">
+        <span>恢复后不会向任何标签页输入按键。</span>
+      </div>
       {plan.skipped.length > 0 ? <p>{`已跳过 ${plan.skipped.length} 个（${skippedText}）。`}</p> : null}
       {plan.overLimit.length > 0 ? (
         <p>{`超出单次上限 ${MAX_BULK_RESUME} 个、未打开 ${plan.overLimit.length} 个。`}</p>

@@ -1,21 +1,18 @@
 /** 会话列表页：页头 + 状态筛选条 + 会话列表 + 底部计数。 */
+import { useState } from "react";
 import type { MetaSnapshot, ProjectGroup, SessionSummary } from "../types";
 import type { PinKind, Pins } from "../pins";
-import type { TagCount } from "../listUtils";
-import type { SessionFilter } from "../listUtils";
+import type { SessionFilter, TagCount } from "../listUtils";
 import type { ToastFn } from "./useOmpOp";
 import { EmptyState } from "./ui";
-import { PageHeader, Seg } from "./page";
+import { PageHeader, SearchInput } from "./page";
 import { SessionList } from "./SessionList";
-import { SearchX, SquarePen } from "lucide-react";
+import { ListChecks, Plus, RefreshCw, SearchX } from "lucide-react";
 import "./SessionsPage.css";
 import { Ico } from "./ui";
 import type { AppError } from "../types";
-
 interface SessionsPageProps {
   groups: ProjectGroup[];
-  pinnedSessions: SessionSummary[];
-  counts: Record<SessionFilter, number>;
   statusFilter: SessionFilter;
   onStatusFilter: (f: SessionFilter) => void;
   /** 当前可见会话数（过滤后）。 */
@@ -29,7 +26,6 @@ interface SessionsPageProps {
   loading: boolean;
   listError: AppError | null;
   onRetry: () => void;
-  onRefresh: () => void;
   onRescan: () => void;
   onNewSession: () => void;
   checked: Set<string>;
@@ -58,8 +54,6 @@ interface SessionsPageProps {
 
 export function SessionsPage({
   groups,
-  pinnedSessions,
-  counts,
   statusFilter,
   onStatusFilter,
   visibleCount,
@@ -71,7 +65,6 @@ export function SessionsPage({
   loading,
   listError,
   onRetry,
-  onRefresh,
   onRescan,
   onNewSession,
   checked,
@@ -97,7 +90,23 @@ export function SessionsPage({
   onRequestDelete,
   onMetaSnapshot,
 }: SessionsPageProps) {
-  const isEmpty = groups.length === 0 && pinnedSessions.length === 0;
+  const isEmpty = groups.length === 0;
+  // 多选模式（S1）：toolbar 行尾开关持有；打开后勾选框常显、选择条常驻。
+  const [multiMode, setMultiMode] = useState(false);
+  const toggleMulti = () => {
+    if (multiMode || checked.size > 0) {
+      setMultiMode(false);
+      onClearChecks();
+    } else {
+      setMultiMode(true);
+    }
+  };
+  const chips: Array<{ value: SessionFilter; label: string }> = [
+    { value: "all", label: "全部" },
+    { value: "running", label: "运行中" },
+    { value: "pinned", label: "已置顶" },
+    { value: "issues", label: "有问题" },
+  ];
   return (
     <div className="view">
       <PageHeader
@@ -106,59 +115,78 @@ export function SessionsPage({
         sub="按项目归档的 append-only 会话树，只读浏览；需要继续时交还给真实的 omp --resume。"
         actions={
           <>
-            <button type="button" className="btn" disabled={loading} onClick={onRescan}>
-              {loading ? <span className="spinner" aria-hidden="true" /> : null}
+            <button type="button" className="btn btn-ghost" disabled={loading} onClick={onRescan}>
+              {loading ? (
+                <span className="spinner" aria-hidden="true" />
+              ) : (
+                <Ico icon={RefreshCw} size={13} />
+              )}
               重新扫描
             </button>
-            <button type="button" className="btn btn-accent" onClick={onNewSession}>
-              <Ico icon={SquarePen} size={13} />
-              新建会话…
+            <button type="button" className="btn btn-primary" onClick={onNewSession}>
+              <Ico icon={Plus} size={13} />
+              新建会话
             </button>
           </>
         }
       />
-      <div className="toolbar sessions-toolbar">
-        <Seg
-          label="状态筛选"
-          value={statusFilter}
-          onChange={onStatusFilter}
-          options={[
-            { value: "all", label: "全部", count: counts.all },
-            { value: "running", label: "运行中", count: counts.running },
-            { value: "pinned", label: "已置顶", count: counts.pinned },
-            { value: "issues", label: "有问题", count: counts.issues },
-          ]}
+      <div className="toolbar sessions-toolbar" role="search">
+        <SearchInput
+          icon
+          label="搜索会话"
+          placeholder="搜索标题、路径或模型"
+          value={query}
+          onChange={onQuery}
         />
+        {chips.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            className={statusFilter === c.value ? "chip is-on" : "chip"}
+            aria-pressed={statusFilter === c.value}
+            aria-label={`状态筛选：${c.label}`}
+            onClick={() => onStatusFilter(c.value)}
+          >
+            {c.value === "running" ? <span className="dot live" aria-hidden="true" /> : null}
+            {c.label}
+          </button>
+        ))}
         <span className="spacer" />
-        <span className="muted">{`按最近修改排序 · 共 ${visibleCount} 个`}</span>
+        <span className="muted sessions-sort">{`按最近使用排序 · 共 ${visibleCount} 个`}</span>
+        <button
+          type="button"
+          className="btn icon-btn icon-btn-multi"
+          aria-label="多选"
+          aria-pressed={multiMode || checked.size > 0}
+          title="多选"
+          onClick={toggleMulti}
+        >
+          <Ico icon={ListChecks} size={13} />
+        </button>
       </div>
       {isEmpty && listError === null ? (
-        <EmptyState
-          icon={SearchX}
-          title="没有匹配的会话"
-          action={
-            <button type="button" className="btn" onClick={onClearFilters}>
-              清除筛选
-            </button>
-          }
-        >
-          换个关键词，或清除筛选条件。
-        </EmptyState>
+        <div className="panel">
+          <EmptyState
+            icon={SearchX}
+            title="没有匹配的会话"
+            action={
+              <button type="button" className="btn btn-ghost" onClick={onClearFilters}>
+              </button>
+            }
+          >
+            换个关键词，或清除运行中 / 已置顶筛选。
+          </EmptyState>
+        </div>
       ) : (
         <SessionList
-          variant="page"
           groups={groups}
-          pinnedSessions={pinnedSessions}
-          query={query}
-          onQuery={onQuery}
-          loading={loading}
           listError={listError}
           onRetry={onRetry}
-          onRefresh={onRefresh}
           checked={checked}
           onToggleCheck={onToggleCheck}
           onToggleChecks={onToggleChecks}
           onClearChecks={onClearChecks}
+          multiMode={multiMode}
           selectedPath={selectedPath}
           onOpenSession={onOpenSession}
           onOpenMeta={onOpenMeta}

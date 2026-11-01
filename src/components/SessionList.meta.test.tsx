@@ -17,20 +17,15 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
   const onToggleTag = vi.fn<(tag: string) => void>();
   render(
     <SessionList
-      variant="page"
       groups={list.groups}
-      pinnedSessions={[]}
-      query=""
-      onQuery={noop}
-      loading={false}
       listError={null}
       onRetry={noop}
-      onRefresh={noop}
       onNewSessionIn={noop}
       checked={new Set()}
       onToggleCheck={noop}
       onToggleChecks={noop}
       onClearChecks={noop}
+      multiMode={false}
       selectedPath={null}
       onOpenSession={noop}
       onOpenMeta={noop}
@@ -68,7 +63,7 @@ describe("SessionList 别名行内展示", () => {
     const orig = document.querySelector(".row-title-orig");
     expect(orig?.textContent).toBe(s1.title);
     // 至多 3 个标签徽章 + 溢出计数（限定在会话行内，不含过滤条）。
-    const badges = [...document.querySelectorAll(".row .badge-tag")].map((el) => el.textContent);
+    const badges = [...document.querySelectorAll(".session-row .badge-tag")].map((el) => el.textContent);
     expect(badges).toEqual(["bug", "a", "b", "+2"]);
   });
 
@@ -77,6 +72,43 @@ describe("SessionList 别名行内展示", () => {
     const s1 = FIXTURE_SESSIONS[0].summary;
     expect(screen.getByText(s1.title)).toBeInTheDocument();
     expect(document.querySelector(".row-title-orig")).toBeNull();
+  });
+});
+describe("SessionList 行内模型与 tokens（S9）", () => {
+  function metaOf(title: string): HTMLElement | null {
+    for (const row of document.querySelectorAll(".session-row")) {
+      if (row.querySelector(".sr-title strong")?.textContent === title)
+        return row.querySelector(".sr-meta");
+    }
+    return null;
+  }
+
+  it("不同会话渲染各自的模型与 tokens 值", () => {
+    renderSidebar({ revision: 0, sessions: {} });
+    const s1 = FIXTURE_SESSIONS[0].summary;
+    const s2 = FIXTURE_SESSIONS[1].summary;
+    const m1 = metaOf(s1.title)?.textContent ?? "";
+    const m2 = metaOf(s2.title)?.textContent ?? "";
+    // 夹具保证两行值不同：断言渲染的是行值而非全局值。
+    expect(s1.tokens).not.toBe(s2.tokens);
+    expect(m1).toContain(s1.model!);
+    expect(m2).toContain(s2.model!);
+    expect(m1).not.toBe(m2);
+  });
+
+  it("tokens/model 为 null 时显示「—」；非空 tokens 带主会话口径 title", () => {
+    renderSidebar({ revision: 0, sessions: {} });
+    const s6 = FIXTURE_SESSIONS[5].summary;
+    expect(s6.model).toBeNull();
+    expect(s6.tokens).toBeNull();
+    const m6 = metaOf(s6.title)?.textContent ?? "";
+    expect(m6).toContain("—");
+    const s1 = FIXTURE_SESSIONS[0].summary;
+    const row = [...document.querySelectorAll(".session-row")].find(
+      (el) => el.querySelector(".sr-title strong")?.textContent === s1.title,
+    )!;
+    const tok = row.querySelector(".sr-meta .mono")!;
+    expect(tok.getAttribute("title")).toBe("主会话 token（不含子代理）");
   });
 });
 describe("SessionList 标签过滤条", () => {

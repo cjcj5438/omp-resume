@@ -23,6 +23,10 @@ function n(
     label: null,
     isCompaction: false,
     isBranchSummary: false,
+    model: null,
+    tokens: null,
+    isError: false,
+    toolName: null,
     ...over,
   };
 }

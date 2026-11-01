@@ -1,64 +1,82 @@
 /**
- * 树视图：折叠线性链、节点选择、root→node 预览、从此节点继续。
+ * 树视图：SVG 树图 + 节点 facts + 节点内容预览（扩展保留）+ 定位/分叉。
+ * 布局见 tree/layout（fold 行 → 轨道坐标）；大树默认折叠，首屏仅数十行。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getConversation, getTree } from "../api";
-import type { AppError, SessionSummary, TreeNode } from "../types";
-import type { ContinueOutcome } from "../flows";
+import type { SessionSummary, TreeData, TreeNode } from "../types";
 import { errorText, formatTreeTime } from "../format";
-import { MAX_INDENT_DEPTH, flattenRows, foldTree, type DisplayRow } from "../tree/fold";
+import { compactNumber } from "./usageFormat";
+import { flattenRows, foldTree, type DisplayRow } from "../tree/fold";
+import { edgePath, layoutTree, truncateLabel } from "../tree/layout";
 import { useAsyncData } from "./useAsyncData";
 import { ConversationView } from "./ConversationView";
-import { Ico, Modal } from "./ui";
-import { Bot, ChevronDown, ChevronRight, GitBranch, Shrink, User, Wrench, type LucideIcon } from "lucide-react";
-
-/** 角色 → 图标（同一 family，深浅主题同色）。 */
-const ROLE_ICON: Record<string, LucideIcon> = {
-  user: User,
-  assistant: Bot,
-  toolResult: Wrench,
-};
-
-/** 节点图标：压缩/分支摘要优先，其次按角色，兜底为分支点。 */
-function NodeIcon({ node }: { node: TreeNode }) {
-  if (node.isCompaction) return <Ico icon={Shrink} size={12} />;
-  if (node.isBranchSummary) return <Ico icon={GitBranch} size={12} />;
-  const icon = ROLE_ICON[node.role ?? ""];
-  return icon === undefined ? <Ico icon={GitBranch} size={12} /> : <Ico icon={icon} size={12} />;
-}
+import { Badge, Ico } from "./ui";
+import { Panel } from "./page";
+import { GitBranch, History, Info } from "lucide-react";
+import "./TreeView.css";
 
 interface TreeViewProps {
   session: SessionSummary;
-  onContinue: (nodeId: string) => Promise<ContinueOutcome>;
   refreshKey: number;
-  onToast: (text: string, kind: "info" | "error") => void;
+  /** 「在对话中定位」：DetailPane 切 conv tab + 传 activeNodeId。 */
+  onLocate?: (nodeId: string) => void;
+  /** 分叉请求（App 级弹 ForkDialog，三入口统一，含刷新）。 */
+  onForkRequest: (nodeId: string) => void;
 }
 
-export function TreeView({
-  session,
-  onContinue,
-  refreshKey,
-  onToast,
-}: TreeViewProps) {
+function firstIdOf(row: DisplayRow): string {
+  return row.type === "node" ? row.node.id : row.nodes[0].id;
+}
+
+/** 节点状态：err > 分支点（有兄弟）> 已完成。 */
+function nodeKind(n: TreeNode, byId: Map<string, TreeNode>): "err" | "branch" | "ok" {
+  if (n.isError) return "err";
+  const parent = n.parentId ? byId.get(n.parentId) : undefined;
+  if (parent && parent.childIds.length > 1) return "branch";
+  return "ok";
+}
+
+function kindText(k: "err" | "branch" | "ok"): string {
+  return k === "err" ? "失败" : k === "branch" ? "分支点" : "已完成";
+}
+
+function typeText(n: TreeNode): string {
+  if (n.isCompaction) return "压缩";
+  if (n.isBranchSummary) return "分支摘要";
+  if (n.role === "toolResult") return n.toolName ? `工具 · ${n.toolName}` : "工具";
+  if (n.role === "user") return "用户";
+  if (n.role === "assistant") return "助手";
+  return n.role ?? "消息";
+}
+
+export function TreeView({ session, refreshKey, onLocate, onForkRequest }: TreeViewProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [dialogNode, setDialogNode] = useState<TreeNode | null>(null);
-  const [continueError, setContinueError] = useState<AppError | null>(null);
-  const [busy, setBusy] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
   const tree = useAsyncData(() => getTree({ path: session.path }), [session.path, refreshKey]);
-  const preview = useAsyncData(() => getConversation({ path: session.path, nodeId: selectedId! }), [session.path, selectedId, refreshKey], { enabled: selectedId !== null, keepPrevious: true });
+  const preview = useAsyncData(
+    () => getConversation({ path: session.path, nodeId: selectedId! }),
+    [session.path, selectedId, refreshKey],
+    { enabled: selectedId !== null, keepPrevious: true },
+  );
 
   useEffect(() => {
     if (!tree.data) return;
     setSelectedId((cur) =>
-      cur && tree.data?.nodes.some((n) => n.id === cur) ? cur : tree.data?.leafId ?? null,
+      cur && tree.data?.nodes.some((n) => n.id === cur) ? cur : (tree.data?.leafId ?? null),
     );
   }, [tree.data]);
 
   const rows = useMemo(() => (tree.data ? foldTree(tree.data) : []), [tree.data]);
   const visible = useMemo(() => flattenRows(rows, expanded), [rows, expanded]);
+  const layout = useMemo(() => layoutTree(visible), [visible]);
+  const byId = useMemo(() => {
+    const m = new Map<string, TreeNode>();
+    for (const n of tree.data?.nodes ?? []) m.set(n.id, n);
+    return m;
+  }, [tree.data]);
 
   const toggleFold = (key: string) =>
     setExpanded((prev) => {
@@ -69,133 +87,194 @@ export function TreeView({
     });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const idx = visible.findIndex((r) =>
-      r.type === "node"
-        ? r.node.id === selectedId
-        : r.nodes.some((n) => n.id === selectedId),
-    );
+    const idx = visible.findIndex((r) => firstIdOf(r) === selectedId);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const dir = e.key === "ArrowDown" ? 1 : -1;
       const next = visible[idx + dir];
-      if (next) setSelectedId(next.type === "node" ? next.node.id : firstIdOf(next));
+      if (next) setSelectedId(firstIdOf(next));
       return;
     }
-    const sel = visible[idx];
-    if (!sel) return;
-    if (e.key === "ArrowRight" && sel.type === "fold") {
-      e.preventDefault();
-      if (!expanded.has(sel.key)) toggleFold(sel.key);
-    } else if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      if (sel.type === "fold" && expanded.has(sel.key)) {
+    if (e.key === "Enter") {
+      const sel = visible[idx];
+      if (sel?.type === "fold") {
+        e.preventDefault();
         toggleFold(sel.key);
-      } else if (sel.type === "fold") {
-        // 已收起：回到父节点
-        const parent = sel.parentId;
-        if (parent) setSelectedId(parent);
-      } else {
-        for (const r of rows) {
-          if (r.type === "fold" && r.nodes.some((n) => n.id === sel.node.id)) {
-            toggleFold(r.key);
-            setSelectedId(r.nodes[0].id);
-            break;
-          }
-        }
       }
     }
   };
 
-  const previewNode = selectedId
-    ? tree.data?.nodes.find((n) => n.id === selectedId) ?? null
-    : null;
-  // 缺 cwd 时禁用：续聊必然打不开 iTerm，不得改动会话文件（与“在 iTerm 继续”同规则）。
-  const continueDisabled =
-    busy || session.inUse || !session.cwdExists || selectedId === null;
-  const continueTip = session.inUse
-    ? "会话正在被另一个 omp 使用"
+  const selectedNode = selectedId ? (byId.get(selectedId) ?? null) : null;
+  const leafCount = tree.data ? tree.data.nodes.filter((n) => n.childIds.length === 0).length : 0;
+  // 缺 cwd/在用时禁用：append 后端本就会拒，前端不弹空框。
+  const forkDisabled = session.inUse || !session.cwdExists || !session.formatSupported || selectedId === null;
+  const forkTip = session.inUse
+    ? "会话正在使用中"
     : !session.cwdExists
       ? "项目目录不存在"
-      : selectedId === null
-        ? "请先选择节点"
-        : undefined;
+      : !session.formatSupported
+        ? "该会话格式不支持分叉"
+        : selectedId === null
+          ? "请先选择节点"
+          : undefined;
 
-  const confirmContinue = async () => {
-    if (!dialogNode) return;
-    setBusy(true);
-    setContinueError(null);
-    try {
-      const out = await onContinue(dialogNode.id);
-      if (out.notice) onToast(out.notice, "info");
-    } catch (e) {
-      setContinueError(e as AppError);
-    } finally {
-      setBusy(false);
-      setDialogNode(null);
-    }
-  };
+  if (tree.error) {
+    return (
+      <div className="banner banner-error" role="alert">
+        <span>{errorText(tree.error)}</span>
+        <button type="button" className="btn btn-small" onClick={tree.reload}>
+          重试
+        </button>
+      </div>
+    );
+  }
+  if (tree.loading && !tree.data) return <div className="pane-note">加载中…</div>;
+  const data: TreeData | null = tree.data ?? null;
+  if (!data || data.nodes.length === 0) return <div className="pane-note">该会话没有树节点</div>;
 
   return (
-    <div className="tree-pane">
-      {continueError ? (
-        <div className="banner banner-error" role="alert">
-          {errorText(continueError)}
+    <div className="split">
+      <div className="tree-canvas">
+        <div className="tree-scroll" tabIndex={0} role="tree" aria-label="会话树" onKeyDown={onKeyDown}>
+          <svg
+            ref={svgRef}
+            className="tree-svg"
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+            role="img"
+            aria-label={`会话树：${data.nodes.length} 个节点，${leafCount} 条活跃分支`}
+          >
+            {layout.edges.map((e) => (
+              <path key={`${e.from}->${e.to}`} className={e.branch ? "tree-edge branch" : "tree-edge"} d={edgePath(e)} />
+            ))}
+            {layout.points.map((p) => {
+              const n = byId.get(p.id);
+              if (!n) return null;
+              const kind = nodeKind(n, byId);
+              const cls = `tree-node${kind === "err" ? " err" : kind === "branch" ? " branch" : ""}${p.id === selectedId ? " is-on" : ""}`;
+              const label = truncateLabel(n.preview.split("\n")[0] || n.id);
+              const sub = `${n.id} · ${n.role ?? n.kind}`;
+              return (
+                <g
+                  key={p.id}
+                  className={cls}
+                  transform={`translate(${p.x} ${p.y})`}
+                  role="treeitem"
+                  aria-selected={p.id === selectedId}
+                  aria-label={`节点 ${n.id}：${n.preview}${p.foldable ? "（已折叠，点击展开）" : ""}`}
+                  data-fold-key={p.foldable && p.foldKey ? p.foldKey : undefined}
+                  tabIndex={-1}
+                  onClick={() => {
+                    if (p.foldable && p.foldKey) toggleFold(p.foldKey);
+                    setSelectedId(p.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      if (p.foldable && p.foldKey) toggleFold(p.foldKey);
+                      setSelectedId(p.id);
+                    }
+                  }}
+                >
+                  <rect className="node-ring" x="-14" y="-14" width="28" height="28" rx="7" />
+                  <circle className="node-dot" cx="0" cy="0" r="3.2" />
+                  <text className="tree-label" x="22" y="-1">
+                    {label}
+                  </text>
+                  <text className="tree-sub" x="22" y="12">
+                    {truncateLabel(sub, 26)}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
         </div>
-      ) : null}
-      <div className="tree-cols">
-        <div
-          className="tree-list"
-          ref={listRef}
-          role="tree"
-          aria-label="会话树"
-          tabIndex={0}
-          onKeyDown={onKeyDown}
-        >
-          {tree.error ? (
-            <div className="banner banner-error" role="alert">
-              <span>{errorText(tree.error)}</span>
-              <button type="button" className="btn btn-small" onClick={tree.reload}>
-                重试
+        <div className="tree-legend">
+          <span>
+            <span className="dot ok" />
+            成功完成
+          </span>
+          <span>
+            <span className="dot bad" />
+            失败或放弃
+          </span>
+          <span>
+            <span className="dot warn" />
+            分支点
+          </span>
+          <span style={{ marginLeft: "auto" }}>
+            {data.nodes.length} 个节点 · {leafCount} 条活跃分支
+          </span>
+        </div>
+      </div>
+
+      <aside className="section-stack">
+        {selectedNode ? (
+          <Panel
+            title={`节点 ${selectedNode.id}`}
+            icon={GitBranch}
+            meta={
+              <Badge tone={nodeKind(selectedNode, byId) === "err" ? "danger" : nodeKind(selectedNode, byId) === "branch" ? "warn" : "ok"}>
+                {kindText(nodeKind(selectedNode, byId))}
+              </Badge>
+            }
+          >
+            <h3 className="node-title">{selectedNode.preview.split("\n")[0] || selectedNode.id}</h3>
+            <p className="meta node-sub mono">
+              {selectedNode.id} · {selectedNode.role ?? selectedNode.kind}
+            </p>
+            <dl className="detail-list node-facts">
+              <div className="detail-row">
+                <dt>类型</dt>
+                <dd>{typeText(selectedNode)}</dd>
+              </div>
+              <div className="detail-row">
+                <dt>模型</dt>
+                <dd className="mono">{selectedNode.model ?? "—"}</dd>
+              </div>
+              <div className="detail-row">
+                <dt>累计 token</dt>
+                <dd className="mono">
+                  {selectedNode.tokens == null ? "—" : compactNumber(selectedNode.tokens)}
+                </dd>
+              </div>
+              <div className="detail-row">
+                <dt>时间</dt>
+                <dd className="mono">{formatTreeTime(selectedNode.timestamp)}</dd>
+              </div>
+              <div className="detail-row">
+                <dt>父节点</dt>
+                <dd className="mono">{selectedNode.parentId ?? "—"}</dd>
+              </div>
+              <div className="detail-row">
+                <dt>子节点</dt>
+                <dd className="mono">
+                  {selectedNode.childIds.length > 0 ? selectedNode.childIds.join("、") : "—"}
+                </dd>
+              </div>
+            </dl>
+            <div className="side-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-block"
+                disabled={forkDisabled}
+                title={forkTip}
+                onClick={() => onForkRequest(selectedNode.id)}
+              >
+                <Ico icon={GitBranch} size={13} />
+                从此节点分叉
               </button>
+              {onLocate ? (
+                <button
+                  type="button"
+                  className="btn btn-quiet btn-block"
+                  onClick={() => onLocate(selectedNode.id)}
+                >
+                  在对话中定位
+                </button>
+              ) : null}
             </div>
-          ) : tree.loading && !tree.data ? (
-            <div className="pane-note">加载中…</div>
-          ) : (
-            visible.map((r) => (
-              <TreeRow
-                key={r.key}
-                row={r}
-                selected={
-                  r.type === "node"
-                    ? r.node.id === selectedId
-                    : !expanded.has(r.key) && r.nodes.some((n) => n.id === selectedId)
-                }
-                expanded={r.type === "fold" ? expanded.has(r.key) : false}
-                leafId={tree.data?.leafId ?? null}
-                onSelect={setSelectedId}
-                onToggleFold={toggleFold}
-              />
-            ))
-          )}
-        </div>
-        <div className="tree-preview">
-          <div className="tree-preview-head">
-            <button
-              type="button"
-              className="btn btn-accent"
-              disabled={continueDisabled}
-              title={continueTip}
-              onClick={() => previewNode && setDialogNode(previewNode)}
-            >
-              从此节点继续
-            </button>
-            {previewNode ? (
-              <span className="muted tree-preview-meta">
-                {previewNode.role ?? (previewNode.isCompaction ? "压缩" : "分支摘要")} ·{" "}
-                {formatTreeTime(previewNode.timestamp)}
-              </span>
-            ) : null}
-          </div>
+          </Panel>
+        ) : null}
+        <Panel title="节点内容预览" icon={History}>
           <ConversationView
             conversation={preview.data}
             loading={preview.loading}
@@ -203,119 +282,14 @@ export function TreeView({
             onRetry={preview.reload}
             emptyNote="选择左侧节点查看其路径内容"
           />
+        </Panel>
+        <div className="inline-note">
+          <Ico icon={Info} size={12} />
+          <span>
+            分支标记是一条 <code>custom</code> 记录，omp 的上下文构建器会忽略它，因此不会污染真实对话。
+          </span>
         </div>
-      </div>
-      {dialogNode ? (
-        <Modal
-          title="从此节点继续？"
-          onClose={() => setDialogNode(null)}
-          footer={
-            <>
-              <button
-                type="button"
-                className="btn"
-                data-autofocus
-                disabled={busy}
-                onClick={() => setDialogNode(null)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn btn-accent"
-                disabled={busy}
-                onClick={() => void confirmContinue()}
-              >
-                {busy ? "处理中…" : "追加标记并在 iTerm 打开"}
-              </button>
-            </>
-          }
-        >
-          <p>
-            将向该会话文件追加一行分支标记（omp-resume-branch），使 omp
-            恢复后从所选节点继续，新内容会在同一文件里形成新分支。此操作会修改会话文件。
-          </p>
-          <div className="modal-node-preview">
-            <span className="muted">
-              <NodeIcon node={dialogNode} />
-            </span>{" "}
-            {dialogNode.preview}
-          </div>
-        </Modal>
-      ) : null}
-    </div>
-  );
-}
-
-function firstIdOf(row: DisplayRow): string {
-  return row.type === "fold" ? row.nodes[0].id : row.node.id;
-}
-
-interface TreeRowProps {
-  row: DisplayRow;
-  selected: boolean;
-  expanded: boolean;
-  leafId: string | null;
-  onSelect: (id: string) => void;
-  onToggleFold: (key: string) => void;
-}
-
-function TreeRow({ row, selected, expanded, leafId, onSelect, onToggleFold }: TreeRowProps) {
-  const indent = Math.min(row.depth, MAX_INDENT_DEPTH) * 14;
-  const depthMark = row.depth > MAX_INDENT_DEPTH ? `d${row.depth}` : "";
-  if (row.type === "fold") {
-    return (
-      <div
-        className={
-          selected
-            ? "tree-row tree-row-selected"
-            : row.onActivePath
-              ? "tree-row tree-row-active"
-              : "tree-row"
-        }
-        style={{ paddingLeft: 8 + indent }}
-      >
-        {depthMark ? <span className="depth-mark">{depthMark}</span> : null}
-        <button
-          type="button"
-          className="fold-toggle"
-          aria-expanded={expanded}
-          onClick={() => onToggleFold(row.key)}
-        >
-          <Ico icon={expanded ? ChevronDown : ChevronRight} size={12} /> {row.nodes.length} 条消息
-        </button>
-        <span className="tree-preview-text muted">
-          {row.nodes[0].preview}
-        </span>
-      </div>
-    );
-  }
-  const n = row.node;
-  return (
-    <div
-      className={
-        selected
-          ? "tree-row tree-row-selected"
-          : row.onActivePath
-            ? "tree-row tree-row-active"
-            : "tree-row"
-      }
-      style={{ paddingLeft: 8 + indent }}
-      role="treeitem"
-      aria-selected={selected}
-      onClick={() => onSelect(n.id)}
-    >
-      {depthMark ? <span className="depth-mark">{depthMark}</span> : null}
-      <span className="tree-icon" aria-hidden="true">
-        <NodeIcon node={n} />
-      </span>
-      <span className="tree-preview-text" title={n.preview}>
-        {n.preview}
-      </span>
-      {n.label != null ? <span className="badge badge-label">{n.label}</span> : null}
-      {n.isCompaction ? <span className="badge badge-grey">压缩</span> : null}
-      {n.id === leafId ? <span className="badge badge-leaf">当前位置</span> : null}
-      <span className="tree-time muted">{formatTreeTime(n.timestamp)}</span>
+      </aside>
     </div>
   );
 }

@@ -88,8 +88,9 @@ export function buildSessionMenu(
   return [
     {
       kind: "item",
-      text: "在 iTerm 继续",
-      enabled: !s.inUse && s.cwdExists,
+      text: "在 iTerm2 恢复",
+      // H10/G8：在用可点（打开确认框解释/聚焦），仅目录缺失禁用。
+      enabled: s.cwdExists,
       run: () => actions.openIterm(s),
     },
     {
@@ -146,7 +147,7 @@ export function buildSessionMenu(
     {
       kind: "item",
       text: "删除…",
-      enabled: !s.inUse,
+      // G5：在用可点（打开「无法删除」解释框），不再前置禁用。
       run: () => actions.requestDelete([s.path]),
     },
   ];
@@ -208,7 +209,7 @@ export function buildBatchMenu(
     {
       kind: "item",
       text: `删除 ${targets.length} 个会话…`,
-      enabled: targets.some((s) => !s.inUse),
+      // G5：批量菜单同理（在用项由确认框排除并计数）。
       run: () => actions.requestDelete(targets.map((s) => s.path)),
     },
   ];
@@ -249,24 +250,6 @@ export function buildGroupMenu(
       enabled: g.paths.length > 0,
       run: () => actions.selectGroup(g.paths),
     },
-    { kind: "item", text: "折叠全部", run: () => actions.collapseAll() },
-    { kind: "item", text: "展开全部", run: () => actions.expandAll() },
-  ];
-}
-
-/** 置顶区组头菜单。 */
-export function buildPinnedGroupMenu(
-  paths: string[],
-  actions: SessionMenuActions,
-): MenuSpec[] {
-  return [
-    {
-      kind: "item",
-      text: "选择全部置顶会话",
-      enabled: paths.length > 0,
-      run: () => actions.selectGroup(paths),
-    },
-    { kind: "separator" },
     { kind: "item", text: "折叠全部", run: () => actions.collapseAll() },
     { kind: "item", text: "展开全部", run: () => actions.expandAll() },
   ];

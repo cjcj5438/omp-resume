@@ -1,9 +1,10 @@
-/** 左侧会话列表：置顶区、过滤、标签过滤、分组折叠、批量勾选、刷新、右键菜单。 */
+/** 会话列表页：标签过滤、分组折叠、批量勾选、右键菜单。 */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
 import { checkState, type TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
 import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
+import { compactNumber } from "./usageFormat";
 import {
   getMeta,
   getResumeCommand,
@@ -17,36 +18,29 @@ import { popupMenu, type MenuSpec } from "../nativeMenu";
 import {
   buildBatchMenu,
   buildGroupMenu,
-  buildPinnedGroupMenu,
   buildSessionMenu,
   type CopyKind,
   type SessionMenuActions,
 } from "../sessionMenus";
-import { EmptyState, Ico, SessionBadges } from "./ui";
+import { Ico, SessionBadges } from "./ui";
 import { ErrorBanner } from "./page";
-import { ChevronRight, ListChecks, MessageSquareText, Pin, Plus, RotateCw, SearchX, SquareTerminal, Trash } from "lucide-react";
+import { Check, ChevronDown, Folder, MessageSquareText, Minus, Pin, Plus, SquareTerminal, Trash } from "lucide-react";
 import type { ToastFn } from "./useOmpOp";
 import { NewTagDialog } from "./NewTagDialog";
 import "./SessionList.css";
 
 interface SessionListProps {
-  /** page = 列表页全功能；rail = 工作台左栏（无多选/标签条/行内动作）。 */
-  variant: "page" | "rail";
   groups: ProjectGroup[];
-  /** 跨项目聚合的置顶会话（已过滤、按修改时间新→旧；空时不渲染置顶区）。 */
-  pinnedSessions: SessionSummary[];
-  query: string;
-  onQuery: (q: string) => void;
-  loading: boolean;
   listError: AppError | null;
   onRetry: () => void;
-  onRefresh: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   /** 批量勾选/取消：paths 为目标会话 path 列表。 */
   onToggleChecks: (paths: string[], on: boolean) => void;
   /** 清除全部勾选。 */
   onClearChecks: () => void;
+  /** 多选模式（SessionsPage 持有，经 toolbar 开关传入；S1）。 */
+  multiMode: boolean;
   selectedPath: string | null;
   /** 行激活：列表页进工作台，工作台左栏切换选中。 */
   onOpenSession: (path: string) => void;
@@ -77,19 +71,14 @@ interface SessionListProps {
 }
 
 export function SessionList({
-  variant,
   groups,
-  pinnedSessions,
-  query,
-  onQuery,
-  loading,
   listError,
   onRetry,
-  onRefresh,
   checked,
   onToggleCheck,
   onToggleChecks,
   onClearChecks,
+  multiMode,
   selectedPath,
   onOpenSession,
   onOpenMeta,
@@ -108,7 +97,6 @@ export function SessionList({
   onRequestDelete,
   onMetaSnapshot,
 }: SessionListProps) {
-  const isRail = variant === "rail";
   const toggleCollapsed = (key: string) => {
     const next = new Set(collapsed);
     if (next.has(key)) next.delete(key);
@@ -120,17 +108,14 @@ export function SessionList({
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameBusy, setRenameBusy] = useState(false);
   const [tagTargets, setTagTargets] = useState<string[] | null>(null);
-  // 当前可见的全部会话 path（置顶区 + 各组；置顶已从原组移出，不重复）。
-  const visiblePaths = pinnedSessions
-    .map((s) => s.path)
-    .concat(groups.flatMap((g) => g.sessions.map((s) => s.path)));
+  // 当前可见的全部会话 path（各组；组内置顶排序，无独立置顶区）。
+  const visiblePaths = groups.flatMap((g) => g.sessions.map((s) => s.path));
   // 右键动作执行时按 path 重新解析会话：列表可能已刷新或会话已被删除。
   const byPath = useMemo(() => {
     const map = new Map<string, SessionSummary>();
-    for (const s of pinnedSessions) map.set(s.path, s);
     for (const g of groups) for (const s of g.sessions) map.set(s.path, s);
     return map;
-  }, [groups, pinnedSessions]);
+  }, [groups]);
   // 菜单动作在「菜单已弹出、列表又刷新过」之后才执行：闭包里的 byPath 是旧渲染的
   // 快照，因此用 ref 指向最新映射，动作执行时按 path 重新解析会话。
   const byPathRef = useRef(byPath);
@@ -155,18 +140,10 @@ export function SessionList({
     ids.map((id) => byIdRef.current.get(id)).filter((s): s is SessionSummary => s != null);
 
   const hasUncheckedVisible = visiblePaths.some((p) => !checked.has(p));
-  // 多选模式（本地 UI 状态）：打开后全部勾选框常显、选择条常驻（即使 0 选中，
-  // 以便一键「全选当前列表」）；有任何勾选时自动视为进入选择态。
-  const [multiMode, setMultiMode] = useState(false);
+  // 选择态（S1）：multiMode 由 SessionsPage 持有（toolbar 行尾开关），此处只读；
+  // 打开后全部勾选框常显、选择条常驻（即使 0 选中，以便一键「全选当前列表」）；
+  // 有任何勾选时自动视为进入选择态。
   const selecting = multiMode || checked.size > 0;
-  const toggleMulti = () => {
-    if (selecting) {
-      setMultiMode(false);
-      onClearChecks();
-    } else {
-      setMultiMode(true);
-    }
-  };
 
   // 会话从列表里消失（刷新/删除）时不要再留下一个悬空的重命名输入框。
   useEffect(() => {
@@ -311,7 +288,7 @@ export function SessionList({
       );
     },
     enterSelect: (path) => {
-      setMultiMode(true);
+      // multiMode 已上提：只勾选即可进入选择态（selecting 含 checked.size > 0）。
       onToggleCheck(path, true);
     },
     requestDelete: (paths) => {
@@ -323,10 +300,10 @@ export function SessionList({
       onRequestDelete(live);
     },
     selectGroup: (paths) => {
-      setMultiMode(true);
+      // 同上：勾选即进入选择态，无需再开 multiMode。
       onToggleChecks(paths, true);
     },
-    collapseAll: () => onCollapsedChange(new Set([PINNED_KEY, ...groups.map((g) => g.cwd)])),
+    collapseAll: () => onCollapsedChange(new Set(groups.map((g) => g.cwd))),
     expandAll: () => onCollapsedChange(new Set()),
   };
 
@@ -370,53 +347,54 @@ export function SessionList({
     void popupMenu(specs).finally(() => setMenuTarget(null));
   }
 
-  /** 行内动作（page 专用）：备注 / 在 iTerm 继续 / 删除，hover 或 focus-within 时显示。 */
+  /** 行内动作（设计稿 row-act 常显）：置顶 / 备注 / 恢复 / 删除。 */
   function renderRowActions(s: SessionSummary): ReactNode {
-    if (isRail) return null;
     const name = meta?.sessions[s.id]?.alias ?? s.title;
-    const itermDisabled = s.inUse || !s.cwdExists;
-    const itermTip = s.inUse
-      ? "会话正在被另一个 omp 使用"
-      : !s.cwdExists
-        ? "项目目录不存在"
-        : undefined;
+    const pinned = pins.sessions.includes(s.id);
+    // H10/G8/G5：在用会话的恢复/删除可点（打开确认框解释），仅目录缺失禁用恢复。
+    const itermTip = !s.cwdExists ? "项目目录不存在" : undefined;
+    const stop = (e: React.MouseEvent) => e.stopPropagation();
     return (
-      <span className="row-actions">
+      <span className="row-actions" onClick={stop} onMouseDown={stop}>
         <button
           type="button"
-          className="btn icon-btn row-action"
+          className={pinned ? "row-act is-on" : "row-act"}
+          aria-pressed={pinned}
+          aria-label={`${pinned ? "取消置顶" : "置顶"} ${name}`}
+          title={pinned ? "取消置顶" : "置顶会话"}
+          onClick={() => onTogglePin("session", s.id)}
+        >
+          <Ico icon={Pin} size={12} />
+          <span>{pinned ? "已置顶" : "置顶"}</span>
+        </button>
+        <button
+          type="button"
+          className="row-act"
           aria-label={`备注 ${name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenMeta(s.path);
-          }}
+          onClick={() => onOpenMeta(s.path)}
         >
-          <Ico icon={MessageSquareText} size={13} />
+          <Ico icon={MessageSquareText} size={12} />
+          <span>备注</span>
         </button>
         <button
           type="button"
-          className="btn icon-btn row-action"
-          aria-label={`在 iTerm 继续 ${name}`}
+          className="row-act"
+          aria-label={`恢复 ${name}`}
           title={itermTip}
-          disabled={itermDisabled}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenIterm(s);
-          }}
+          disabled={!s.cwdExists}
+          onClick={() => onOpenIterm(s)}
         >
-          <Ico icon={SquareTerminal} size={13} />
+          <Ico icon={SquareTerminal} size={12} />
+          <span>恢复</span>
         </button>
         <button
           type="button"
-          className="btn icon-btn row-action"
+          className="row-act row-act-danger"
           aria-label={`删除 ${name}`}
-          disabled={s.inUse}
-          onClick={(e) => {
-            e.stopPropagation();
-            actions.requestDelete([s.path]);
-          }}
+          onClick={() => actions.requestDelete([s.path])}
         >
-          <Ico icon={Trash} size={13} />
+          <Ico icon={Trash} size={12} />
+          <span>删除</span>
         </button>
       </span>
     );
@@ -430,52 +408,17 @@ export function SessionList({
   const checkedVisiblePinned = checkedVisible.every((s) => pins.sessions.includes(s.id));
 
   return (
-    <div className={["session-list", `session-list-${variant}`, selecting ? "is-selecting" : ""].join(" ")}>
-      <div className="sidebar-top">
-        <div className="search-row">
-          <input
-            type="search"
-            className="filter-input"
-            placeholder="按标题或项目目录过滤"
-            value={query}
-            onChange={(e) => onQuery(e.target.value)}
-            aria-label="过滤会话"
-          />
-          <button
-            type="button"
-            className="btn icon-btn"
-            aria-label="刷新"
-            title="刷新"
-            onClick={onRefresh}
-            disabled={loading}
-          >
-            {loading ? (
-              <span className="spinner" aria-hidden="true" />
-            ) : (
-              <Ico icon={RotateCw} size={13} />
-            )}
-          </button>
-          {!isRail ? (
-            <button
-              type="button"
-              className="btn icon-btn icon-btn-multi"
-              aria-label="多选"
-              aria-pressed={selecting}
-              title="多选"
-              onClick={toggleMulti}
-            >
-              <Ico icon={ListChecks} size={13} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-      {!isRail && selecting && (checked.size > 0 || visiblePaths.length > 0) ? (
-        <div className="select-bar">
-          <span>已选 {checked.size} 项</span>
+    <div className={["session-list", "session-list-page", selecting ? "is-selecting" : ""].join(" ")}>
+      {selecting && (checked.size > 0 || visiblePaths.length > 0) ? (
+        <div className="selection-bar" role="status">
+          <span>
+            已选择 <strong>{checked.size}</strong> 个会话
+          </span>
+          <span className="spacer" />
           {hasUncheckedVisible ? (
             <button
               type="button"
-              className="select-link"
+              className="btn btn-small btn-ghost"
               onClick={() => onToggleChecks(visiblePaths, true)}
             >
               全选当前列表
@@ -483,12 +426,12 @@ export function SessionList({
           ) : null}
           {checked.size > 0 ? (
             <>
-              <button type="button" className="select-link" onClick={onClearChecks}>
+              <button type="button" className="btn btn-small btn-ghost" onClick={onClearChecks}>
                 清除选择
               </button>
               <button
                 type="button"
-                className="select-link"
+                className="btn btn-small btn-ghost"
                 onClick={() => {
                   if (checkedVisiblePinned) {
                     for (const s of checkedVisible) onTogglePin("session", s.id);
@@ -499,34 +442,37 @@ export function SessionList({
                   }
                 }}
               >
-                {checkedVisiblePinned ? "取消置顶全部" : "置顶全部"}
+                <Ico icon={Pin} size={12} />
+                {checkedVisiblePinned ? "取消置顶全部" : "置顶"}
               </button>
               <button
                 type="button"
-                className="select-link"
+                className="btn btn-small btn-ghost"
                 onClick={() => onBulkResume(checkedVisible)}
               >
-                恢复…
+                <Ico icon={SquareTerminal} size={12} />
+                恢复
               </button>
               <button
                 type="button"
-                className="select-link"
+                className="btn btn-small btn-ghost"
                 onClick={() => actions.newTag(checkedVisible.map((s) => s.id))}
               >
                 加标签…
               </button>
               <button
                 type="button"
-                className="select-link"
+                className="btn btn-small btn-danger"
                 onClick={() => actions.requestDelete(checkedVisible.map((s) => s.path))}
               >
-                删除所选…
+                <Ico icon={Trash} size={12} />
+                删除
               </button>
             </>
           ) : null}
         </div>
       ) : null}
-      {!isRail && tagCounts.length > 0 ? (
+      {tagCounts.length > 0 ? (
         <div className="tag-bar" role="group" aria-label="按标签过滤">
           {tagCounts.map(({ tag, count }) => {
             const on = activeTags.includes(tag);
@@ -545,96 +491,18 @@ export function SessionList({
           })}
         </div>
       ) : null}
-      <div className="sidebar-list">
+      <div className="panel sidebar-list">
         {listError ? <ErrorBanner error={listError} onRetry={onRetry} /> : null}
-        {isRail && groups.length === 0 && pinnedSessions.length === 0 ? (
-          <EmptyState icon={SearchX} title="没有匹配的会话">
-            换个关键词，或清除标签筛选。
-          </EmptyState>
-        ) : null}
-        {pinnedSessions.length > 0 ? (
-          <section className="group pinned-group" aria-label="置顶会话">
-            <div
-              className={
-                menuTarget === PINNED_KEY ? "group-header-row row-menu-target" : "group-header-row"
-              }
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                openGroupMenu(
-                  PINNED_KEY,
-                  buildPinnedGroupMenu(
-                    pinnedSessions.map((s) => s.path),
-                    actions,
-                  ),
-                );
-              }}
-            >
-              {!isRail ? (
-                <GroupCheck
-                  label="选择全部置顶会话"
-                  paths={pinnedSessions.map((s) => s.path)}
-                  checked={checked}
-                  onToggle={onToggleChecks}
-                />
-              ) : null}
-              <button
-                type="button"
-                className="group-header"
-                aria-expanded={!collapsed.has(PINNED_KEY)}
-                onClick={() => toggleCollapsed(PINNED_KEY)}
-              >
-                <span
-                  className={collapsed.has(PINNED_KEY) ? "group-arrow" : "group-arrow group-arrow-open"}
-                  aria-hidden="true"
-                >
-                  <Ico icon={ChevronRight} size={12} />
-                </span>
-                <span className="pinned-pin" aria-hidden="true">
-                  <Ico icon={Pin} size={12} />
-                </span>
-                <span className="pinned-name">置顶</span>
-                <span className="pinned-count">{pinnedSessions.length}</span>
-              </button>
-            </div>
-            {!collapsed.has(PINNED_KEY) ? (
-              <div className="group-rows">
-                {pinnedSessions.map((s) => (
-                  <Row
-                    key={s.path}
-                    s={s}
-                    meta={meta?.sessions[s.id] ?? null}
-                    checked={checked.has(s.path)}
-                    selected={s.path === selectedPath}
-                    menuTargeted={menuTarget === s.path}
-                    renaming={renamingPath === s.path}
-                    renameBusy={renameBusy}
-                    onRenameCommit={(value) => void commitRename(s, value)}
-                    onRenameCancel={() => setRenamingPath(null)}
-                    onToggleCheck={isRail ? null : onToggleCheck}
-                    onOpenSession={onOpenSession}
-                    rowActions={renderRowActions(s)}
-                    onRowMenu={() => openRowMenu(s)}
-                    pinned
-                    onTogglePin={() => onTogglePin("session", s.id)}
-                    projectName={s.cwd.split("/").filter(Boolean).pop() ?? s.cwd}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
         {groups.map((g) => {
           const open = !collapsed.has(g.cwd);
-          // 空组是“会话均已置顶”的占位组：目录状态未知，不展示“目录不存在”。
           const dirMissing = g.sessions.length > 0 && g.sessions.every((s) => !s.cwdExists);
           const name = g.cwd.split("/").filter(Boolean).pop() ?? g.cwd;
           const pinnedProject = pins.projects.includes(g.cwd);
           return (
-            <section className="group" key={g.cwd}>
+            <section className="group project-block" key={g.cwd}>
               <div
                 className={
-                  menuTarget === g.cwd ? "group-header-row row-menu-target" : "group-header-row"
+                  menuTarget === g.cwd ? "project-head-row row-menu-target" : "project-head-row"
                 }
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -653,7 +521,7 @@ export function SessionList({
                   );
                 }}
               >
-                {!isRail && g.sessions.length > 0 ? (
+                {g.sessions.length > 0 ? (
                   <GroupCheck
                     label={`选择项目 ${name} 的全部会话`}
                     paths={g.sessions.map((s) => s.path)}
@@ -663,21 +531,25 @@ export function SessionList({
                 ) : null}
                 <button
                   type="button"
-                  className="group-header"
+                  className={open ? "project-head" : "project-head is-collapsed"}
                   aria-expanded={open}
                   onClick={() => toggleCollapsed(g.cwd)}
                 >
-                  <span
-                    className={open ? "group-arrow group-arrow-open" : "group-arrow"}
-                    aria-hidden="true"
-                  >
-                    <Ico icon={ChevronRight} size={12} />
+                  <span className="project-chevron" aria-hidden="true">
+                    <Ico icon={ChevronDown} size={12} />
                   </span>
-                  <span className="group-name">{name}</span>
-                  <span className="group-cwd mono">{displayCwd(g.cwd)}</span>
+                  <span className="folder" aria-hidden="true">
+                    <Ico icon={Folder} size={14} />
+                  </span>
+                  <span className="p-name">{name}</span>
+                  <span className="p-path">{displayCwd(g.cwd)}</span>
                   {dirMissing ? <span className="badge badge-danger">目录不存在</span> : null}
-                  {g.sessions.length > 0 ? (
-                    <span className="group-count">{g.sessions.length}</span>
+                  <span className="p-count">{g.sessions.length} 个会话</span>
+                  {g.sessions.some((s) => s.inUse) ? (
+                    <span className="p-running">
+                      <span className="dot live" />
+                      运行中
+                    </span>
                   ) : null}
                 </button>
                 <PinToggle
@@ -699,30 +571,25 @@ export function SessionList({
               </div>
               {open ? (
                 <div className="group-rows">
-                  {g.sessions.length === 0 ? (
-                    <div className="group-empty-note">该项目的会话均已置顶</div>
-                  ) : (
-                    g.sessions.map((s) => (
-                      <Row
-                        key={s.path}
-                        s={s}
-                        meta={meta?.sessions[s.id] ?? null}
-                        checked={checked.has(s.path)}
-                        selected={s.path === selectedPath}
-                        menuTargeted={menuTarget === s.path}
-                        renaming={renamingPath === s.path}
-                        renameBusy={renameBusy}
-                        onRenameCommit={(value) => void commitRename(s, value)}
-                        onRenameCancel={() => setRenamingPath(null)}
-                        onToggleCheck={isRail ? null : onToggleCheck}
-                        onOpenSession={onOpenSession}
-                        rowActions={renderRowActions(s)}
-                        onRowMenu={() => openRowMenu(s)}
-                        pinned={pins.sessions.includes(s.id)}
-                        onTogglePin={() => onTogglePin("session", s.id)}
-                      />
-                    ))
-                  )}
+                  {g.sessions.map((s) => (
+                    <Row
+                      key={s.path}
+                      s={s}
+                      meta={meta?.sessions[s.id] ?? null}
+                      checked={checked.has(s.path)}
+                      selected={s.path === selectedPath}
+                      menuTargeted={menuTarget === s.path}
+                      renaming={renamingPath === s.path}
+                      renameBusy={renameBusy}
+                      onRenameCommit={(value) => void commitRename(s, value)}
+                      onRenameCancel={() => setRenamingPath(null)}
+                      onToggleCheck={onToggleCheck}
+                      onOpenSession={onOpenSession}
+                      rowActions={renderRowActions(s)}
+                      onRowMenu={() => openRowMenu(s)}
+                      pinned={pins.sessions.includes(s.id)}
+                    />
+                  ))}
                 </div>
               ) : null}
             </section>
@@ -754,9 +621,6 @@ export function SessionList({
   );
 }
 
-/** 置顶区在折叠集中的键（cwd 均为绝对路径，不会冲突）。 */
-const PINNED_KEY = "__pinned__";
-
 interface GroupCheckProps {
   label: string;
   /** 该组当前可见会话的 path（已过滤、含已折叠）。 */
@@ -765,20 +629,22 @@ interface GroupCheckProps {
   onToggle: (paths: string[], on: boolean) => void;
 }
 
-/** 组头三态复选框：全选 / 部分（indeterminate）/ 无。 */
+/** 组头三态选择（扩展，设计稿无）：sel-box 形态，半选显示横线。 */
 function GroupCheck({ label, paths, checked, onToggle }: GroupCheckProps) {
   const state = checkState(paths, checked);
+  const on = state === "all";
   return (
-    <input
-      type="checkbox"
-      className="group-check"
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={state === "some" ? "mixed" : on}
       aria-label={label}
-      checked={state === "all"}
-      ref={(el) => {
-        if (el) el.indeterminate = state === "some";
-      }}
-      onChange={(e) => onToggle(paths, e.target.checked)}
-    />
+      className={on ? "sel-box is-on" : "sel-box"}
+      data-state={state}
+      onClick={() => onToggle(paths, !on)}
+    >
+      {state === "some" ? <Ico icon={Minus} size={10} /> : <Ico icon={Check} size={10} />}
+    </button>
   );
 }
 
@@ -794,19 +660,14 @@ interface RowProps {
   renameBusy: boolean;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
-  /** rail 下为 null：不渲染勾选框。 */
-  onToggleCheck: ((path: string, on: boolean) => void) | null;
+  onToggleCheck: (path: string, on: boolean) => void;
   onOpenSession: (path: string) => void;
-  /** 行内动作（rail 下为 null：不渲染行内动作）。 */
   rowActions: ReactNode;
   onRowMenu: () => void;
   pinned: boolean;
-  onTogglePin: () => void;
-  /** 置顶行展示所属项目名；普通行不传。 */
-  projectName?: string;
 }
 
-/** 会话行：有别名时别名作主标题、原标题小号灰字附后；至多 3 个标签徽章（多余计 `+N`）。 */
+/** 会话行（设计稿 session-row）：常显 sel-box + 标题（置顶 pin 图标）+ meta 行 + 常显行动作。 */
 function Row({
   s,
   meta,
@@ -822,16 +683,14 @@ function Row({
   rowActions,
   onRowMenu,
   pinned,
-  onTogglePin,
-  projectName,
 }: RowProps) {
   const alias = meta?.alias ?? null;
   const shownTags = (meta?.tags ?? []).slice(0, 3);
   const extraTags = (meta?.tags ?? []).length - shownTags.length;
   const cls = [
-    "row",
-    selected ? "row-selected" : "",
-    pinned ? "row-pinned" : "",
+    "session-row",
+    checked ? "is-selected" : "",
+    selected ? "is-active" : "",
     menuTargeted ? "row-menu-target" : "",
   ]
     .filter(Boolean)
@@ -839,7 +698,9 @@ function Row({
   return (
     <div
       className={cls}
+      role="button"
       tabIndex={0}
+      aria-label={`打开会话：${alias ?? s.title}`}
       onClick={() => onOpenSession(s.path)}
       onKeyDown={(e) => {
         if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
@@ -853,19 +714,28 @@ function Row({
         onRowMenu();
       }}
     >
-      {onToggleCheck !== null ? (
-        <input
-          type="checkbox"
-          className="row-check"
-          aria-label={`选择 ${alias ?? s.title}`}
-          checked={checked}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onToggleCheck(s.path, e.target.checked)}
-        />
-      ) : null}
-      <div className="row-main">
-        <div className="row-title-line">
-          <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
+      <span className="sel-cell">
+        <button
+          type="button"
+          className={checked ? "sel-box is-on" : "sel-box"}
+          aria-label={`${checked ? "取消选择" : "选择"}会话`}
+          aria-pressed={checked}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCheck(s.path, !checked);
+          }}
+        >
+          <Ico icon={Check} size={10} />
+        </button>
+      </span>
+      <div className="sr-main">
+        <div className="sr-title">
+          {pinned ? (
+            <span className="pin" title="已置顶">
+              <Ico icon={Pin} size={11} />
+            </span>
+          ) : null}
+          <strong title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
             {renaming ? (
               <RenameInput
                 initial={alias ?? s.title}
@@ -881,21 +751,26 @@ function Row({
             ) : (
               s.title
             )}
-          </div>
-          {/* 状态徽章固定跟在标题后：meta 行恒为单行，所有行等高。 */}
+          </strong>
           <SessionBadges s={s} />
         </div>
-        <div className="row-meta">
-          {projectName ? (
-            <span className="row-project" title={`所属项目：${projectName}`}>
-              {projectName}
-            </span>
-          ) : null}
+        <div className="sr-meta">
+          <span className="cwd">{displayCwd(s.cwd)}</span>
+          <span className="sep">·</span>
+          <span>{s.messageCount} 条消息</span>
+          <span className="sep">·</span>
+          <span>{formatSize(s.sizeBytes)}</span>
+          <span className="sep">·</span>
+          <span>{s.model ?? "—"}</span>
+          <span className="sep">·</span>
+          <span>{formatRelativeTime(s.modifiedAt)}</span>
+          <span className="sep">·</span>
           <span
-            className="row-meta-combo"
-            title={`${s.messageCount} 条消息 · ${formatSize(s.sizeBytes)}`}
+            className="mono"
+            style={{ color: "var(--muted)" }}
+            title={s.tokens == null ? undefined : "主会话 token（不含子代理）"}
           >
-            {formatRelativeTime(s.modifiedAt)} · {s.messageCount} 条 · {formatSize(s.sizeBytes)}
+            {s.tokens == null ? "—" : `${compactNumber(s.tokens)} tok`}
           </span>
           {shownTags.map((t) => (
             <span key={t} className="badge badge-tag" title={`标签：${t}`}>
@@ -910,12 +785,6 @@ function Row({
         </div>
       </div>
       {rowActions}
-      <PinToggle
-        pinned={pinned}
-        kindLabel="会话"
-        name={alias ?? s.title}
-        onToggle={onTogglePin}
-      />
     </div>
   );
 }

@@ -1,100 +1,5 @@
-/* 侧栏：搜索行、主操作、视图切换、分组与选择态、底部状态区。
+/* 侧栏：分组与选择态、会话行、底部状态区。
  * 只用 App.css 的语义变量；行/组头/徽章的基础样式在 App.css，这里只放侧栏专属。 */
-
-/* ---- 搜索行：输入框 + 两个图标按钮 ---- */
-.search-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-}
-
-.search-row .filter-input {
-  flex: 1;
-}
-
-/* ---- 主操作：全宽，默认淡强调底（不抢列表视线），悬停转实心 ---- */
-.btn.new-session-btn {
-  width: 100%;
-  height: 28px;
-  justify-content: center;
-  font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: transparent;
-}
-
-.btn.new-session-btn:hover:not(:disabled) {
-  color: var(--on-accent);
-  background: var(--accent-fill);
-  border-color: transparent;
-}
-
-.btn.new-session-btn:active:not(:disabled) {
-  color: var(--on-accent);
-  background: var(--accent-fill);
-}
-
-.new-session-btn svg {
-  flex: none;
-}
-
-/* ---- 视图切换：3 列网格（两行），图标 + 文字，激活态白底浮起 ---- */
-.view-nav {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-lg);
-  background: var(--bg-inset);
-}
-
-.view-nav-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-1);
-  min-width: 0;
-  height: 24px;
-  padding: 0 var(--sp-1);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.view-nav-btn svg {
-  flex: none;
-  opacity: 0.9;
-}
-
-.view-nav-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.view-nav-btn[aria-pressed="true"] {
-  background: var(--bg-elevated);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: var(--shadow-sm);
-}
-
-.view-nav-btn[aria-pressed="true"] svg {
-  color: var(--accent);
-}
-
-.view-nav-btn[aria-pressed="true"]:hover {
-  background: var(--bg-elevated);
-}
 
 /* ---- 图标按钮：方形、无边框、hover 才出现底 ---- */
 .btn.icon-btn {
@@ -104,17 +9,6 @@
   padding: 0;
   border-color: var(--border-strong);
   color: var(--text-muted);
-}
-
-.btn.icon-btn-quiet {
-  border-color: transparent;
-  background: transparent;
-}
-
-.btn.icon-btn-quiet:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--bg-hover);
-  color: var(--text);
 }
 
 .btn.icon-btn-multi[aria-pressed="true"] {
@@ -128,184 +22,126 @@
   border-color: transparent;
 }
 
-/* ---- 勾选框平时隐藏：hover / 聚焦 / 已选 / 批量选择中才显示 ----
- * 仅降透明度（仍占位、可聚焦），批量三态逻辑与可访问名称不变。 */
-.session-list .row-check,
-.session-list .group-check {
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-.session-list .row:hover .row-check,
-.session-list .row:focus-within .row-check,
-.session-list .row-check:checked,
-.session-list .row-check:focus-visible,
-.session-list .group-header-row:hover .group-check,
-.session-list .group-header-row:focus-within .group-check,
-.session-list .group-check:checked,
-.session-list .group-check:indeterminate,
-.session-list .group-check:focus-visible,
-.session-list.is-selecting .row-check,
-.session-list.is-selecting .group-check {
-  opacity: 1;
-}
-
-/* ---- 行内动作：只在行 hover / focus-within 时显示（照 pin-toggle 的显隐写法） ---- */
-.row-actions {
-  flex: none;
-  display: inline-flex;
+/* ---- 设计稿会话行（S4/S5/S7）：常显 sel-box + 常显 row-act ---- */
+.session-list .session-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 2px 10px;
   align-items: center;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out);
+  padding: 10px 16px 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+  position: relative;
 }
-
-.row:hover .row-actions,
-.row:focus-within .row-actions {
-  opacity: 1;
-}
-
-.btn.icon-btn.row-action {
-  width: 22px;
-  height: 22px;
-  border-color: transparent;
-  background: transparent;
-}
-
-.btn.icon-btn.row-action:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-/* ---- 项目组 ---- */
-.group {
-  padding-bottom: var(--sp-1);
-}
-
-.group-arrow-open {
-  transform: rotate(90deg);
-}
-
-/* 置顶区：与普通项目组区分——底部细线 + 强调色小标题。 */
-.pinned-group {
-  padding-bottom: var(--sp-2);
-  margin-bottom: var(--sp-1);
-  border-bottom: 1px solid var(--border);
-}
-
-.pinned-pin {
-  flex: none;
-  display: inline-flex;
-  color: var(--accent);
-}
-
-.pinned-name {
-  flex: none;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  color: var(--accent);
-}
-
-.pinned-count {
-  flex: none;
-  padding: 0 var(--sp-2);
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-xs);
+.session-list .session-row:last-child { border-bottom: 0; }
+.session-list .session-row:hover { background: var(--bg-inset); }
+.session-list .session-row.is-selected { background: var(--accent-soft); }
+.session-list .session-row.is-active { background: var(--bg-raised); }
+.session-list .sel-cell { display: flex; align-items: center; justify-content: center; }
+.session-list .sr-main { min-width: 0; }
+.session-list .sr-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.session-list .sr-title strong {
+  font-size: 13px;
   font-weight: 500;
-  line-height: 17px;
-}
-
-/* 置顶行：左上角小图钉已表达状态，这里只留极淡强调底。 */
-.row.row-pinned:not(.row-selected) {
-  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
-}
-
-.row-pinned:hover:not(.row-selected) {
-  background: color-mix(in srgb, var(--accent-soft) 90%, transparent);
-}
-
-/* 脱离项目上下文的置顶行：小号等宽项目名。 */
-.row-project {
-  max-width: 12em;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.session-list .sr-title .pin { color: var(--warn); display: inline-flex; }
+.session-list .sr-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.session-list .sr-meta .sep { color: color-mix(in srgb, var(--text-faint) 55%, transparent); }
+.session-list .sr-meta .cwd {
   font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+.session-list .row-title-orig {
+  margin-left: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 400;
   color: var(--text-faint);
 }
+.session-list .row-actions { display: flex; align-items: center; gap: 3px; justify-self: end; }
+.session-list .row-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 25px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.session-list .row-act:hover:not(:disabled) { background: var(--bg-raised); color: var(--text); }
+.session-list .row-act.is-on { color: var(--accent); background: var(--accent-soft); }
+.session-list .row-act.is-on:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); }
+.session-list .row-act-danger:hover:not(:disabled) { color: var(--danger); background: var(--danger-soft); }
+.session-list .row-act:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* ---- 批量选择条 ---- */
-.select-bar {
+/* ---- 项目组（S10 设计稿 project-block） ---- */
+.session-list .project-block { border-bottom: 1px solid var(--border); }
+.session-list .project-block:last-child { border-bottom: 0; }
+.session-list .project-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-1) var(--sp-4);
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-xs);
-  color: var(--accent);
+  gap: 9px;
+  width: 100%;
+  padding: 11px 16px;
+  background: var(--bg-inset);
+  border: 0;
   border-bottom: 1px solid var(--border);
-  background: var(--accent-soft);
-}
-
-.select-link {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  font-weight: 500;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
+.session-list .project-head:hover { background: var(--bg-raised); }
+.session-list .project-head .folder { color: var(--text-faint); display: inline-flex; }
+.session-list .project-chevron { display: inline-flex; color: var(--text-faint); transition: transform var(--motion-fast) var(--ease-out); }
+.session-list .project-head.is-collapsed .project-chevron { transform: rotate(-90deg); }
+.session-list .p-name { font-size: 12px; font-weight: 600; }
+.session-list .p-path { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.session-list .p-count { margin-left: auto; font-size: 10.5px; color: var(--text-faint); }
+.session-list .p-running { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--accent); }
+.session-list .project-head-row { display: flex; align-items: center; background: var(--bg-inset); border-bottom: 1px solid var(--border); }
+.session-list .project-head-row .project-head { flex: 1; min-width: 0; border-bottom: 0; }
+.session-list .project-head-row .group-new { margin-right: 8px; }
 
-.select-link:hover {
-  text-decoration: underline;
-}
-
-/* ---- 组头三态勾选：与行内勾选框同列 ---- */
-.group-check {
-  flex: none;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-/* 项目会话全部置顶后的占位说明。 */
-.group-empty-note {
-  padding: var(--sp-1) var(--sp-3) var(--sp-3) 26px;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-}
-
-/* ---- 底部状态区：两行紧凑信息 + 操作 ---- */
-.footer-row {
+/* ---- 多选条（S12 设计稿 selection-bar：accent-soft 卡片 + btn-small） ---- */
+.session-list .selection-bar {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  min-height: 22px;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  margin: 0 0 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: var(--radius-md);
+  font-size: 12px;
 }
+.session-list .selection-bar .spacer { flex: 1; }
 
-.footer-row + .footer-row {
-  margin-top: 2px;
-}
-
-.footer-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  margin-left: auto;
-}
-
-.footer-update {
-  color: var(--text-muted);
-}
-
-.footer-row .changelog-link {
-  margin-left: 0;
-}
+/* ---- 组头三态选择（扩展）：sel-box 形态，落在组头底色条左侧 ---- */
+.session-list .project-head-row > .sel-box { margin-left: 12px; }
+.session-list .project-head-row .pin-toggle { margin-right: 2px; }
 
 /* ---- 右键菜单目标：细描边提示归属（不改选中态） ---- */
 .row-menu-target {

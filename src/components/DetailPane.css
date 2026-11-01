@@ -1,0 +1,27 @@
+/* 工作台右栏头部 + 标签栏（设计稿 ws-head/ws-tabbar，styles.css:1308-1321）。 */
+
+.ws-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.ws-head-main { min-width: 0; flex: 1 1 320px; }
+.ws-back { display: inline-flex; margin-left: -4px; margin-bottom: 7px; }
+.ws-title { font-size: 21px; overflow-wrap: anywhere; }
+.ws-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px; font-size: 10.5px; color: var(--text-faint); }
+.ws-meta .mono { font-size: 10px; color: var(--text-muted); }
+.ws-meta .sep { color: var(--text-faint); }
+.ws-actions { justify-content: flex-end; gap: 6px; padding-bottom: 0; flex-wrap: wrap; }
+.ws-tabbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0 13px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.ws-tabbar .spacer { flex: 1; }
+.ws-alias, .ws-tag-count { font-size: 10.5px; color: var(--text-faint); }
+.ws-alias code { font-family: var(--mono); font-size: 10px; color: var(--text-secondary); background: var(--bg-inset); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 3px; }
+.ws-tag-count { margin-left: auto; }
+
+.ov-summary { font-size: 13px; line-height: 1.65; color: var(--text-secondary); max-width: 72ch; }
+.ov-summary-clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ov-note { color: var(--text-secondary); line-height: 1.55; max-width: 56ch; }
+.ov-feed { display: flex; flex-direction: column; }
+.ov-msg { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; padding: 11px 16px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.ov-msg:last-child { border-bottom: 0; }
+.ov-role { justify-self: start; font-size: 9px; font-weight: 600; letter-spacing: 0.04em; padding: 1px 6px; border-radius: var(--radius-full); background: var(--bg-raised); color: var(--text-faint); }
+.ov-role.user { color: var(--accent); background: var(--accent-soft); }
+.ov-role.assistant { color: var(--ok); background: var(--ok-soft); }
+.ov-msg-body p { font-size: 12px; line-height: 1.6; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ov-time { display: block; margin-top: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); }

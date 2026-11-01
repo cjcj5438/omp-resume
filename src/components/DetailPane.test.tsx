@@ -7,7 +7,6 @@ import { FIXTURE_SESSIONS } from "../dev/fixtures";
 import { installMockBackend } from "../dev/mockBackend";
 import type { SessionSummary } from "../types";
 const noop = () => {};
-const noContinue = async () => ({ notice: null });
 
 beforeEach(() => {
   clearMocks();
@@ -29,14 +28,14 @@ describe("DetailPane 占用者行", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
     expect(await screen.findByText(/占用：VS Code 1\.138\.0 · PID 3074/)).toBeTruthy();
@@ -57,14 +56,14 @@ describe("DetailPane 占用者行", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
     expect(container.textContent).not.toContain("占用：");
@@ -99,18 +98,18 @@ describe("复制会话 ID", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={onToast}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "复制会话 ID" }));
+    fireEvent.click(document.querySelector(".ws-meta .id-copy") as HTMLElement);
 
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("已复制会话 ID", "info"));
     expect(writeText).toHaveBeenCalledWith(s1.id);
@@ -130,18 +129,18 @@ describe("复制会话 ID", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={onToast}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "复制会话 ID" }));
+    fireEvent.click(document.querySelector(".ws-meta .id-copy") as HTMLElement);
 
     // navigator.clipboard 被拒 → 落到原生 copy_text（mock 下成功）→ 仍提示已复制。
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("已复制会话 ID", "info"));
@@ -164,18 +163,18 @@ describe("复制会话 ID", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={onToast}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "复制会话 ID" }));
+    fireEvent.click(document.querySelector(".ws-meta .id-copy") as HTMLElement);
 
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith("复制失败，请手动选择复制", "error"),
@@ -195,14 +194,14 @@ describe("快速切换会话", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
   }
@@ -228,18 +227,101 @@ describe("快速切换会话", () => {
         onBack={noop}
         metaRequest={null}
         onDelete={noop}
-        onContinue={noContinue}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
         onToast={noop}
         pinned={false}
         onTogglePin={noop}
         metaEntry={null}
-        metaRevision={0}
-        metaError={null}
-        onMetaSnapshot={noop}
+        detailTab="overview"
+        onDetailTabChange={noop}
       />,
     );
     expect(await screen.findByText("快会话的对话")).toBeTruthy();
     slow.resolve({ path: s1.path, leafId: null, targetId: "", items: [{ kind: "user", text: "慢会话的对话" }] });
     await waitFor(() => expect(screen.queryByText("慢会话的对话")).toBeNull());
+  });
+});
+describe("tab 上提（T7）", () => {
+  it("tab 由外部 detailTab 决定，点击标签页回调 onDetailTabChange", async () => {
+    await installMockBackend();
+    const onDetailTabChange = vi.fn();
+    const s1 = FIXTURE_SESSIONS[0].summary;
+    const view = render(
+      <DetailPane
+        session={s1}
+        gone={false}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
+        onDelete={noop}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
+        onToast={noop}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        detailTab="overview"
+        onDetailTabChange={onDetailTabChange}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "概览" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "对话" }));
+    expect(onDetailTabChange).toHaveBeenCalledWith("conv");
+    // 外部状态驱动切换：重渲染后对话面板可见。
+    view.rerender(
+      <DetailPane
+        session={s1}
+        gone={false}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
+        onDelete={noop}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
+        onToast={noop}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        detailTab="conv"
+        onDetailTabChange={onDetailTabChange}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "对话" })).toHaveAttribute("aria-pressed", "true");
+  });
+});
+describe("树在对话中定位（R4）", () => {
+  it("onLocate 切 conv tab 并透传 activeNodeId", async () => {
+    await installMockBackend();
+    const onDetailTabChange = vi.fn();
+    const s5 = FIXTURE_SESSIONS[4].summary;
+    render(
+      <DetailPane
+        session={s5}
+        gone={false}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
+        onOpenMetaDialog={noop}
+        onForkRequest={noop}
+        onDelete={noop}
+        onToast={noop}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        detailTab="tree"
+        onDetailTabChange={onDetailTabChange}
+      />,
+    );
+    // 树加载后点「在对话中定位」：应回调切 tab（App 侧 setTab("conv")）。
+    const locate = await screen.findByRole("button", { name: "在对话中定位" });
+    fireEvent.click(locate);
+    expect(onDetailTabChange).toHaveBeenCalledWith("conv");
   });
 });

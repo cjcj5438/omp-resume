@@ -325,6 +325,8 @@ fn summarize(
         version,
         bad_lines: parsed.bad_lines,
         first_user_message: None,
+        model: None,
+        tokens: None,
     };
 
     if version != Some(3) {
@@ -355,11 +357,26 @@ fn summarize_v3(
     idx: &TreeIndex,
     make: impl FnOnce(String) -> SessionSummary,
 ) -> Option<SessionSummary> {
-    // 全文件 user 消息计数（隐藏规则用）。
+    // 全文件 user 消息计数（隐藏规则用）+ 主会话 token 求和（B1）。
     let mut total_user = 0u64;
+    let mut tokens = 0u64;
+    let mut saw_usage = false;
     for e in &parsed.entries {
-        if e.entry_type == "message" && message_role(e) == Some("user") {
+        if e.entry_type != "message" {
+            continue;
+        }
+        if message_role(e) == Some("user") {
             total_user += 1;
+        }
+        if let Some(t) = e
+            .value
+            .get("message")
+            .and_then(|m| m.get("usage"))
+            .and_then(|u| u.get("totalTokens"))
+            .and_then(|v| v.as_u64())
+        {
+            saw_usage = true;
+            tokens = tokens.saturating_add(t);
         }
     }
     // active 路径（leaf→根），反转为根→leaf。
@@ -376,6 +393,24 @@ fn summarize_v3(
 
     let mut message_count = 0u64;
     let mut first_user: Option<String> = None;
+    // B2：leaf 向上最近 assistant 的裸模型名（active 为 leaf→根顺序，直接遍历）。
+    let mut model: Option<String> = None;
+    for eid in active.iter() {
+        let Some(e) = by_id.get(eid.as_str()) else {
+            continue;
+        };
+        if message_role(e) == Some("assistant") {
+            model = e
+                .value
+                .get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if model.is_some() {
+                break;
+            }
+        }
+    }
     for eid in active.iter().rev() {
         let Some(e) = by_id.get(eid.as_str()) else {
             continue;
@@ -418,6 +453,8 @@ fn summarize_v3(
     out.message_count = message_count;
     out.first_user_message = first_user;
     out.branch_count = branch_count;
+    out.model = model;
+    out.tokens = saw_usage.then_some(tokens);
     Some(out)
 }
 

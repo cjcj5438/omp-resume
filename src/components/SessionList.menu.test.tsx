@@ -69,19 +69,14 @@ function renderSidebar(over: {
   const onMetaSnapshot = vi.fn();
   const onToast = vi.fn();
   const props = {
-    variant: "page" as const,
     groups: over.groups ?? list.groups,
-    pinnedSessions: [],
-    query: "",
-    onQuery: noop,
-    loading: false,
     listError: null,
     onRetry: noop,
-    onRefresh: noop,
     checked: over.checked ?? new Set<string>(),
     onToggleCheck: noop,
     onToggleChecks: noop,
     onClearChecks: noop,
+    multiMode: false,
     selectedPath: null,
     onOpenSession,
     onOpenMeta: noop,
@@ -115,8 +110,8 @@ function renderSidebar(over: {
 
 /** 某一行的根节点（按标题文本定位）。 */
 function rowOf(title: string): HTMLElement {
-  const node = Array.from(document.querySelectorAll(".row")).find((row) => {
-    const t = row.querySelector(".row-title")?.textContent ?? "";
+  const node = Array.from(document.querySelectorAll(".session-row")).find((row) => {
+    const t = row.querySelector(".sr-title strong")?.textContent ?? "";
     return t.includes(title);
   });
   if (!(node instanceof HTMLElement)) throw new Error(`未找到行：${title}`);
@@ -136,7 +131,7 @@ describe("SessionList 右键菜单", () => {
     expect(onSelect).not.toHaveBeenCalled();
     const items = popupMenu.mock.calls[0][0];
     const texts = items.map((i) => ("text" in i ? i.text : i.kind));
-    expect(texts).toContain("在 iTerm 继续");
+    expect(texts).toContain("在 iTerm2 恢复");
     expect(texts).not.toContain(`已选 2 个会话`);
   });
 
@@ -229,7 +224,7 @@ describe("SessionList 右键菜单", () => {
     await waitFor(() => expect(popupMenu).toHaveBeenCalledTimes(1));
     const items = popupMenu.mock.calls[0][0];
     const open = items.find(
-      (i): i is Extract<MenuSpec, { kind: "item" }> => "text" in i && i.text === "在 iTerm 继续",
+      (i): i is Extract<MenuSpec, { kind: "item" }> => "text" in i && i.text === "在 iTerm2 恢复",
     );
     const rename = items.find(
       (i): i is Extract<MenuSpec, { kind: "item" }> => "text" in i && i.text === "重命名…",

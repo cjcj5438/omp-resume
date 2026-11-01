@@ -1,39 +1,27 @@
 /** 会话工作台：左栏会话列表（rail）+ 右栏详情。 */
 import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
 import type { PinKind, Pins } from "../pins";
-import type { TagCount } from "../listUtils";
-import type { ContinueOutcome } from "../flows";
 import type { ToastFn } from "./useOmpOp";
-import { SessionList } from "./SessionList";
+import { SessionRail } from "./SessionRail";
 import { DetailPane } from "./DetailPane";
 import "./SessionWorkspace.css";
 
 interface SessionWorkspaceProps {
   groups: ProjectGroup[];
-  pinnedSessions: SessionSummary[];
+  totalCount: number;
   query: string;
   onQuery: (q: string) => void;
-  loading: boolean;
   listError: AppError | null;
   onRetry: () => void;
-  onRefresh: () => void;
-  checked: Set<string>;
-  onToggleCheck: (path: string, on: boolean) => void;
-  onToggleChecks: (paths: string[], on: boolean) => void;
-  onClearChecks: () => void;
   selectedPath: string | null;
   onSelectPath: (path: string) => void;
-  onOpenMeta: (path: string) => void;
-  onBulkResume: (targets: SessionSummary[]) => void;
+  onNewSession: () => void;
+  onNewSessionIn: (cwd: string) => void;
   collapsed: ReadonlySet<string>;
   onCollapsedChange: (next: Set<string>) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
-  onNewSessionIn: (cwd: string) => void;
   meta: MetaSnapshot | null;
-  tagCounts: TagCount[];
-  activeTags: readonly string[];
-  onToggleTag: (tag: string) => void;
   onToast: ToastFn;
   onOpenIterm: (s: SessionSummary) => void;
   onRequestDelete: (paths: string[]) => void;
@@ -45,41 +33,32 @@ interface SessionWorkspaceProps {
   onOpenStage: (path: string) => void;
   onBack: () => void;
   metaRequest: { path: string; seq: number } | null;
+  onOpenMetaDialog: () => void;
+  onForkRequest: (nodeId: string) => void;
   onDeleteSession: () => void;
-  onContinue: (nodeId: string) => Promise<ContinueOutcome>;
   pinned: boolean;
   onToggleSessionPin: () => void;
   metaEntry: SessionMeta | null;
-  metaRevision: number;
-  metaError: AppError | null;
+  detailTab: "overview" | "conv" | "tree";
+  onDetailTabChange: (t: "overview" | "conv" | "tree") => void;
 }
 
 export function SessionWorkspace({
   groups,
-  pinnedSessions,
+  totalCount,
   query,
   onQuery,
-  loading,
   listError,
   onRetry,
-  onRefresh,
-  checked,
-  onToggleCheck,
-  onToggleChecks,
-  onClearChecks,
   selectedPath,
   onSelectPath,
-  onOpenMeta,
-  onBulkResume,
+  onNewSession,
+  onNewSessionIn,
   collapsed,
   onCollapsedChange,
   pins,
   onTogglePin,
-  onNewSessionIn,
   meta,
-  tagCounts,
-  activeTags,
-  onToggleTag,
   onToast,
   onOpenIterm,
   onRequestDelete,
@@ -90,50 +69,38 @@ export function SessionWorkspace({
   onOpenStage,
   onBack,
   metaRequest,
+  onOpenMetaDialog,
+  onForkRequest,
   onDeleteSession,
-  onContinue,
   pinned,
   onToggleSessionPin,
   metaEntry,
-  metaRevision,
-  metaError,
+  detailTab,
+  onDetailTabChange,
 }: SessionWorkspaceProps) {
   return (
     <div className="workspace">
-      <div className="ws-rail">
-        <SessionList
-          variant="rail"
-          groups={groups}
-          pinnedSessions={pinnedSessions}
-          query={query}
-          onQuery={onQuery}
-          loading={loading}
-          listError={listError}
-          onRetry={onRetry}
-          onRefresh={onRefresh}
-          checked={checked}
-          onToggleCheck={onToggleCheck}
-          onToggleChecks={onToggleChecks}
-          onClearChecks={onClearChecks}
-          selectedPath={selectedPath}
-          onOpenSession={onSelectPath}
-          onOpenMeta={onOpenMeta}
-          onBulkResume={onBulkResume}
-          collapsed={collapsed}
-          onCollapsedChange={onCollapsedChange}
-          pins={pins}
-          onTogglePin={onTogglePin}
-          onNewSessionIn={onNewSessionIn}
-          meta={meta}
-          tagCounts={tagCounts}
-          activeTags={activeTags}
-          onToggleTag={onToggleTag}
-          onToast={onToast}
-          onOpenIterm={onOpenIterm}
-          onRequestDelete={onRequestDelete}
-          onMetaSnapshot={onMetaSnapshot}
-        />
-      </div>
+      <SessionRail
+        groups={groups}
+        totalCount={totalCount}
+        query={query}
+        onQuery={onQuery}
+        listError={listError}
+        onRetry={onRetry}
+        selectedPath={selectedPath}
+        onSelectPath={onSelectPath}
+        onNewSession={onNewSession}
+        onNewSessionIn={onNewSessionIn}
+        collapsed={collapsed}
+        onCollapsedChange={onCollapsedChange}
+        pins={pins}
+        onTogglePin={onTogglePin}
+        meta={meta}
+        onToast={onToast}
+        onOpenIterm={onOpenIterm}
+        onRequestDelete={onRequestDelete}
+        onMetaSnapshot={onMetaSnapshot}
+      />
       <div className="ws-main">
         <DetailPane
           session={session}
@@ -143,15 +110,15 @@ export function SessionWorkspace({
           onOpenStage={onOpenStage}
           onBack={onBack}
           metaRequest={metaRequest}
+          onOpenMetaDialog={onOpenMetaDialog}
+          onForkRequest={onForkRequest}
           onDelete={onDeleteSession}
-          onContinue={onContinue}
           onToast={onToast}
           pinned={pinned}
           onTogglePin={onToggleSessionPin}
           metaEntry={metaEntry}
-          metaRevision={metaRevision}
-          metaError={metaError}
-          onMetaSnapshot={onMetaSnapshot}
+          detailTab={detailTab}
+          onDetailTabChange={onDetailTabChange}
         />
       </div>
     </div>

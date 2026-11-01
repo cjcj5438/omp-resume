@@ -22,6 +22,8 @@ function s(over: Partial<SessionSummary> & { path: string }): SessionSummary {
     version: 3,
     badLines: 0,
     firstUserMessage: null,
+    model: null,
+    tokens: null,
     ...over,
   };
 }

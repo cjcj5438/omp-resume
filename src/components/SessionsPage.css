@@ -1,12 +1,19 @@
-/* 会话列表页：工具条与底部计数。 */
+/* 会话列表页：单行 toolbar（设计稿 .toolbar）+ 底部计数。 */
 
 .sessions-toolbar {
-  padding: 0 0 var(--sp-4);
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0;
   border-bottom: none;
+  margin-bottom: 14px;
 }
 
 .sessions-toolbar .spacer {
   flex: 1;
+}
+
+.sessions-sort {
+  font-size: 11px;
 }
 
 .sessions-foot {

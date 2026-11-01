@@ -6,6 +6,10 @@ import { normalizeError } from "./api";
 /**
  * 删除对话框的目标：会话列表行与清理候选共用的最小形状。
  * `messageCount` 仅会话列表有值（清理候选为 null，不展示消息数）。
+ * `source` 区分发起页：清理页发 `"cleanup"`（App 侧据此切 DeleteDialog cleanup 变体），
+ * 会话页/行内/批量不填（默认会话形态，保持旧行为）。
+ * `excluded` 仅 cleanup 来源有值：发起时可见集里不可勾选（占用中/占用未知）被排除的条数，
+ * 供 cleanup 变体 kv「占用中已排除」展示（targets 本身只含可删项，无法从中统计）。
  */
 export interface DeleteTarget {
   path: string;
@@ -15,6 +19,30 @@ export interface DeleteTarget {
   sizeBytes: number;
   messageCount: number | null;
   inUse: boolean;
+  source?: "cleanup";
+  excluded?: number;
+}
+
+export interface CleanupDialogInfo {
+  count: number;
+  bytes: number;
+  excluded: number;
+}
+
+/**
+ * 删除对话框路由：targets 里混入 cleanup 来源就走清理变体（cleanup-P0-2 接线）。
+ * kv 计数：count 为目标数、bytes 为 sizeBytes 合计、excluded 取发起方算好的被排除数
+ * （targets 只含可删项；在用数无法从 targets 反推，故由 CleanupView 发起时填）。
+ * 会话页/行内/批量目标不带 source，返回 null 走默认会话形态。
+ */
+export function cleanupDialogInfo(targets: DeleteTarget[]): CleanupDialogInfo | null {
+  const fromCleanup = targets.filter((t) => t.source === "cleanup");
+  if (fromCleanup.length === 0) return null;
+  return {
+    count: targets.length,
+    bytes: targets.reduce((n, t) => n + t.sizeBytes, 0),
+    excluded: fromCleanup[0].excluded ?? 0,
+  };
 }
 
 export interface DeletePlan {
