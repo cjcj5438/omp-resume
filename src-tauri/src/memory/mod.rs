@@ -18,9 +18,9 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::config::Config;
 use crate::model::{
-    AppError, ErrorCode, MemoryBackup, MemoryBankStatus, MemoryBankSummary, MemoryDeletePreview,
-    MemoryDeleteResult, MemoryDetail, MemoryGraph, MemoryKindFilter, MemoryOverview, MemoryPage,
-    MemoryRestoreResult, MemorySort, MemoryTotals,
+    AppError, ErrorCode, MemoryBackup, MemoryBackupAllResult, MemoryBankStatus, MemoryBankSummary,
+    MemoryDeletePreview, MemoryDeleteResult, MemoryDetail, MemoryGraph, MemoryKindFilter,
+    MemoryOverview, MemoryPage, MemoryRestoreResult, MemorySort, MemoryTotals,
 };
 
 /// 根目录覆盖 / 库文件名 / 只读忙等待 / snippet 前缀与长度 / 正文上限 /
@@ -433,6 +433,13 @@ pub async fn memory_bank_status(bank: String) -> Result<MemoryBankStatus, AppErr
 pub async fn memory_backups(bank: Option<String>) -> Result<Vec<MemoryBackup>, AppError> {
     let data_dir = crate::meta::data_dir()?;
     crate::blocking(move || Ok(delete::backups_impl(&data_dir, bank.as_deref()))).await
+}
+
+/// CONTRACT §4.74：全库快照（逐库独立成败；无 lsof 门禁）。
+#[tauri::command]
+pub async fn memory_backup_all() -> Result<MemoryBackupAllResult, AppError> {
+    let data_dir = crate::meta::data_dir()?;
+    crate::blocking(move || delete::backup_all_impl(&resolve_bank_root(), &data_dir)).await
 }
 
 /// CONTRACT §4.45：删除预览（纯只读，不设门禁）。

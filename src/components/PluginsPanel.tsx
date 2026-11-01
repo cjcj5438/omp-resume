@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   addOmpMarketplace,
+  checkOmpPluginUpdate,
   discoverOmpPlugins,
   installOmpPlugin,
   listOmpPlugins,
@@ -24,13 +25,17 @@ import type {
   PluginUpgradeChange,
 } from "../types";
 import { Badge, Disclosure, Modal } from "./ui";
+import { Kpi, PageHeader, Panel } from "./page";
 import { useAlive, type OmpOpController, type ToastFn } from "./useOmpOp";
+import "./PluginsPanel.css";
 
 interface PluginsPanelProps {
   op: OmpOpController;
   onToast: ToastFn;
   /** 全部更新完成后递增，触发列表重载。 */
   refreshToken: number;
+  busy: boolean;
+  onUpdateAll: () => void;
 }
 
 interface BrowseState {
@@ -61,7 +66,7 @@ export function upgradeIsUpToDate(
   return changes.length === 0 && /up to date/i.test(output);
 }
 
-export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
+export function PluginsPanel({ op, onToast, refreshToken, busy, onUpdateAll }: PluginsPanelProps) {
   const alive = useAlive();
   const [data, setData] = useState<PluginsListResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,8 +78,10 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
   const [source, setSource] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
   const [upgradeSummary, setUpgradeSummary] = useState<UpgradeSummary | null>(null);
-  const busy = op.running !== null;
-  // 浏览请求单调序号：只采纳最新一次的响应，丢弃乱序到达的陈旧结果。
+  const [marketOpen, setMarketOpen] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<{ upToDate: boolean; count: number } | null>(null);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const browseRequestId = useRef(0);
 
   const load = useCallback(async () => {
@@ -87,6 +94,7 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
       const res = await listOmpPlugins();
       if (!alive.current) return;
       setData(res);
+      setSyncedAt(new Date().toISOString());
       // 浏览中的 marketplace 若已不存在，清空浏览面板，避免展示陈旧条目。
       setBrowse((prev) =>
         prev !== null && !res.marketplaces.some((m) => m.name === prev.name) ? null : prev,
@@ -120,6 +128,28 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
       onToast(errorText(outcome.error), "error");
     }
     return outcome.ok;
+  }
+
+  /** 只读预检：不占单操作锁（check 不写盘），行内 busy 态。 */
+  async function checkUpdate(p: PluginSummary) {
+    setChecking(p.id);
+    try {
+      const res = await checkOmpPluginUpdate(p.id);
+      if (!alive.current) return;
+      setCheckResult({ upToDate: res.upToDate, count: res.changes.length });
+      if (res.upToDate) {
+        onToast(`${p.name} 已是最新版本 ${p.version ?? "未知"}`, "info");
+      } else if (res.changes.length > 0) {
+        onToast(`${p.name} 可升级：${res.changes.map(formatUpgradeChange).join("；")}`, "info");
+      } else {
+        onToast(`${p.name} 检查完成，未解析到版本变化`, "info");
+      }
+    } catch (e: unknown) {
+      if (!alive.current) return;
+      onToast(errorText(normalizeError(e)), "error");
+    } finally {
+      if (alive.current) setChecking(null);
+    }
   }
 
   function toggleEnabled(p: PluginSummary) {
@@ -230,8 +260,27 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
     return <div className="pane-note">正在加载插件…</div>;
   }
 
+  const enabledCount = data.plugins.filter((p) => p.enabled).length;
+  const marketNames = data.marketplaces.map((m) => m.name).join(" · ");
+
   return (
     <div className="manage-section">
+      <PageHeader
+        kicker="环境配置 · Marketplace"
+        title="插件"
+        sub="安装、启停与升级。市场来源单独管理，安装动作需要显式确认。"
+        actions={
+          <>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => { setAddError(null); setMarketOpen(true); }}>
+              添加市场
+            </button>
+            <button type="button" className="btn btn-accent" disabled={busy} onClick={onUpdateAll}>
+              {busy ? <span className="spinner" aria-hidden="true" /> : null}
+              全部更新
+            </button>
+          </>
+        }
+      />
       {loading ? <div className="pane-note">正在加载插件…</div> : null}
       {listError !== null ? (
         <div className="banner banner-error" role="alert">
@@ -250,6 +299,12 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
           </ul>
         </div>
       ) : null}
+      <div className="grid-4 plugins-kpis" role="status" aria-label="插件统计">
+        <Kpi label="已安装" value={data.plugins.length} foot={`${data.marketplaces.length} 个市场来源`} />
+        <Kpi label="已启用" value={enabledCount} foot="随 omp 启动加载" />
+        <Kpi label="可升级" value={checkResult === null ? "—" : checkResult.upToDate ? 0 : checkResult.count} foot={checkResult === null ? "点行内「检查更新」预检" : checkResult.upToDate ? "已是最新" : `${checkResult.count} 个可升级`} />
+        <Kpi label="市场" value={data.marketplaces.length} foot={marketNames === "" ? "—" : marketNames} />
+      </div>
       <div className="toolbar">
         <button
           type="button"
@@ -291,33 +346,44 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
           </Disclosure>
         </div>
       ) : null}
-      <h3 className="manage-sub">已安装插件</h3>
+      <Panel title="已安装插件" body="flush" foot={<><span>插件来自市场，升级会先拉取清单再确认。</span><span className="mono">{data.marketplaces.length} 个市场 · {syncedAt === null ? "未读取" : `读取于 ${formatRelativeTime(syncedAt)}`}</span></>}>
       {data.plugins.length === 0 ? (
         <div className="pane-note">尚未安装插件</div>
       ) : (
-        <table className="manage-table">
+        <div className="tbl-wrap">
+        <table className="tbl">
           <thead>
             <tr>
-              <th scope="col">名称</th>
-              <th scope="col">来源</th>
+              <th scope="col">插件</th>
               <th scope="col">版本</th>
-              <th scope="col">状态</th>
+              <th scope="col">来源</th>
+              <th scope="col" className="c">启用</th>
               <th scope="col">时间</th>
-              <th scope="col">操作</th>
+              <th scope="col" className="r">操作</th>
             </tr>
           </thead>
           <tbody>
             {data.plugins.map((p) => (
               <tr key={p.id}>
-                <td className="mono">{p.name}</td>
-                <td className="mono muted">{p.marketplace}</td>
-                <td className="mono">{p.version ?? "—"}</td>
                 <td>
-                  {p.enabled ? (
-                    <Badge tone="accent">启用</Badge>
-                  ) : (
-                    <Badge tone="grey">已禁用</Badge>
-                  )}
+                  <span className="plugin-name">
+                    <span className="plugin-sq" aria-hidden="true">{p.name.slice(0, 2).toUpperCase()}</span>
+                    <span className="strong">{p.name}</span>
+                  </span>
+                  {p.description !== null && p.description !== "" ? <span className="sub">{p.description}</span> : null}
+                </td>
+                <td className="mono">{p.version ?? "—"}</td>
+                <td><Badge tone="quiet">{p.marketplace}</Badge></td>
+                <td className="c">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={p.enabled}
+                    aria-label={`${p.enabled ? "禁用" : "启用"} ${p.id}`}
+                    className={p.enabled ? "switch is-on" : "switch"}
+                    disabled={busy}
+                    onClick={() => toggleEnabled(p)}
+                  />
                 </td>
                 <td className="muted">
                   <span title={p.installedAt === null ? undefined : formatFullTime(p.installedAt)}>
@@ -327,16 +393,16 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
                     更新 {p.lastUpdated === null ? "—" : formatRelativeTime(p.lastUpdated)}
                   </span>
                 </td>
-                <td>
+                <td className="r cell-actions">
                   <div className="manage-actions">
                     <button
                       type="button"
-                      className="btn btn-small"
-                      disabled={busy}
-                      aria-label={`${p.enabled ? "禁用" : "启用"} ${p.id}`}
-                      onClick={() => toggleEnabled(p)}
+                      className="btn btn-small btn-quiet"
+                      disabled={busy || checking !== null}
+                      aria-busy={checking === p.id}
+                      onClick={() => void checkUpdate(p)}
                     >
-                      {p.enabled ? "禁用" : "启用"}
+                      {checking === p.id ? "检查中…" : "检查更新"}
                     </button>
                     <button
                       type="button"
@@ -349,7 +415,7 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
                     </button>
                     <button
                       type="button"
-                      className="btn btn-small"
+                      className="btn btn-small btn-quiet btn-danger-ghost"
                       disabled={busy}
                       aria-label={`卸载 ${p.id}`}
                       onClick={() => setUninstallTarget(p)}
@@ -362,7 +428,9 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
+      </Panel>
       <h3 className="manage-sub">npm 插件（只读）</h3>
       {data.npm.length === 0 ? (
         <div className="pane-note">暂无 npm 插件</div>
@@ -376,7 +444,7 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
           ))}
         </ul>
       )}
-      <h3 className="manage-sub">Marketplace</h3>
+      <Panel title="Marketplace" meta={`${data.marketplaces.length} 个来源`} actions={<button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => { setAddError(null); setMarketOpen(true); }}>添加市场</button>} body="tight" foot={<><span>市场来源单独管理，安装动作需要显式确认。</span><span className="mono">{syncedAt === null ? "未读取" : `读取于 ${formatRelativeTime(syncedAt)}`}</span></>}>
       {data.marketplaces.length === 0 ? (
         <div className="pane-note">尚未配置 marketplace</div>
       ) : (
@@ -472,6 +540,7 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
           )}
         </div>
       ) : null}
+      </Panel>
       <h3 className="manage-sub">添加 Marketplace</h3>
       <form className="manage-form" onSubmit={(e) => void addMarketplace(e)}>
         <input
@@ -554,6 +623,65 @@ export function PluginsPanel({ op, onToast, refreshToken }: PluginsPanelProps) {
           }
         >
           <p>将移除 marketplace {removeTarget}。</p>
+        </Modal>
+      ) : null}
+      {marketOpen ? (
+        <Modal
+          title="添加市场"
+          sub="市场来源会写入插件配置，安装动作仍然需要逐项确认。"
+          onClose={() => {
+            if (!busy) setMarketOpen(false);
+          }}
+          footer={
+            <>
+              <button type="button" className="btn btn-ghost" data-autofocus disabled={busy} onClick={() => setMarketOpen(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || source.trim() === ""}
+                onClick={() => {
+                  const submitted = source;
+                  void (async () => {
+                    const outcome = await op.run("添加 marketplace", (onLine) => addOmpMarketplace(submitted, onLine));
+                    if (!alive.current) return;
+                    if (outcome.ok) {
+                      setSource("");
+                      setMarketOpen(false);
+                      onToast("市场已添加 · 正在拉取索引", "info");
+                      await load();
+                    } else if (outcome.error.code === "INVALID_INPUT") {
+                      setAddError(outcome.error.message);
+                    } else {
+                      onToast(errorText(outcome.error), "error");
+                    }
+                  })();
+                }}
+              >
+                添加市场
+              </button>
+            </>
+          }
+        >
+          <div className="fld">
+            <label htmlFor="market-url">市场地址</label>
+            <input
+              id="market-url"
+              value={source}
+              disabled={busy}
+              placeholder="https://github.com/org/marketplace"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(e) => setSource(e.target.value)}
+            />
+          </div>
+          {addError !== null ? (
+            <div className="banner banner-error" role="alert">
+              {addError}
+            </div>
+          ) : null}
         </Modal>
       ) : null}
     </div>

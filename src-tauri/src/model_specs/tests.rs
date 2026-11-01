@@ -1440,3 +1440,226 @@ fn update_refuses_unsafe_target_before_backup() {
     assert_eq!(fs::read(&ro).unwrap(), sample().as_bytes());
     fs::set_permissions(&ro, fs::Permissions::from_mode(0o644)).unwrap();
 }
+
+#[test]
+fn create_inserts_at_models_tail_roundtrip() {
+    // §4.69 主路径：列表末尾追加条目，其余字节不动，重读 roundtrip。
+    let out = insert_model_into_text(
+        sample(),
+        "acme",
+        "brand-new",
+        Some("全新"),
+        Some(4000),
+        Some(400),
+    )
+    .unwrap();
+    assert!(out.contains(SECRET), "凭据行必须原样保留");
+    assert!(
+        out.contains(
+            "      - id: brand-new\n        name: \"全新\"\n        contextWindow: 4000\n        maxTokens: 400\n"
+        ),
+        "{out:?}"
+    );
+    // 插到 acme 列表末尾（slow 条目之后、quoted-prov 之前）。
+    let slow = out.find("id: slow").unwrap();
+    let brand_new = out.find("id: brand-new").unwrap();
+    let quoted = out.find("\"quoted-prov\"").unwrap();
+    assert!(slow < brand_new && brand_new < quoted);
+    // name 缺省为 id。
+    let out = insert_model_into_text(sample(), "acme", "noname", None, None, None).unwrap();
+    assert!(
+        out.contains("- id: noname\n        name: \"noname\"\n"),
+        "{out:?}"
+    );
+    assert!(!out.contains("noname\"\n        contextWindow"));
+    // 重读 roundtrip：新条目可定位、可读。
+    let lines = split_lines(&out);
+    let span = locate_model(&lines, "acme", "noname").unwrap();
+    let spec = read_spec(&lines, &span, "acme", "noname");
+    assert_eq!(spec.name.as_deref(), Some("noname"));
+    assert_eq!(spec.context_window, None);
+}
+
+#[test]
+fn create_rejects_duplicate_missing_provider_and_shapes() {
+    // 同 provider 下 id 查重。
+    let error = insert_model_into_text(sample(), "acme", "fast", None, None, None).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert!(error.message.contains("已存在"), "{}", error.message);
+    // 同 id 在其他 provider 下不算重复。
+    insert_model_into_text(sample(), "quoted-prov", "fast", None, None, None).unwrap();
+    // provider 不存在：拒绝，不新建 provider 块。
+    let error = insert_model_into_text(sample(), "nope", "x", None, None, None).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert!(
+        error.message.contains("未找到指定的 provider"),
+        "{}",
+        error.message
+    );
+    // 全文件无 providers 块：手动改。
+    let error = insert_model_into_text("foo: 1\n", "acme", "x", None, None, None).unwrap_err();
+    assert!(error.message.contains("请手动编辑"), "{}", error.message);
+    // provider 下无 models：手动改。
+    let yml = "providers:\n  acme:\n    apiKey: x\n";
+    let error = insert_model_into_text(yml, "acme", "x", None, None, None).unwrap_err();
+    assert!(error.message.contains("请手动编辑"), "{}", error.message);
+    // 流式条目污染列表：手动改（与 update 同口径，不猜位置）。
+    let yml = "providers:\n  acme:\n    models:\n      - {id: x}\n";
+    let error = insert_model_into_text(yml, "acme", "y", None, None, None).unwrap_err();
+    assert!(error.message.contains("请手动编辑"), "{}", error.message);
+}
+
+#[test]
+fn create_empty_models_and_quoted_key() {
+    // 空 models：缩进按 `models:` + 2 推导。
+    let yml = "providers:\n  acme:\n    models:\n";
+    let out = insert_model_into_text(yml, "acme", "first", None, Some(100), None).unwrap();
+    assert!(
+        out.contains(
+            "    models:\n      - id: first\n        name: \"first\"\n        contextWindow: 100\n"
+        ),
+        "{out:?}"
+    );
+    // EOF 无尾换行：补换行后追加，不粘连。
+    let yml = "providers:\n  acme:\n    models:\n      - id: fast";
+    let out = insert_model_into_text(yml, "acme", "second", None, None, None).unwrap();
+    assert!(out.contains("- id: fast\n      - id: second\n"), "{out:?}");
+    // 引号 provider 键：同样定位。
+    let out =
+        insert_model_into_text(sample(), "quoted-prov", "q2", Some("Q2"), None, None).unwrap();
+    assert!(out.contains("- id: q2\n        name: \"Q2\"\n"), "{out:?}");
+    // CRLF：插入行沿用 CRLF，原文换行不动。
+    let yml = "providers:\r\n  acme:\r\n    models:\r\n      - id: fast\r\n";
+    let out = insert_model_into_text(yml, "acme", "crlf-new", None, None, None).unwrap();
+    assert!(
+        out.contains("- id: fast\r\n      - id: crlf-new\r\n        name: \"crlf-new\"\r\n"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn create_validates_values_like_update() {
+    // 正整数规则与 update 同口径（validate_patch 复用）。
+    let bad = ModelSpecPatch {
+        context_window: Some(0),
+        ..Default::default()
+    };
+    let error = validate_patch(&bad).unwrap_err();
+    assert!(
+        error.message.contains("上下文窗口必须大于 0"),
+        "{}",
+        error.message
+    );
+    let bad = ModelSpecPatch {
+        max_tokens: Some(0),
+        ..Default::default()
+    };
+    let error = validate_patch(&bad).unwrap_err();
+    assert!(
+        error.message.contains("最大输出必须大于 0"),
+        "{}",
+        error.message
+    );
+    let bad = ModelSpecPatch {
+        name: Some("x".repeat(201)),
+        ..Default::default()
+    };
+    let error = validate_patch(&bad).unwrap_err();
+    assert!(error.message.contains("过长"), "{}", error.message);
+    // id 照 validate_target 规则（含 `/` 拒绝）。
+    let error = validate_target("acme", "a/b").unwrap_err();
+    assert!(error.message.contains("/"), "{}", error.message);
+    // 沙箱判定：name 缺省为 id 时按缺省值比对。
+    check_sandbox_output(
+        "{\"models\":[{\"selector\":\"acme/noname\",\"name\":\"noname\"}]}",
+        "acme",
+        "noname",
+        &ModelSpecPatch {
+            name: Some("noname".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    check_sandbox_output(
+        "{\"models\":[{\"selector\":\"acme/noname\",\"name\":\"other\"}]}",
+        "acme",
+        "noname",
+        &ModelSpecPatch {
+            name: Some("noname".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+}
+
+#[test]
+fn create_end_to_end_guards_revision_busy_and_unsafe_target() {
+    // impl 层门禁：CONFLICT / BUSY / 哨兵 / 不安全目标（假 omp 覆盖真 sandbox 路径）。
+    let _guard = crate::omp_cli::subprocess_test_guard();
+    let dir = tempfile::tempdir().unwrap();
+    let yml = dir.path().join("models.yml");
+    fs::write(&yml, sample()).unwrap();
+    let revision = revision_of(sample().as_bytes());
+    let json = dir.path().join("models.json");
+    std::fs::write(
+        &json,
+        "{\"models\":[{\"selector\":\"acme/brand-new\",\"name\":\"全新\",\
+         \"contextWindow\":4000,\"maxTokens\":400}]}\n",
+    )
+    .unwrap();
+    let bin = dir.path().join("omp");
+    std::fs::write(&bin, format!("#!/bin/sh\ncat \"{}\"\n", json.display())).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let busy = OmpBusy::default();
+    let request = |expected_revision: String| ModelSpecPatchRequest {
+        provider: "acme".to_owned(),
+        id: "brand-new".to_owned(),
+        patch: ModelSpecPatch {
+            name: Some("全新".to_owned()),
+            context_window: Some(4000),
+            max_tokens: Some(400),
+            ..Default::default()
+        },
+        expected_revision,
+    };
+    // 真沙箱全路径成功：备份 + 原子写 + 重读。
+    let result = create_model_spec_impl(&bin, &busy, &yml, &request(revision)).unwrap();
+    assert_eq!(result.spec.selector, "acme/brand-new");
+    assert_eq!(result.spec.name.as_deref(), Some("全新"));
+    assert_eq!(result.spec.context_window, Some(4000));
+    assert_eq!(result.spec.max_tokens, Some(400));
+    assert!(!result.backup_path.is_empty());
+    assert_eq!(fs::read(&result.backup_path).unwrap(), sample().as_bytes());
+    // 旧 revision 复用 → CONFLICT。
+    let stale = revision_of(sample().as_bytes());
+    let error = create_model_spec_impl(&bin, &busy, &yml, &request(stale)).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    // BUSY：门禁被占拒绝。
+    let current = revision_of(&fs::read(&yml).unwrap());
+    let _held = busy.try_acquire().unwrap();
+    let error = create_model_spec_impl(&bin, &busy, &yml, &request(current.clone())).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Busy);
+    drop(_held);
+    // 哨兵串 → INVALID。
+    let error =
+        create_model_spec_impl(&bin, &busy, &yml, &request("absent".to_owned())).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    // 重名 → INVALID「已存在」（门禁内仍先查重）。
+    let error = create_model_spec_impl(&bin, &busy, &yml, &request(current)).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidInput);
+    assert!(error.message.contains("已存在"), "{}", error.message);
+    // 不安全目标：符号链接在备份前拒绝。
+    let real = dir.path().join("real-models.yml");
+    fs::write(&real, sample()).unwrap();
+    let link = dir.path().join("link-models.yml");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let error = create_model_spec_impl(
+        &bin,
+        &busy,
+        &link,
+        &request(revision_of(sample().as_bytes())),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Io, "{error:?}");
+    assert!(error.message.contains("符号链接"), "{}", error.message);
+}

@@ -11,6 +11,7 @@ export const BACKUP_KIND_LABEL: Record<MemoryBackupKind, string> = {
   "before-delete": "删除前",
   "before-restore": "恢复前",
   "bank-removed": "移除的库",
+  manual: "手动备份",
 };
 
 export type MemoryWriteAction = "delete" | "remove" | "restore" | "backup-delete";

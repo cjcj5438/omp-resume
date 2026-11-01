@@ -20,11 +20,6 @@ function renderDialog(installedVersion: string | null = null) {
   render(<CheatSheetView installedVersion={installedVersion} />);
 }
 
-/** 默认页是「入门路径」；涉及命令行的用例先切到「全部命令」。 */
-function gotoCommands() {
-  fireEvent.click(screen.getByRole("tab", { name: "全部命令" }));
-}
-
 beforeEach(() => {
   stubClipboard(vi.fn().mockResolvedValue(undefined));
 });
@@ -56,7 +51,6 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
-    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "delete" } });
     const btn = screen.getByRole("button", { name: "复制 /delete" });
@@ -75,7 +69,6 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
-    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "compact" } });
     fireEvent.click(screen.getByRole("button", { name: "复制 /compact 的含参数模板" }));
@@ -87,7 +80,6 @@ describe("复制", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockRejectedValue(new Error("denied"));
     stubClipboard(writeText);
     renderDialog();
-    gotoCommands();
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "delete" } });
     fireEvent.click(screen.getByRole("button", { name: "复制 /delete" }));
@@ -102,11 +94,12 @@ describe("使用示例", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
-    gotoCommands();
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "effort" } });
     const compact = OMP_COMMANDS.flatMap((g) => g.commands).find((c) => c.name === "effort");
     if (compact === undefined) throw new Error("找不到 effort");
-    for (const ex of compact.examples) expect(screen.getByRole("button", { name: `复制示例 ${ex}` })).toBeInTheDocument();
+    // 详情默认折叠：点行展开后再断言示例按钮（学习路径段也有 /effort 链接，限定 cmd-row）。
+    const row = screen.getByText("/effort", { selector: ".cmd-cmd" }).closest(".cmd-row") as HTMLElement;
+    fireEvent.click(row);
     fireEvent.click(screen.getByRole("button", { name: "复制示例 /effort high" }));
     await act(async () => {});
     expect(writeText).toHaveBeenCalledWith("/effort high");
@@ -118,16 +111,18 @@ describe("终端命令", () => {
     const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
     stubClipboard(writeText);
     renderDialog();
-    fireEvent.click(screen.getByRole("tab", { name: "终端命令" }));
+    fireEvent.click(screen.getByRole("button", { name: "终端子命令" }));
     expect(document.querySelector(".page-sub")?.textContent).toContain(
-      `共 ${OMP_CLI_COMMANDS.length} 个终端子命令`,
+      `${OMP_CLI_COMMANDS.length} 个终端子命令`,
     );
     const bench = OMP_CLI_COMMANDS.find((c) => c.name === "bench");
     if (bench === undefined) throw new Error("找不到 bench");
     expect(screen.getByRole("button", { name: "复制 omp bench" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: `复制示例 ${bench.examples[0]}` }));
+    // 首示例直接展示在 cmd-mid（cmd-ex），复制走复制行；更多示例才有逐条复制。
+    expect(screen.getByText(bench.examples[0])).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `复制示例 ${bench.examples[1]}` }));
     await act(async () => {});
-    expect(writeText).toHaveBeenCalledWith(bench.examples[0]);
+    expect(writeText).toHaveBeenCalledWith(bench.examples[1]);
 
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "worktree" } });
     expect(screen.getByRole("button", { name: "复制 omp worktree" })).toBeInTheDocument();
@@ -140,7 +135,6 @@ describe("终端命令", () => {
 describe("常用分组", () => {
   it("空查询时顶部显示常用分组，过滤时隐藏且不重复行", () => {
     renderDialog();
-    gotoCommands();
     const groups = [...document.querySelectorAll(".cheatsheet-group")];
     expect(groups.length).toBeGreaterThan(1);
     expect(groups[0].querySelector(".cheatsheet-group-title")?.textContent).toMatch(/^常用/);
@@ -165,7 +159,7 @@ describe("组合用法", () => {
     stubClipboard(writeText);
     renderDialog();
 
-    fireEvent.click(screen.getByRole("tab", { name: "组合用法" }));
+    fireEvent.click(screen.getByRole("button", { name: "组合用法" }));
     const combo = OMP_COMBOS[0];
     expect(screen.getByRole("heading", { name: combo.title })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: `复制全部：${combo.title}` }));
@@ -175,7 +169,7 @@ describe("组合用法", () => {
 
   it("过滤在组合视图下作用于场景标题与步骤", () => {
     renderDialog();
-    fireEvent.click(screen.getByRole("tab", { name: "组合用法" }));
+    fireEvent.click(screen.getByRole("button", { name: "组合用法" }));
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "/memory" } });
     expect(screen.getByRole("heading", { name: "记忆库维护" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "上下文快满了" })).toBeNull();

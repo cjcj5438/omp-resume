@@ -13,13 +13,13 @@ import {
   type OmpCommand,
 } from "../ompCommands";
 import { findOmpDetail } from "../ompCommandDetails";
-import { OMP_CLI_COMMANDS, OMP_CLI_VERSION } from "../ompCliCommands";
+import { OMP_CLI_COMMANDS } from "../ompCliCommands";
 import { OMP_LEARNING_PATHS } from "../ompLearningPaths";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
-import { Ico } from "./ui";
-import { PageHeader } from "./page";
-import { Check } from "lucide-react";
+import { EmptyState, Ico } from "./ui";
+import { PageHeader, Seg } from "./page";
+import { Check, Search, SearchX } from "lucide-react";
 import { useAlive } from "./useOmpOp";
 import "./CheatSheet.css";
 
@@ -28,20 +28,21 @@ interface CheatSheetViewProps {
   installedVersion?: string | null;
 }
 
-type Tab = "paths" | "commands" | "combos" | "cli";
+type Seg = "all" | "slash" | "cli" | "paths" | "combos";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "paths", label: "入门路径" },
-  { key: "commands", label: "全部命令" },
+const SEGS: { key: Seg; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "slash", label: "斜杠命令" },
+  { key: "cli", label: "终端子命令" },
+  { key: "paths", label: "学习路径" },
   { key: "combos", label: "组合用法" },
-  { key: "cli", label: "终端命令" },
 ];
 
 const COPIED_MS = 1500;
 const FAILED_MS = 4000;
 
 export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps) {
-  const [tab, setTab] = useState<Tab>("paths");
+  const [seg, setSeg] = useState<Seg>("all");
   const filterRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     filterRef.current?.focus();
@@ -88,9 +89,9 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
     </button>
   );
 
-  /** 跨视图跳到某条命令：切到命令页并把过滤框设成它。 */
+  /** 跨段跳到某条命令：切到斜杠段并把过滤框设成它。 */
   function jumpToCommand(name: string): void {
-    setTab("commands");
+    setSeg("slash");
     setQuery(name);
   }
 
@@ -130,22 +131,28 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
     [],
   );
   const displayGroups = query.trim() === "" ? [pinnedGroup, ...groups] : groups;
-  const head =
-    tab === "commands"
-      ? query.trim() === ""
-        ? `基于 omp ${OMP_VERSION} · 共 ${total} 条斜杠命令（内置 ${builtin} + 扩展 ${total - builtin}），逐条带用法说明`
-        : `基于 omp ${OMP_VERSION} · 匹配 ${shown} / ${total} 条`
-      : tab === "combos"
-        ? `基于 omp ${OMP_VERSION} · ${combos.length} 个场景，按顺序照抄即可`
-        : tab === "paths"
-          ? `${paths.length} 条学习路径 · 从「第一小时」开始，每条都能现在就试`
-          : query.trim() === ""
-            ? `基于 omp ${OMP_CLI_VERSION} · 共 ${OMP_CLI_COMMANDS.length} 个终端子命令`
-            : `基于 omp ${OMP_CLI_VERSION} · 匹配 ${cli.length} / ${OMP_CLI_COMMANDS.length} 个终端子命令`;
+  const showSlash = seg === "all" || seg === "slash";
+  const showCli = seg === "all" || seg === "cli";
+  const showPaths = seg === "all" || seg === "paths";
+  const showCombos = seg === "combos";
+  const matchText = query.trim() === "" ? null : `匹配 ${shown + cli.length} / ${total + OMP_CLI_COMMANDS.length} 条`;
+  const head = `基于 omp ${OMP_VERSION} · 共 ${total} 条斜杠命令（内置 ${builtin} + 扩展 ${total - builtin}）· ${OMP_CLI_COMMANDS.length} 个终端子命令`;
 
   return (
     <div className="view">
-      <PageHeader kicker="工具 · 参考" title="速查表" sub={head} />
+      <PageHeader
+        kicker="工具 · 参考"
+        title="速查表"
+        sub={head}
+        actions={
+          <>
+            <span className="badge badge-quiet">omp {OMP_VERSION}</span>
+            {installedVersion !== null && !versionMismatch(installedVersion) ? (
+              <span className="badge badge-ok"><span className="dot ok" aria-hidden="true" />版本匹配</span>
+            ) : null}
+          </>
+        }
+      />
       <div className="cheatsheet-page">
       {versionMismatch(installedVersion) ? (
         <p className="cheatsheet-version-note">
@@ -153,38 +160,21 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
         </p>
       ) : null}
       <div className="cheatsheet-toolbar">
-        <div className="cheatsheet-tabs" role="tablist" aria-label="速查视图">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.key}
-              className={tab === t.key ? "cheatsheet-tab is-active" : "cheatsheet-tab"}
-              onClick={() => setTab(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <input
-          ref={filterRef}
-          type="search"
-          className="filter-input cheatsheet-filter"
-          placeholder={
-            tab === "commands"
-              ? "按命令名、参数、示例或中文说明过滤"
-              : tab === "combos"
-                ? "按场景、命令或说明过滤"
-                : tab === "paths"
-                  ? "按路径、命令或说明过滤"
-                  : "按子命令、参数或中文说明过滤"
-          }
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="过滤命令"
-          data-autofocus
-        />
+        <label className="search-box">
+          <Ico icon={Search} size={14} />
+          <input
+            ref={filterRef}
+            type="search"
+            placeholder="搜索命令、别名或说明"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="过滤命令"
+            data-autofocus
+          />
+        </label>
+        <Seg label="速查分类" value={seg} onChange={setSeg} options={SEGS.map((s) => ({ value: s.key, label: s.label }))} />
+        <span className="spacer" />
+        <span className="meta">{matchText ?? `${shown + cli.length} 条 · ${OMP_CLI_COMMANDS.length} 个终端子命令`}</span>
       </div>
       {copyFailed ? (
         <p className="cheatsheet-copy-error" role="status">
@@ -192,7 +182,7 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
         </p>
       ) : null}
       <div className="cheatsheet-list">
-        {tab === "paths" ? (
+        {showPaths ? (
           <>
             {paths.length === 0 ? <div className="pane-note">没有匹配的路径</div> : null}
             {paths.map((p, pi) => {
@@ -237,9 +227,18 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
               );
             })}
           </>
-        ) : tab === "commands" ? (
+        ) : null}
+        {showSlash ? (
           <>
-            {shown === 0 ? <div className="pane-note">没有匹配的命令</div> : null}
+            {shown === 0 ? (
+              <EmptyState
+                icon={SearchX}
+                title="没有匹配的命令"
+                action={<button type="button" className="btn btn-ghost btn-small" onClick={() => { setQuery(""); setSeg("all"); }}>清除筛选</button>}
+              >
+                换个关键词，或清除筛选看全部。
+              </EmptyState>
+            ) : null}
             {displayGroups.map((g) => (
               <section className="cheatsheet-group" key={g.group}>
                 <h3 className="cheatsheet-group-title">
@@ -261,9 +260,10 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
               </section>
             ))}
           </>
-        ) : tab === "cli" ? (
+        ) : null}
+        {showCli ? (
           <>
-            {cli.length === 0 ? <div className="pane-note">没有匹配的终端子命令</div> : null}
+            {cli.length === 0 ? <EmptyState icon={SearchX} title="没有匹配的终端子命令" action={<button type="button" className="btn btn-ghost btn-small" onClick={() => { setQuery(""); setSeg("all"); }}>清除筛选</button>}>换个关键词，或清除筛选看全部。</EmptyState> : null}
             <section className="cheatsheet-group">
               <h3 className="cheatsheet-group-title">
                 终端子命令<span className="cheatsheet-group-count">{cli.length}</span>
@@ -271,11 +271,18 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
               <ul className="cheatsheet-rows">
                 {cli.map((c) => (
                   <li className="cheatsheet-row" key={c.name}>
-                    <div className="cheatsheet-line">
-                      <div className="cheatsheet-main">
-                        <span className="mono cheatsheet-cmd">omp {c.name}</span>
-                        <span className="cheatsheet-zh">{c.zh}</span>
+                    <div className="cmd-row">
+                      <div className="cmd-left">
+                        <span className="mono cmd-cmd">omp {c.name}</span>
+                        <span className="mono cmd-alias">—</span>
                       </div>
+                      <div className="cmd-mid">
+                        <span className="cmd-desc">{c.zh}</span>
+                        {c.examples.length > 0 ? <code className="cmd-ex">{c.examples[0]}</code> : null}
+                      </div>
+                      <span className="badge badge-quiet cmd-tag">{c.tag}</span>
+                    </div>
+                    <div className="cheatsheet-line cheatsheet-copyline">
                       <span className="cheatsheet-actions">
                         {copyButton(`clicmd:${c.name}`, `omp ${c.name}`, "复制", `复制 omp ${c.name}`)}
                         {c.args
@@ -288,31 +295,19 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
                           : null}
                       </span>
                     </div>
-                    {c.args || c.examples.length > 0 ? (
+                    {c.examples.length > 1 ? (
                       <dl className="cheatsheet-detail">
-                        {c.args ? (
-                          <>
-                            <dt className="cheatsheet-label">用法</dt>
-                            <dd className="mono cheatsheet-sig">
-                              omp {c.name} {c.args}
-                            </dd>
-                          </>
-                        ) : null}
-                        {c.examples.length > 0 ? (
-                          <>
-                            <dt className="cheatsheet-label">示例</dt>
-                            <dd>
-                              <ul className="cheatsheet-examples">
-                                {c.examples.map((ex, i) => (
-                                  <li className="cheatsheet-example" key={`${c.name}:${i}`}>
-                                    <span className="mono">{ex}</span>
-                                    {copyButton(`cli:${c.name}:${i}`, ex, "复制", `复制示例 ${ex}`)}
-                                  </li>
-                                ))}
-                              </ul>
-                            </dd>
-                          </>
-                        ) : null}
+                        <dt className="cheatsheet-label">更多示例</dt>
+                        <dd>
+                          <ul className="cheatsheet-examples">
+                            {c.examples.slice(1).map((ex, i) => (
+                              <li className="cheatsheet-example" key={`${c.name}:${i + 1}`}>
+                                <span className="mono">{ex}</span>
+                                {copyButton(`cli:${c.name}:${i + 1}`, ex, "复制", `复制示例 ${ex}`)}
+                              </li>
+                            ))}
+                          </ul>
+                        </dd>
                       </dl>
                     ) : null}
                   </li>
@@ -320,9 +315,10 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
               </ul>
             </section>
           </>
-        ) : (
+        ) : null}
+        {showCombos ? (
           <>
-            {combos.length === 0 ? <div className="pane-note">没有匹配的场景</div> : null}
+            {combos.length === 0 ? <EmptyState icon={SearchX} title="没有匹配的场景" action={<button type="button" className="btn btn-ghost btn-small" onClick={() => { setQuery(""); setSeg("all"); }}>清除筛选</button>}>换个关键词，或清除筛选看全部。</EmptyState> : null}
             {combos.map((combo) => (
               <section className="cheatsheet-combo" key={combo.id}>
                 <header className="cheatsheet-combo-head">
@@ -349,11 +345,11 @@ export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps)
               </section>
             ))}
           </>
-        )}
+        ) : null}
       </div>
       <p className="cheatsheet-foot">
-        以上为 omp 斜杠命令与终端子命令；`/skill:xxx` 技能命令、自定义命令与插件命令不在此列，
-        实时补全以在 omp 中输入 / 为准。
+        <span>{builtin} 个内置斜杠命令 · {total - builtin} 个扩展命令 · {OMP_CLI_COMMANDS.length} 个终端子命令</span>
+        <span className="mono">更新于 omp {OMP_VERSION} 数据</span>
       </p>
       </div>
     </div>
@@ -368,11 +364,12 @@ interface CommandRowProps {
   onJump: (name: string) => void;
 }
 
-/** 一条命令：摘要行（命令 + 一句话 + 复制）+ 两列定义网格详情（用法/别名/何时用/参数/注意/示例/相关）。 */
+/** 一条命令：三列 grid（命令+别名 / 说明+首示例 / tag 徽章）+ 点击展开详情。 */
 function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps): ReactNode {
   const detail = findOmpDetail(c.name);
   const cmdKey = `cmd:${group}:${c.name}`;
   const tplKey = `tpl:${group}:${c.name}`;
+  const [open, setOpen] = useState(false);
   const hasDetail =
     c.args !== "" ||
     c.aliases.length > 0 ||
@@ -381,13 +378,34 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
     (detail?.cautions !== undefined && detail.cautions.length > 0) ||
     c.examples.length > 0 ||
     (detail?.related !== undefined && detail.related.length > 0);
+  const aliasLine = c.aliases.length > 0 ? `别名 ${c.aliases.join("、")}` : "—";
   return (
     <li className="cheatsheet-row" key={c.name}>
-      <div className="cheatsheet-line">
-        <div className="cheatsheet-main">
-          <span className="mono cheatsheet-cmd">/{c.name}</span>
-          <span className="cheatsheet-zh">{c.zh}</span>
+      <div
+        className="cmd-row"
+        role="button"
+        tabIndex={hasDetail ? 0 : undefined}
+        aria-expanded={hasDetail ? open : undefined}
+        onClick={() => { if (hasDetail) setOpen((v) => !v); }}
+        onKeyDown={(e) => {
+          if (!hasDetail) return;
+          if (e.key !== "Enter" && e.key !== " ") return;
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          setOpen((v) => !v);
+        }}
+      >
+        <div className="cmd-left">
+          <span className="mono cmd-cmd">/{c.name}</span>
+          <span className="mono cmd-alias">{aliasLine}</span>
         </div>
+        <div className="cmd-mid">
+          <span className="cmd-desc">{c.zh}</span>
+          {c.examples.length > 0 ? <code className="cmd-ex">{c.examples[0]}</code> : null}
+        </div>
+        <span className="badge badge-quiet cmd-tag">{c.tag}</span>
+      </div>
+      <div className="cheatsheet-line cheatsheet-copyline">
         <span className="cheatsheet-actions">
           <button
             type="button"
@@ -411,7 +429,7 @@ function CommandRow({ group, command: c, copied, copy, onJump }: CommandRowProps
           ) : null}
         </span>
       </div>
-      {hasDetail ? (
+      {hasDetail && open ? (
         <dl className="cheatsheet-detail">
           {c.args ? (
             <>

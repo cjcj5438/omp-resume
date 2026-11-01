@@ -19,12 +19,14 @@ export function MemoryBackupsDialog(props: {
   initialBank: string | null;
   /** 总览中的现存库（用于显示项目名；移除的库按 id + 备份 cwd 显示）。 */
   banks: { bank: string; displayName: string; cwd: string | null }[];
+  /** 直达某备份的恢复视图（常驻备份表 quiet 恢复用；找不到回列表）。 */
+  initialBackupId?: string | null;
   onClose: () => void;
   onToast: ToastFn;
   /** 恢复成功后刷新总览 / 列表 / 趋势。 */
   onChanged: () => void;
 }): ReactNode {
-  const { initialBank, banks, onClose, onToast, onChanged } = props;
+  const { initialBank, banks, initialBackupId = null, onClose, onToast, onChanged } = props;
   const [filter, setFilter] = useState<string | null>(initialBank);
   const [rows, setRows] = useState<MemoryBackup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,12 +51,20 @@ export function MemoryBackupsDialog(props: {
     setLoading(true);
     setLoadError(null);
     memoryBackups({ bank: filter })
-      .then((list) => !cancelled && setRows(list))
+      .then((list) => {
+        if (cancelled) return;
+        setRows(list);
+        if (initialBackupId !== null) {
+          const found = list.find((b) => b.id === initialBackupId);
+          if (found !== undefined) setView({ kind: "restore", backup: found });
+        }
+      })
       .catch((e: unknown) => !cancelled && setLoadError(errorText(normalizeError(e))))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, reloadToken]);
 
   function nameOf(bank: string, cwd: string | null): ReactNode {
@@ -113,7 +123,8 @@ export function MemoryBackupsDialog(props: {
 
   return (
     <Modal
-      title={view.kind === "restore" ? "从备份恢复" : view.kind === "deleteBackup" ? "永久删除备份" : "备份与恢复"}
+      title={view.kind === "restore" ? "恢复记忆备份" : view.kind === "deleteBackup" ? "永久删除备份" : "备份与恢复"}
+      sub={view.kind === "restore" ? "恢复前会先生成当前状态的快照。" : undefined}
       wide
       onClose={() => {
         if (!busy) onClose();
@@ -188,14 +199,17 @@ export function MemoryBackupsDialog(props: {
               ))}
             </ul>
           ) : null}
-          <p className="muted mem-footnote">每个库自动保留最近 5 份删除前/恢复前备份；移除的库备份不会被自动清理。</p>
+          <p className="muted mem-footnote">每库每类自动保留最近 5 份；移除的库备份不会被自动清理。</p>
         </>
       ) : view.kind === "restore" ? (
         <>
-          <p>
-            备份：{nameOf(view.backup.bank, view.backup.cwd)} · {BACKUP_KIND_LABEL[view.backup.kind]} ·{" "}
-            {formatFullTime(view.backup.createdAt)} · {formatSize(view.backup.bytes)}
-          </p>
+          <div className="dlg-kv">
+            <div><span>备份文件</span><span className="mono">{view.backup.id.split("@")[1] ?? view.backup.id}</span></div>
+            <div><span>库</span><span>{nameOf(view.backup.bank, view.backup.cwd)}</span></div>
+            <div><span>大小</span><span className="mono">{formatSize(view.backup.bytes)}</span></div>
+            <div><span>时间</span><span className="mono">{formatFullTime(view.backup.createdAt)}</span></div>
+            <div><span>恢复方式</span><span>先快照，再替换</span></div>
+          </div>
           {live.has(view.backup.bank) ? (
             <p>恢复将用该快照替换当前内容；恢复前会自动为当前内容创建安全备份，恢复本身也可撤销。</p>
           ) : (

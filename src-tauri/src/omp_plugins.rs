@@ -138,6 +138,9 @@ pub fn parse_plugins_json(
             marketplace: marketplace.to_owned(),
             id,
             version: optional_string(entry, "version"),
+            // 描述位置未经实测（本机零插件）：entry 与 item 两级都试。
+            description: optional_string(entry, "description")
+                .or_else(|| optional_string(item, "description")),
             enabled: entry
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -367,6 +370,29 @@ pub fn plugins_list_impl(bin: &Path) -> PluginsListResult {
     result
 }
 
+/// 只读预检：`plugin upgrade --dry-run [id]`，不占写门禁。dry-run 有更新时的
+/// 输出形状未经实测（本机零插件）：`changes` 尽力解析，原文回 `output`。
+pub fn check_update_impl(
+    bin: &Path,
+    id: Option<&str>,
+) -> Result<crate::model::PluginCheckResult, AppError> {
+    if let Some(id) = id {
+        validate_plugin_id(id)?;
+    }
+    let mut args = vec!["plugin", "upgrade", "--dry-run"];
+    if let Some(id) = id {
+        args.push(id);
+    }
+    args.extend(["--scope", "user"]);
+    let output = execute(bin, &args, CHECK_TIMEOUT, &mut |_| {})?;
+    let up_to_date = output.to_lowercase().contains("up to date");
+    Ok(crate::model::PluginCheckResult {
+        up_to_date,
+        changes: parse_upgrade_changes(&output),
+        output,
+    })
+}
+
 pub fn discover_impl(bin: &Path, marketplace: &str) -> Result<Vec<DiscoverEntry>, AppError> {
     validate_marketplace(marketplace)?;
     let output = execute(
@@ -576,6 +602,17 @@ pub async fn omp_plugin_upgrade(
         changes: parse_upgrade_changes(&result.output),
         output: result.output,
     })
+}
+
+#[tauri::command]
+pub async fn omp_plugin_check_update(
+    id: Option<String>,
+) -> Result<crate::model::PluginCheckResult, AppError> {
+    crate::blocking(move || {
+        let bin = crate::omp_cli::resolve_omp().ok_or_else(crate::omp_cli::omp_not_found)?;
+        check_update_impl(&bin, id.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -960,5 +997,37 @@ mod tests {
             std::fs::read_to_string(dir.path().join("omp.argv")).unwrap(),
             "skill\nlist\n-g\n--json\n"
         );
+    }
+
+    #[test]
+    fn check_update_reports_up_to_date_and_argv() {
+        let _processes = crate::omp_cli::subprocess_test_guard();
+        // 2026-10-31 本机实测原文。
+        let (dir, bin) = fake("printf '%s\\n' \"$@\" > \"$0.argv\"\nprintf '[dry-run] All marketplace plugins are up to date\\n'");
+        let result = check_update_impl(&bin, None).unwrap();
+        assert!(result.up_to_date);
+        assert!(result.changes.is_empty());
+        assert!(result.output.contains("up to date"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("omp.argv")).unwrap(),
+            "plugin\nupgrade\n--dry-run\n--scope\nuser\n"
+        );
+        // 单 id 透传 + 非法 id 拒绝（不触 omp）。
+        let (_dir2, bin2) = fake("printf '%s\\n' \"$@\" > \"$0.argv\"\nprintf 'up to date\\n'");
+        check_update_impl(&bin2, Some("one@m")).unwrap();
+        assert!(check_update_impl(&bin2, Some("bad id")).is_err());
+    }
+
+    #[test]
+    fn parse_plugins_json_reads_description_from_entry_or_item() {
+        let json = serde_json::json!({"marketplace": [
+            {"id":"a@m", "description":"item-level", "entries":[{"scope":"user","version":"1"}]},
+            {"id":"b@m", "entries":[{"scope":"user","description":"entry-level"}]},
+            {"id":"c@m", "entries":[{"scope":"user"}]},
+        ], "npm":[]});
+        let (plugins, _) = parse_plugins_json(&json.to_string()).unwrap();
+        assert_eq!(plugins[0].description.as_deref(), Some("item-level"));
+        assert_eq!(plugins[1].description.as_deref(), Some("entry-level"));
+        assert_eq!(plugins[2].description, None);
     }
 }

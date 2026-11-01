@@ -25,7 +25,7 @@ use {validate::*, yaml::*};
 
 use io::{atomic_write, backup_existing, check_write_target, read_yml};
 use validate::{sandbox_validate, validate_patch, validate_target};
-use yaml::{apply_patch_to_text, read_all_specs};
+use yaml::{apply_patch_to_text, insert_model_into_text, read_all_specs};
 
 use std::path::Path;
 #[cfg(test)]
@@ -183,6 +183,84 @@ pub fn update_model_spec_impl(
         backup_path: backup.to_string_lossy().into_owned(),
     })
 }
+/// CONTRACT §4.69：读-查重-沙箱校验-备份-原子写-复读。整体持有 `OmpBusy`。
+pub fn create_model_spec_impl(
+    bin: &Path,
+    busy: &OmpBusy,
+    path: &Path,
+    request: &ModelSpecPatchRequest,
+) -> Result<ModelSpecUpdateResult, AppError> {
+    // 拒写前置：备份之前先排除符号链接与只读目标，不留无用 .bak。
+    check_write_target(path)?;
+    validate_target(&request.provider, &request.id)?;
+    validate_patch(&request.patch)?;
+    if request.expected_revision.trim().is_empty() {
+        return Err(invalid("缺少 revision，请刷新后重试"));
+    }
+    // 读侧哨兵串（absent/unreadable）不是可用版本：报 INVALID 而非误导性 CONFLICT。
+    if request.expected_revision == "absent" || request.expected_revision == "unreadable" {
+        return Err(invalid("当前没有可用的规格文件版本，请刷新后重试"));
+    }
+    let _guard = busy.try_acquire()?;
+    let existing = read_yml(path)?.ok_or_else(|| invalid("模型规格文件不存在"))?;
+    if revision_of(&existing) != request.expected_revision {
+        return Err(conflict());
+    }
+    let text = String::from_utf8(existing.clone())
+        .map_err(|_| invalid("模型规格文件不是合法 UTF-8，请手动修复"))?;
+    let new_text = insert_model_into_text(
+        &text,
+        &request.provider,
+        &request.id,
+        request.patch.name.as_deref(),
+        request.patch.context_window,
+        request.patch.max_tokens,
+    )?;
+    // 写前沙箱校验（omp 缺失由调用方保证 bin 存在；此处只做校验）。
+    // 只带新建条目实际写入的字段：多余字段（reasoning/input/cost）忽略。
+    sandbox_validate(
+        bin,
+        &new_text,
+        &request.provider,
+        &request.id,
+        &ModelSpecPatch {
+            name: Some(
+                request
+                    .patch
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| request.id.clone()),
+            ),
+            context_window: request.patch.context_window,
+            max_tokens: request.patch.max_tokens,
+            ..Default::default()
+        },
+    )?;
+    // 二次 revision 门（校验耗时，防并发外部改）。
+    let recheck = read_yml(path)?.ok_or_else(|| invalid("模型规格文件不存在"))?;
+    if revision_of(&recheck) != request.expected_revision {
+        return Err(conflict());
+    }
+    let backup = backup_existing(path, &existing)?;
+    if let Err(error) = atomic_write(path, new_text.as_bytes()) {
+        // 写失败尽力保留备份（不回滚已建备份，由用户手动恢复）。
+        let _ = backup;
+        return Err(error);
+    }
+    let reread = read_yml(path)?.ok_or_else(|| io_error("写后复读失败：文件消失"))?;
+    let revision = revision_of(&reread);
+    let text =
+        String::from_utf8(reread).map_err(|_| io_error("写后复读失败：文件不是合法 UTF-8"))?;
+    let spec = read_all_specs(&text, true)?
+        .into_iter()
+        .find(|spec| spec.provider == request.provider && spec.id == request.id)
+        .ok_or_else(|| io_error("写后复读失败：模型消失"))?;
+    Ok(ModelSpecUpdateResult {
+        revision,
+        spec,
+        backup_path: backup.to_string_lossy().into_owned(),
+    })
+}
 
 /// CONTRACT §4.54：模型规格快照（只读，不占写门禁）。
 #[tauri::command]
@@ -210,6 +288,30 @@ pub async fn update_model_spec(
             expected_revision,
         };
         update_model_spec_impl(&bin, &busy, &resolve_models_yml(), &request)
+    })
+    .await
+}
+
+/// CONTRACT §4.69：在已存在 provider 的 `models:` 列表末尾追加新条目。omp 缺失时拒绝写入。
+#[tauri::command]
+pub async fn create_model_spec(
+    app: tauri::AppHandle,
+    provider: String,
+    id: String,
+    patch: ModelSpecPatch,
+    expected_revision: String,
+) -> Result<ModelSpecUpdateResult, AppError> {
+    crate::blocking(move || {
+        use tauri::Manager;
+        let busy = app.state::<OmpBusy>();
+        let bin = resolve_omp().ok_or_else(omp_not_found)?;
+        let request = ModelSpecPatchRequest {
+            provider,
+            id,
+            patch,
+            expected_revision,
+        };
+        create_model_spec_impl(&bin, &busy, &resolve_models_yml(), &request)
     })
     .await
 }

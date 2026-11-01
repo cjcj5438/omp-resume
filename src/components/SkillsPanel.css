@@ -1,0 +1,20 @@
+/* 技能卡片网格（设计稿 skill-grid）：3 列 → 1120px 2 列 → 860px 1 列。 */
+.skill-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); }
+@media (max-width: 1120px) { .skill-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 860px) { .skill-grid { grid-template-columns: 1fr; } }
+.skill-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  min-width: 0;
+}
+.skill-head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.skill-head .badge { margin-left: auto; flex: none; }
+.skill-name { font-family: var(--mono); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.skill-desc { margin: 0; flex: 1; font-size: 11px; line-height: 1.55; color: var(--text-muted); overflow-wrap: anywhere; }
+.skill-foot { display: flex; align-items: center; gap: var(--sp-2); border-top: 1px solid var(--border); padding-top: 9px; font-size: 10px; color: var(--text-muted); }
+.skill-foot .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

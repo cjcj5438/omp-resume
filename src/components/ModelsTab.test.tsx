@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { BENCH_CONFIG_KEY } from "../modelBench";
 import { HIDDEN_MODELS_KEY } from "../hiddenModels";
 import type { BenchRound, ModelConfig, ModelInfo, ModelSpec } from "../types";
-import { useModelDraft } from "../modelDraft";
+import { useModelDraft, useModelSpecs } from "../modelDraft";
 import { ModelsTab } from "./ModelsTab";
 import type { ToastFn } from "./useOmpOp";
 
@@ -100,15 +100,15 @@ beforeEach(() => {
 function Harness(props: { onToast: ToastFn }) {
   const { onToast } = props;
   const l = useModelDraft(onToast);
-  return l.status === "ready" ? <ModelsTab onToast={onToast} state={l.state} /> : null;
+  const specs = useModelSpecs(l.status === "ready" ? (force?: boolean) => void l.state.loadModels(force ?? false) : () => {});
+  return l.status === "ready" ? <ModelsTab onToast={onToast} state={l.state} specs={specs} onNavigateBench={() => {}} /> : null;
 }
 
 async function renderTab(): Promise<Mock<ToastFn>> {
   const onToast = vi.fn<ToastFn>();
   render(<Harness onToast={onToast} />);
   await screen.findByRole("region", { name: "模型库" });
-  // 模型库与 bench 表都渲染 Fast：等 bench 工具条出现才算两边都就绪。
-  await screen.findByRole("button", { name: /测试全部/ });
+  await screen.findByRole("region", { name: "角色分配" });
   return onToast;
 }
 
@@ -117,12 +117,14 @@ describe("模型库", () => {
     stub();
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
-    expect(within(lib).getByText("Fast")).toBeInTheDocument();
-    expect(within(lib).getByText("Slow")).toBeInTheDocument();
+    const hasName = (name: string): boolean =>
+      within(lib).queryAllByText(name, { selector: ".lib-name" }).length > 0;
+    expect(hasName("Fast")).toBe(true);
+    expect(hasName("Slow")).toBe(true);
 
     fireEvent.change(within(lib).getByRole("searchbox", { name: "搜索模型库" }), { target: { value: "slow" } });
-    expect(within(lib).queryByText("Fast")).toBeNull();
-    expect(within(lib).getByText("Slow")).toBeInTheDocument();
+    expect(hasName("Fast")).toBe(false);
+    expect(hasName("Slow")).toBe(true);
   });
 
   it("外部改了 models.yml：重新打开与窗口聚焦都会带出新增模型，无需点刷新", async () => {
@@ -136,58 +138,30 @@ describe("模型库", () => {
     stub({ revision: "rev-ext-1", models: [...MODELS, added("one")] });
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
-    expect(await within(lib).findByText("Ext one")).toBeInTheDocument();
+    expect(await within(lib).findByText("Ext one", { selector: ".lib-name" })).toBeInTheDocument();
 
     // 聚焦路径：同一次挂载内文件再变，回到应用窗口即更新。
     stub({ revision: "rev-ext-2", models: [...MODELS, added("one"), added("two")] });
-    expect(within(lib).queryByText("Ext two")).toBeNull();
+    expect(within(lib).queryByText("Ext two", { selector: ".lib-name" })).toBeNull();
     fireEvent.focus(window);
-    expect(await within(lib).findByText("Ext two")).toBeInTheDocument();
+    expect(await within(lib).findByText("Ext two", { selector: ".lib-name" })).toBeInTheDocument();
   });
 
   it("第三个用途折叠为 +N（title 列出剩余）", async () => {
     stub({ roles: { default: "p/slow", task: "p/slow", smol: "p/slow" } });
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
-    const slowRow = within(lib).getByText("Slow").closest("tr");
+    const slowRow = within(lib).getByText("Slow", { selector: ".lib-name" }).closest("tr");
     if (slowRow === null) throw new Error("找不到 Slow 行");
-    const sub = within(slowRow).getByText("p/slow", { selector: ".lib-id" }).closest(".lib-model-sub");
-    if (sub === null) throw new Error("找不到 Slow 行的模型第二行");
-    expect(within(sub as HTMLElement).getByText("主对话")).toBeInTheDocument();
-    expect(within(sub as HTMLElement).getByText("子任务")).toBeInTheDocument();
-    const more = within(sub as HTMLElement).getByText("+1");
+    const cells = within(slowRow).getAllByRole("cell");
+    const rolesCell = cells[8];
+    expect(within(rolesCell).getByText("主对话")).toBeInTheDocument();
+    expect(within(rolesCell).getByText("子任务")).toBeInTheDocument();
+    const more = within(rolesCell).getByText("+1");
     expect(more).toHaveAttribute("title", "轻快任务");
   });
 
-  it("加入测试把模型推进受控 bench 列表", async () => {
-    stub();
-    await renderTab();
-    const lib = screen.getByRole("region", { name: "模型库" });
-    const slowRow = within(lib).getByText("Slow").closest("tr");
-    if (slowRow === null) throw new Error("找不到 Slow 行");
-    // p/slow 已被角色占用但不在 entries 里 → 有「加入测试」按钮。
-    const addBtn = within(slowRow).queryByRole("button", { name: "加入测试" });
-    expect(addBtn).not.toBeNull();
-    if (addBtn !== null) fireEvent.click(addBtn);
-    // 状态 chips 的测试列表计数 +1（1 → 2）。
-    expect(await screen.findByText("测试列表 2")).toBeInTheDocument();
-  });
-
-  it("库里独有模型的测试先落 bench 行再入队", async () => {
-    stub();
-    const onToast = await renderTab();
-    const lib = screen.getByRole("region", { name: "模型库" });
-    const onlyRow = within(lib).getByText("LibOnly").closest("tr");
-    if (onlyRow === null) throw new Error("找不到 LibOnly 行");
-    fireEvent.click(within(onlyRow).getByRole("button", { name: "测试 p/lib-only" }));
-    expect(onToast).toHaveBeenCalledWith("已加入测试列表并开始测试：p/lib-only", "info");
-    // 受控 entries +1（1 → 2），bench 表出现该行。
-    expect(await screen.findByText("测试列表 2")).toBeInTheDocument();
-    const testSection = screen.getByRole("region", { name: "测试" });
-    expect(await within(testSection).findByText("LibOnly")).toBeInTheDocument();
-  });
-
-  it("用途徽章包含 agent 覆盖的 agent 名（内联在模型第二行）", async () => {
+  it("用途徽章包含 agent 覆盖的 agent 名（角色列）", async () => {
     mockIPC((cmd, rawArgs) => {
       const args = (rawArgs ?? {}) as Record<string, unknown>;
       if (cmd === "list_models") return structuredClone(MODELS);
@@ -209,11 +183,10 @@ describe("模型库", () => {
     });
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
-    const fastRow = within(lib).getByText("Fast").closest("tr");
+    const fastRow = within(lib).getByText("Fast", { selector: ".lib-name" }).closest("tr");
     if (fastRow === null) throw new Error("找不到 Fast 行");
-    const sub = within(fastRow).getByText("p/fast", { selector: ".lib-id" }).closest(".lib-model-sub");
-    if (sub === null) throw new Error("找不到 Fast 行的模型第二行");
-    expect(within(sub as HTMLElement).getByText("sonic")).toBeInTheDocument();
+    const cells = within(fastRow).getAllByRole("cell");
+    expect(within(cells[8]).getByText("sonic")).toBeInTheDocument();
   });
 
   it("隐藏模型：移出模型库，可在「显示已隐藏」恢复", async () => {
@@ -221,13 +194,13 @@ describe("模型库", () => {
     const onToast = await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
     fireEvent.click(within(lib).getByRole("button", { name: "隐藏 p/fast" }));
-    expect(within(lib).queryByText("Fast")).toBeNull();
+    expect(within(lib).queryByText("Fast", { selector: ".lib-name" })).toBeNull();
     expect(onToast).toHaveBeenCalledWith("已隐藏：p/fast（可在「显示已隐藏」中恢复）", "info");
 
     fireEvent.click(within(lib).getByRole("button", { name: "显示已隐藏 (1)" }));
-    const fastRow = within(lib).getByText("Fast").closest("tr");
+    const fastRow = within(lib).getByText("Fast", { selector: ".lib-name" }).closest("tr");
     if (fastRow === null) throw new Error("找不到 Fast 行");
-    expect(within(fastRow).getByText("已隐藏")).toBeInTheDocument();
+    expect(fastRow.className).toContain("lib-row-hidden");
 
     fireEvent.click(within(fastRow).getByRole("button", { name: "取消隐藏 p/fast" }));
     expect(within(lib).queryByRole("button", { name: /显示已隐藏|收起已隐藏/ })).toBeNull();
@@ -235,40 +208,13 @@ describe("模型库", () => {
   });
 });
 
-describe("测试 → 角色分配", () => {
-  it("bench 抽屉设为角色回填到角色草稿，保存写 modelRoles", async () => {
-    const calls: Record<string, unknown>[] = [];
-    stub({ onUpdateConfig: (args) => {
-      calls.push(args);
-      return { key: args["key"], value: args["value"] };
-    } });
-    const onToast = await renderTab();
-
-    // bench 表里点 Fast 行打开抽屉。
-    const testSection = screen.getByRole("region", { name: "测试" });
-    const fastCell = within(testSection).getByText("Fast");
-    fireEvent.click(fastCell.closest("tr") ?? fastCell);
-    const drawer = await screen.findByRole("complementary", { name: "模型 p/fast" });
-    fireEvent.click(within(drawer).getByRole("button", { name: "设为 子任务" }));
-    expect(onToast).toHaveBeenCalledWith("已加入「角色分配」的待保存修改", "info");
-
-    // 角色分配出现待保存，保存写 modelRoles。
-    const rolesSection = screen.getByRole("region", { name: "角色分配" });
-    const saveBar = await within(rolesSection).findByRole("status");
-    fireEvent.click(within(saveBar).getByRole("button", { name: /保存/ }));
-    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
-    const rolesCall = calls.find((c) => c["key"] === "modelRoles");
-    expect(rolesCall).toBeDefined();
-    expect(rolesCall?.["value"]).toMatchObject({ task: "p/fast" });
-  });
-});
 
 describe("规格抽屉", () => {
   async function openSpecDrawer(name: string): Promise<HTMLElement> {
     const lib = screen.getByRole("region", { name: "模型库" });
-    const row = within(lib).getByText(name).closest("tr");
+    const row = within(lib).getByText(name, { selector: ".lib-name" }).closest("tr");
     if (row === null) throw new Error(`找不到 ${name} 行`);
-    fireEvent.click(within(row).getByRole("button", { name: "规格" }));
+    fireEvent.click(row);
     const selector = name === "Fast" ? "p/fast" : name === "Slow" ? "p/slow" : "p/lib-only";
     return screen.findByRole("complementary", { name: `模型规格 ${selector}` });
   }
@@ -286,7 +232,7 @@ describe("规格抽屉", () => {
     const drawer = await openSpecDrawer("LibOnly");
     const nameInput = within(drawer).getByDisplayValue("LibOnly");
     fireEvent.change(nameInput, { target: { value: "LibOnly v2" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     expect(specCalls[0]).toMatchObject({ provider: "p", id: "lib-only", expectedRevision: "rev-1" });
     expect(specCalls[0]["patch"]).toEqual({ name: "LibOnly v2" });
@@ -301,13 +247,13 @@ describe("规格抽屉", () => {
     await renderTab();
     const drawer = await openSpecDrawer("Fast");
     // 未改动：保存禁用。
-    expect(within(drawer).getByRole("button", { name: "保存规格" })).toBeDisabled();
+    expect(within(drawer).getByRole("button", { name: "保存到 models.yml" })).toBeDisabled();
     // 改一个价格：四个键齐发。
     const inputs = within(drawer).getAllByRole("textbox");
     const costInput = inputs.find((el) => (el as HTMLInputElement).value === "1");
     if (costInput === undefined) throw new Error("找不到输入价框");
     fireEvent.change(costInput, { target: { value: "1.5" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     expect(specCalls[0]["patch"]).toEqual({ cost: { input: 1.5, output: 4, cacheRead: 0.1, cacheWrite: 1 } });
   });
@@ -323,11 +269,11 @@ describe("规格抽屉", () => {
     const windowBox = within(drawer).getByDisplayValue("200000");
     for (const bad of ["1e3", "1_000", "12.5", "-5", "+5"]) {
       fireEvent.change(windowBox, { target: { value: bad } });
-      fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+      fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
       expect(await within(drawer).findByRole("alert")).toHaveTextContent("上下文窗口须为正整数");
     }
     fireEvent.change(windowBox, { target: { value: "9007199254740993" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     expect(await within(drawer).findByRole("alert")).toHaveTextContent("数值过大");
     expect(specCalls).toHaveLength(0);
   });
@@ -363,12 +309,12 @@ describe("规格抽屉", () => {
     await renderTab();
     const drawer = await openSpecDrawer("Fast");
     fireEvent.change(within(drawer).getByDisplayValue("Fast"), { target: { value: "Fast v2" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     // 首次 CONFLICT：表单保留，父级重载到 rev-2。
     expect(await within(drawer).findByRole("alert")).toHaveTextContent("表单已保留");
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     // 重试：带新 revision，且补丁仍只有用户改的 name。
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     await vi.waitFor(() => expect(saveBtn).not.toBeDisabled());
     fireEvent.click(saveBtn);
     await vi.waitFor(() => expect(specCalls).toHaveLength(2));
@@ -376,10 +322,10 @@ describe("规格抽屉", () => {
     expect(specCalls[1]["patch"]).toEqual({ name: "Fast v2" });
     // 成功后 revision 已顶到 rev-3：等保存完成（spinner 消失）再改一次，直接带 rev-3。
     // 注意：不能等按钮 disabled——保存中按钮也禁用，会误命中中间态。
-    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存规格" }).querySelector(".spinner")).toBeNull());
+    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存到 models.yml" }).querySelector(".spinner")).toBeNull());
     fireEvent.change(within(drawer).getByDisplayValue("Fast v2"), { target: { value: "Fast v3" } });
-    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存规格" })).not.toBeDisabled());
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存到 models.yml" })).not.toBeDisabled());
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     await vi.waitFor(() => expect(specCalls).toHaveLength(3));
     expect(specCalls[2]).toMatchObject({ expectedRevision: "rev-3" });
   });
@@ -425,11 +371,11 @@ describe("规格抽屉", () => {
     const costBox = inputs.find((el) => (el as HTMLInputElement).value === "1");
     if (costBox === undefined) throw new Error("找不到输入价框");
     fireEvent.change(costBox, { target: { value: "1.5" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     expect(await within(drawer).findByRole("alert")).toHaveTextContent("表单已保留");
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     // 重试：即使表单 name("Fast")与新基线("FastExt")不同，也只发 touched 的 cost。
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     await vi.waitFor(() => expect(saveBtn).not.toBeDisabled());
     fireEvent.click(saveBtn);
     await vi.waitFor(() => expect(specCalls).toHaveLength(2));
@@ -448,12 +394,12 @@ describe("规格抽屉", () => {
     await renderTab();
     const drawer = await openSpecDrawer("LibOnly");
     fireEvent.change(within(drawer).getByDisplayValue("LibOnly"), { target: { value: "LibOnly v2" } });
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     await vi.waitFor(() => expect(saveBtn).not.toBeDisabled());
     fireEvent.click(saveBtn);
     // 成功后基线=表单、touched 清空：等 spinner 消失后再断言禁用（避开保存中禁用态）。
-    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存规格" }).querySelector(".spinner")).toBeNull());
-    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存规格" })).toBeDisabled());
+    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存到 models.yml" }).querySelector(".spinner")).toBeNull());
+    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存到 models.yml" })).toBeDisabled());
   });
 
   it("N1 碰过又改回原值：补丁省略该键（touched ∩ 语义不同）", async () => {
@@ -471,7 +417,7 @@ describe("规格抽屉", () => {
     // 碰过 name 又改回原值：touched 非空（按钮可用），但补丁为空→不发请求。
     fireEvent.change(nameBox, { target: { value: "LibOnly v2" } });
     fireEvent.change(nameBox, { target: { value: "LibOnly" } });
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     await vi.waitFor(() => expect(saveBtn).not.toBeDisabled());
     fireEvent.click(saveBtn);
     expect(await within(drawer).findByRole("alert")).toHaveTextContent("没有改动");
@@ -491,13 +437,13 @@ describe("规格抽屉", () => {
     if (costBox === undefined) throw new Error("找不到输入价框");
     for (const bad of ["1e3", "0x10", "Infinity", "", "-1", "+1", "1_000", "12.5.6"]) {
       fireEvent.change(costBox, { target: { value: bad } });
-      fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+      fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
       expect(await within(drawer).findByRole("alert")).toHaveTextContent("价格须为 ≥ 0 的数字");
     }
     expect(specCalls).toHaveLength(0);
     // 合法小数可存：四个键齐发。
     fireEvent.change(costBox, { target: { value: "1.5" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     expect(specCalls[0]["patch"]).toEqual({ cost: { input: 1.5, output: 4, cacheRead: 0.1, cacheWrite: 1 } });
   });
@@ -513,7 +459,7 @@ describe("规格抽屉", () => {
     const drawer = await openSpecDrawer("LibOnly");
     // "Fast "式空白差：touched 非空但语义相等→不发请求。
     fireEvent.change(within(drawer).getByDisplayValue("LibOnly"), { target: { value: "LibOnly " } });
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     await vi.waitFor(() => expect(saveBtn).not.toBeDisabled());
     fireEvent.click(saveBtn);
     expect(await within(drawer).findByRole("alert")).toHaveTextContent("没有改动");
@@ -521,80 +467,28 @@ describe("规格抽屉", () => {
     expect(onToast).toHaveBeenCalledWith("没有改动", "info");
     // 真改动但后端返回空备份：toast 没有改动而非已备份。
     fireEvent.change(within(drawer).getByDisplayValue(/LibOnly\s*$/), { target: { value: "LibOnly v2" } });
-    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存规格" })).not.toBeDisabled());
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    await vi.waitFor(() => expect(within(drawer).getByRole("button", { name: "保存到 models.yml" })).not.toBeDisabled());
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     await vi.waitFor(() => expect(specCalls).toHaveLength(1));
     await vi.waitFor(() => expect(onToast).toHaveBeenCalledWith("没有改动", "info"));
     expect(onToast).not.toHaveBeenCalledWith("已写入 models.yml（已备份）", "info");
   });
 
-  it("自定义标签回填后出现角色卡，保存写 modelRoles.<tag>", async () => {
-    const calls: Record<string, unknown>[] = [];
-    // 该用例的 bench 条目带 test 标签（默认夹具条目带 task 标签）。
-    localStorage.setItem(
-      BENCH_CONFIG_KEY,
-      JSON.stringify({ entries: [{ selector: "p/fast", tags: ["test"], monitor: false }], customTags: ["test"], intervalMin: 0 }),
-    );
-    stub({ onUpdateConfig: (args) => {
-      calls.push(args);
-      return { key: args["key"], value: args["value"] };
-    } });
-    await renderTab();
-    // bench 表里点 Fast 行：entries 自带 test 标签 → 抽屉有「设为 test」。
-    const testSection = screen.getByRole("region", { name: "测试" });
-    const fastCell = within(testSection).getByText("Fast");
-    fireEvent.click(fastCell.closest("tr") ?? fastCell);
-    const drawer = await screen.findByRole("complementary", { name: "模型 p/fast" });
-    fireEvent.click(within(drawer).getByRole("button", { name: "设为 test" }));
-    // 角色分配出现 test 角色卡（不是悄悄写盲键）。
-    const rolesSection = screen.getByRole("region", { name: "角色分配" });
-    expect(await within(rolesSection).findByTestId("role-card-test")).toBeInTheDocument();
-    const saveBar = await within(rolesSection).findByRole("status");
-    fireEvent.click(within(saveBar).getByRole("button", { name: /保存/ }));
-    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
-    const rolesCall = calls.find((c) => c["key"] === "modelRoles");
-    expect(rolesCall?.["value"]).toMatchObject({ test: "p/fast" });
-  });
-
-  it("回填恒覆盖 thinking：无后缀回默认，非法后缀回默认", async () => {
-    const calls: Record<string, unknown>[] = [];
-    // task 原值 p/slow:high；bench 条目 p/fast 无后缀 → 回填后须为 p/fast（不残留 high）。
-    localStorage.setItem(
-      BENCH_CONFIG_KEY,
-      JSON.stringify({ entries: [{ selector: "p/fast", tags: ["task"], monitor: false }], customTags: ["test"], intervalMin: 0 }),
-    );
-    stub({ roles: { default: "p/slow", task: "p/slow:high" }, onUpdateConfig: (args) => {
-      calls.push(args);
-      return { key: args["key"], value: args["value"] };
-    } });
-    await renderTab();
-    const testSection = screen.getByRole("region", { name: "测试" });
-    const fastCell = within(testSection).getByText("Fast");
-    fireEvent.click(fastCell.closest("tr") ?? fastCell);
-    const drawer = await screen.findByRole("complementary", { name: "模型 p/fast" });
-    fireEvent.click(within(drawer).getByRole("button", { name: "设为 子任务" }));
-    const rolesSection = screen.getByRole("region", { name: "角色分配" });
-    const saveBar = await within(rolesSection).findByRole("status");
-    fireEvent.click(within(saveBar).getByRole("button", { name: /保存/ }));
-    await vi.waitFor(() => expect(calls.length).toBeGreaterThan(0));
-    const rolesCall = calls.find((c) => c["key"] === "modelRoles");
-    expect(rolesCall?.["value"]).toMatchObject({ task: "p/fast" });
-  });
 
   it("抽屉开着切到另一行：表单值换成新模型的", async () => {
     stub();
     await renderTab();
     const lib = screen.getByRole("region", { name: "模型库" });
     const rowFor = (name: string): HTMLElement => {
-      const row = within(lib).getByText(name).closest("tr");
+      const row = within(lib).getByText(name, { selector: ".lib-name" }).closest("tr");
       if (row === null) throw new Error(`找不到 ${name} 行`);
       return row;
     };
-    fireEvent.click(within(rowFor("Fast")).getByRole("button", { name: "规格" }));
+    fireEvent.click(rowFor("Fast"));
     const drawer = await screen.findByRole("complementary", { name: "模型规格 p/fast" });
     expect(within(drawer).getByDisplayValue("Fast")).toBeInTheDocument();
-    // 抽屉开着点另一行的「规格」：抽屉实例按 selector 重建，表单换成新值。
-    fireEvent.click(within(rowFor("Slow")).getByRole("button", { name: "规格" }));
+    // 抽屉开着点另一行：抽屉实例按 selector 重建，表单换成新值。
+    fireEvent.click(rowFor("Slow"));
     const drawer2 = await screen.findByRole("complementary", { name: "模型规格 p/slow" });
     expect(within(drawer2).getByDisplayValue("Slow Edited")).toBeInTheDocument();
     expect(within(drawer2).queryByDisplayValue("Fast")).toBeNull();
@@ -611,7 +505,7 @@ describe("规格抽屉", () => {
     await renderTab();
     const drawer = await openSpecDrawer("Fast");
     fireEvent.change(within(drawer).getByDisplayValue("Fast"), { target: { value: "Fast v2" } });
-    fireEvent.click(within(drawer).getByRole("button", { name: "保存规格" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "保存到 models.yml" }));
     // 保存 promise 悬挂时：按钮切「保存中…」，同组输入与复选框全部禁用。
     const savingBtn = await within(drawer).findByRole("button", { name: "保存中…" });
     expect(savingBtn).toBeDisabled();
@@ -631,7 +525,7 @@ describe("规格抽屉", () => {
     next.name = "Fast v2";
     resolveSave({ revision: "rev-2", spec: next, backupPath: "/mock/models.yml.bak" });
     // 成功后：按钮回到「保存规格」，输入恢复可用，保存前打的值仍在。
-    const doneBtn = await within(drawer).findByRole("button", { name: "保存规格" });
+    const doneBtn = await within(drawer).findByRole("button", { name: "保存到 models.yml" });
     expect(doneBtn).toBeDisabled();
     expect(within(drawer).getByLabelText("名称")).toBeEnabled();
     expect(within(drawer).getByLabelText("输入价")).toBeEnabled();
@@ -659,7 +553,7 @@ describe("规格抽屉", () => {
     expect(within(drawer).queryByLabelText("缓存写")).toBeNull();
     // 改了名称 touched 非空，保存仍禁用；点也发不出请求。
     fireEvent.change(within(drawer).getByDisplayValue("Fast"), { target: { value: "Fast v2" } });
-    const saveBtn = within(drawer).getByRole("button", { name: "保存规格" });
+    const saveBtn = within(drawer).getByRole("button", { name: "保存到 models.yml" });
     expect(saveBtn).toBeDisabled();
     expect(saveBtn).toHaveAttribute("title", "分层价格，暂不支持编辑");
     fireEvent.click(saveBtn);
@@ -667,38 +561,3 @@ describe("规格抽屉", () => {
   });
 });
 
-describe("添加模型对话框", () => {
-  it("对话框内联渲染选择列表，选中模型显示规格预览", async () => {
-    stub();
-    await renderTab();
-    const testSection = screen.getByRole("region", { name: "测试" });
-    fireEvent.click(within(testSection).getByRole("button", { name: "+ 添加模型" }));
-    const dialog = await screen.findByRole("dialog", { name: "添加模型" });
-    // 行为断言：选择列表内联渲染在对话框里（不是浮层），预览区与列表同屏。
-    const listbox = within(dialog).getByRole("listbox", { name: "选择模型" });
-    expect(listbox).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("规格预览")).toBeInTheDocument();
-    // 列表默认内联展开：直接点 p/slow → 右侧预览出现上下文与目录价。
-    fireEvent.click(await within(dialog).findByRole("button", { name: /Slow/ }));
-    expect(within(dialog).getByLabelText("规格预览").textContent).toContain("1M 上下文");
-    expect(within(dialog).getByLabelText("规格预览").textContent).toContain("输入 $1 / 输出 $4");
-  });
-
-  it("徽章区分已加入与已有变体", async () => {
-    // entries 已有 p/fast（默认变体）：默认档位下 Fast=已加入。
-    stub();
-    await renderTab();
-    const testSection = screen.getByRole("region", { name: "测试" });
-    fireEvent.click(within(testSection).getByRole("button", { name: "+ 添加模型" }));
-    const dialog = await screen.findByRole("dialog", { name: "添加模型" });
-    const listbox = within(dialog).getByRole("listbox", { name: "选择模型" });
-    const fastBtn = await within(listbox).findByRole("button", { name: /Fast/ });
-    expect(fastBtn.textContent).toContain("已加入");
-    // 先选 Fast（出现 high 档位），再切 high：精确变体 p/fast:high 不在列表 → 降级为已有变体。
-    fireEvent.click(fastBtn);
-    fireEvent.click(await within(dialog).findByRole("radio", { name: "high" }));
-    const fastBtn2 = await within(listbox).findByRole("button", { name: /Fast/ });
-    expect(fastBtn2.textContent).toContain("已有变体");
-    expect(fastBtn2.textContent).not.toContain("已加入");
-  });
-});

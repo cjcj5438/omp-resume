@@ -31,7 +31,7 @@ export function BenchToolbar(props: BenchToolbarProps): ReactNode {
   return (
     <div className="bench-toolbar">
       <div className="bench-actions">
-        <button type="button" className="btn" onClick={onAdd}>+ 添加模型</button>
+        <button type="button" className="btn" onClick={onAdd}>+ 加入测试</button>
         <button
           type="button"
           className="btn btn-accent"
@@ -39,8 +39,11 @@ export function BenchToolbar(props: BenchToolbarProps): ReactNode {
           onClick={() => benchRunner.enqueueMany(selectors)}
           title={benchCount === 0 ? "先添加模型" : `共 ${benchCount} 个模型依次测试`}
         >
-          <Ico icon={Play} size={12} /> 测试全部 ≈{formatUsd(estimateAll)}
+          <Ico icon={Play} size={12} /> 测试全部
         </button>
+        <span className="muted bench-estimate" title="单轮按 800 输入 + 2300 输出 token 估算">
+          ≈{formatUsd(estimateAll)}
+        </span>
       </div>
       <div className="bench-monitor">
         <span className="muted">监控</span>
@@ -65,6 +68,7 @@ export function BenchToolbar(props: BenchToolbarProps): ReactNode {
         </span>
       </div>
       <button type="button" className="btn" onClick={onRecommend}>一键推荐</button>
+      <p className="muted bench-probe-hint">延迟探针 5×100 · 吞吐探针 3×600 · 并行度 1 · 结果保留 30 天 · bench 不会写入会话文件</p>
     </div>
   );
 }

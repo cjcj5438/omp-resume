@@ -21,6 +21,8 @@ interface ModelSpecDrawerProps {
   editable: boolean;
   /** 父级 reload 进行中时禁用保存（防自 CONFLICT）。 */
   reloading?: boolean;
+  /** 使用该模型的角色中文名（roles 反查，与 UsageBadges 同口径）。 */
+  usedByRoles?: string[];
   onClose: () => void;
   /** 保存成功（含 CONFLICT 后的提示）都回传结果；CONFLICT 时 result 为 null。 */
   onSaved: (result: ModelSpecUpdateResult | null) => void;
@@ -100,7 +102,7 @@ function baselineFromSpec(spec: ModelSpec | null): SpecBaseline {
 }
 
 export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
-  const { selector, model, spec, revision, specsPath, editable, reloading = false, onClose, onSaved, onToast } = props;
+  const { selector, model, spec, revision, specsPath, editable, reloading = false, usedByRoles = [], onClose, onSaved, onToast } = props;
   // 只从 spec（yml 条目）播种；目录值只做 placeholder 提示。
   const [name, setName] = useState(spec?.name ?? "");
   const [contextWindow, setContextWindow] = useState(spec?.contextWindow?.toString() ?? "");
@@ -298,7 +300,23 @@ export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
   ];
 
   return (
-    <Drawer label={`模型规格 ${selector}`} title={<span className="mono">{selector}</span>} onClose={blockedClose}>
+    <Drawer
+      label={`模型规格 ${selector}`}
+      title={<>编辑模型 <span className="mono drawer-title-sub">models.yml · {selector}</span></>}
+      onClose={blockedClose}
+      narrow
+      footer={
+        editable && spec !== null ? (
+          <>
+            <button type="button" className="btn btn-ghost btn-small" disabled={saving} onClick={() => blockedClose()}>取消</button>
+            <button type="button" className="btn btn-primary btn-small" disabled={saveDisabled} title={spec?.costTiered === true ? "分层价格，暂不支持编辑" : (touched.size === 0 && !saving ? "没有改动" : undefined)} onClick={() => void handleSave()}>
+              {saving ? <span className="spinner" aria-hidden="true" /> : null}
+              {saving ? "保存中…" : "保存到 models.yml"}
+            </button>
+          </>
+        ) : undefined
+      }
+    >
       <div className="spec-facts">
         <Fact label="供应商" value={model?.provider ?? spec?.provider ?? "—"} />
         <Fact label="selector" value={selector} />
@@ -311,6 +329,7 @@ export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
         <Fact label="思考档位" value={(model?.thinkingLevels ?? []).length === 0 ? "无" : (model?.thinkingLevels ?? []).join(" / ")} />
         <Fact label="目录价" value={costLine ?? "—"} />
         <Fact label="缓存读/写" value={`${formatCache(cacheRead)} / ${formatCache(cacheWrite)}`} />
+        <Fact label="已分配角色" value={usedByRoles.length === 0 ? "未分配" : usedByRoles.join("、")} />
         <Fact label="来源" value={editable ? "models.yml（可编辑）" : "内置目录（只读）"} />
       </div>
 
@@ -371,12 +390,7 @@ export function ModelSpecDrawer(props: ModelSpecDrawerProps): ReactNode {
           </fieldset>
           {formError !== null ? <div className="spec-error" role="alert">{formError}</div> : null}
           {saving ? <div className="muted">正在写入并用 omp 校验，请稍候…</div> : null}
-          <div>
-            <button type="button" className="btn btn-accent" disabled={saveDisabled} title={spec?.costTiered === true ? "分层价格，暂不支持编辑" : (touched.size === 0 && !saving ? "没有改动" : undefined)} onClick={() => void handleSave()}>
-              {saving ? <span className="spinner" aria-hidden="true" /> : null}
-              {saving ? "保存中…" : "保存规格"}
-            </button>
-          </div>
+          <div className="inline-note">写入前会校验值的形状，并携带当前 revision（rev {revision === "" ? "—" : revision.slice(0, 12)}）；若文件被其他进程修改，会以冲突返回而不是覆盖。</div>
         </div>
       ) : (
         <div className="pane-note">

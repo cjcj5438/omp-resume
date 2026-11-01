@@ -132,8 +132,8 @@ const selectRow = (snippet: string): void => {
   fireEvent.click(screen.getByLabelText(`选择：${snippet}`));
 };
 const headerStrip = (): HTMLElement => document.querySelector(".mem-bank-header") as HTMLElement;
-const rowLabel = (): (string | null)[] => Array.from(document.querySelectorAll(".mem-bank-row"), (r) => r.getAttribute("aria-label"));
-const openBank = (name: string): Promise<void> => screen.findByRole("button", { name }).then((b) => void fireEvent.click(b));
+const rowLabel = (): (string | null)[] => Array.from(document.querySelectorAll(".mem-bank-table tbody tr"), (r) => r.getAttribute("aria-label")?.replace(/^查看 (.+) 的记忆$/, "$1") ?? null);
+const openBank = (name: string): Promise<void> => screen.findByRole("button", { name: `查看 ${name} 的记忆` }).then((b) => void fireEvent.click(b));
 const deleteConfirm = (): HTMLElement => screen.getByRole("button", { name: /备份并删除 \d+ 条/ });
 
 async function openDeleteDialog(): Promise<HTMLElement> {
@@ -163,7 +163,7 @@ describe("多选语义", () => {
     expect(screen.getByText("已选 3 条")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除" }));
     expect(screen.getByText("已选 0 条")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "empty" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看 empty 的记忆" }));
     await waitFor(() => expect(calls.list[calls.list.length - 1]?.bank).toBe("empty"));
     expect(screen.queryByText(/已选/)).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
@@ -338,7 +338,7 @@ describe("单库移除与使用中徽标", () => {
     const { behavior, calls, onToast } = renderPanel({
       status: () => statusOf("empty", { inUse: true, holders: [{ pid: 4242, command: "omp" }] }),
     });
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     expect(document.querySelector(".mem-bank-header")).toBeNull();
     await selectBank("empty");
     const strip = headerStrip();
@@ -404,7 +404,7 @@ describe("无效库批量清理", () => {
 
   it("没有无效库时清理入口与「只看无效库」都禁用", async () => {
     renderPanel({ overview: overviewOf({ banks: [bankOf({ bank: "alpha", working: 3 })] }) });
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     expect(screen.getByRole("button", { name: "只看无效库（0）" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "清理无效库…" })).toBeDisabled();
   });
@@ -423,10 +423,10 @@ describe("备份与恢复", () => {
 
   it("列表按时间倒序显示类型与数量、留存说明；操作条可预选范围", async () => {
     const { calls, behavior } = renderPanel({ backups: () => [] });
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     const empty = await openBackups();
     expect(await within(empty).findByText("还没有备份。删除记忆或移除库时会自动创建。")).toBeInTheDocument();
-    expect(within(empty).getByText(/每个库自动保留最近 5 份/)).toBeInTheDocument();
+    expect(within(empty).getByText(/每库每类自动保留最近 5 份/)).toBeInTheDocument();
     fireEvent.click(within(empty).getByRole("button", { name: "关闭" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     behavior.backups = () => two;
@@ -446,7 +446,7 @@ describe("备份与恢复", () => {
 
   it("恢复现存库：安全备份说明 + 占用门禁，成功后刷新", async () => {
     const { calls, onToast } = renderPanel({ backups: () => two });
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     const dialog = await openBackups();
     fireEvent.click(within((await within(dialog).findAllByRole("listitem"))[0]).getByRole("button", { name: "恢复…" }));
     await within(dialog).findByText(/恢复前会自动为当前内容创建安全备份/);
@@ -467,7 +467,7 @@ describe("备份与恢复", () => {
     behavior.restore = () => {
       throw { code: "IO", message: "校验失败" };
     };
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     const dialog = await openBackups();
     const itemAt = async (i: number): Promise<HTMLElement> => (await within(dialog).findAllByRole("listitem"))[i];
     // 现存库 alpha：占用中，恢复被禁用。
@@ -530,18 +530,18 @@ describe("总览与健康卡", () => {
 describe("项目库图表", () => {
   it("按记忆数降序排列；无效库带徽章；只看无效库可过滤", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     expect(rowLabel()).toEqual(["alpha", "beta", "gone", "empty", "locked"]);
-    expect(within(screen.getByRole("button", { name: "gone" })).getByText("目录已不存在")).toBeInTheDocument();
-    expect(within(screen.getByRole("button", { name: "empty" })).getByText("空库")).toBeInTheDocument();
-    expect(within(screen.getByRole("button", { name: "locked" })).getByText("不可读")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "查看 gone 的记忆" })).getByText("目录已不存在")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "查看 empty 的记忆" })).getByText("空库")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "查看 locked 的记忆" })).getByText("不可读")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "只看无效库（3）" }));
     expect(rowLabel()).toEqual(["gone", "empty", "locked"]);
     expect(screen.getByRole("button", { name: "清理无效库…" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "只看无效库（3）" }));
     expect(rowLabel().length).toBe(BANKS.length);
-    fireEvent.click(screen.getByRole("button", { name: "gone" }));
-    expect(screen.getByRole("button", { name: "gone" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "查看 gone 的记忆" }));
+    expect(screen.getByRole("button", { name: "查看 gone 的记忆" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("点选项目库按默认参数请求该库记忆", async () => {
@@ -561,15 +561,44 @@ describe("项目库图表", () => {
     });
   });
 
-  it("行悬浮用 data-tip 显示多行摘要，无效库显示错误且无原生 title", async () => {
+  it("库表行展示路径副行与覆盖率条；无效库行可选中", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: "alpha" });
-    const tipOf = (name: string): string | null =>
-      document.querySelector(`.mem-bank-row[aria-label="${name}"]`)?.getAttribute("data-tip") ?? null;
-    expect(tipOf("alpha")).toContain("工作");
-    expect(tipOf("alpha")).toContain("未召回");
-    expect(tipOf("locked")).toContain("目录无读取权限");
-    expect(document.querySelector(".mem-bank-row[title]")).toBeNull();
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
+    const row = screen.getByRole("button", { name: "查看 alpha 的记忆" });
+    expect(within(row).getByText("~/my/alpha")).toBeInTheDocument();
+    expect(row.querySelector(".bank-track")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "查看 locked 的记忆" }));
+    expect(await screen.findByText(/该库不可读/)).toBeInTheDocument();
+  });
+
+  it("覆盖率条互斥二段之和恒为 100%（含 neverRecalled 越界钳制）", async () => {
+    renderPanel({
+      overview: overviewOf({
+        banks: [
+          bankOf({ bank: "alpha", working: 30, episodic: 40, neverRecalled: 30, unconsolidated: 60 }),
+          bankOf({ bank: "over", working: 10, episodic: 5, neverRecalled: 99, unconsolidated: 99 }),
+          bankOf({ bank: "empty", cwd: null }),
+        ],
+      }),
+    });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
+    const widths = (name: string): number[] => {
+      const row = screen.getByRole("button", { name: `查看 ${name} 的记忆` });
+      const segs = row.querySelectorAll(".bank-track i");
+      expect(segs).toHaveLength(2);
+      return [...segs].map((s) => parseFloat((s as HTMLElement).style.width));
+    };
+    // alpha：total=70，never=30 → 40/70 与 30/70；未合并 60 只进脚注，不占段。
+    const [recalled, never] = widths("alpha");
+    expect(recalled + never).toBeCloseTo(100, 6);
+    expect(recalled).toBeCloseTo((40 / 70) * 100, 6);
+    expect(
+      screen.getByRole("button", { name: "查看 alpha 的记忆" }).querySelector(".bank-track"),
+    ).toHaveAttribute("aria-label", expect.stringContaining("其中未合并 60 条"));
+    // over：neverRecalled 99 > total 15，钳制到 total：二段为 0% + 100%。
+    expect(widths("over")).toEqual([0, 100]);
+    // empty：total=0，二段均为 0%。
+    expect(widths("empty")).toEqual([0, 0]);
   });
 
   it("不可读库被选中时不发列表请求并说明原因", async () => {
@@ -581,7 +610,7 @@ describe("项目库图表", () => {
 
   it("选中库在右侧抽屉里展开：不占列表流、可切换库、Esc 与关闭按钮都能收起", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: "alpha" });
+    await screen.findByRole("button", { name: "查看 alpha 的记忆" });
     // 未选中：无抽屉，左列给出提示。
     expect(document.querySelector(".drawer")).toBeNull();
     expect(screen.getByText(/点上面的项目库，在右侧查看其中的记忆/)).toBeInTheDocument();
@@ -595,7 +624,7 @@ describe("项目库图表", () => {
     expect(screen.queryByText(/点上面的项目库/)).toBeNull();
 
     // 抽屉开着时点另一个库：只换内容，不关抽屉。
-    fireEvent.click(screen.getByRole("button", { name: "beta" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看 beta 的记忆" }));
     const swapped = await screen.findByRole("complementary", { name: "项目库 beta" });
     expect(swapped.querySelector(".drawer-title")?.textContent).toContain("beta");
     expect(document.querySelectorAll(".drawer")).toHaveLength(1);
@@ -748,7 +777,7 @@ describe("关系图在抽屉内的 Esc 处理", () => {
     const drawer = await screen.findByRole("complementary", { name: "项目库 alpha" });
     fireEvent.click(within(drawer).getByRole("button", { name: "关系图" }));
     const svg = await waitFor(() => {
-      const el = document.querySelector<SVGSVGElement>(".mem-graph-canvas");
+      const el = drawer.querySelector<SVGSVGElement>(".mem-graph-canvas");
       if (el === null) throw new Error("关系图未挂载");
       return el;
     });
@@ -812,5 +841,18 @@ describe("关系图定位卡", () => {
     await waitFor(() => expect(calls.deleteItems).toEqual([{ bank: "alpha", ids: ["m1"] }]));
     await waitFor(() => expect(onClearFocus).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("页头与分栏结构", () => {
+  it("页头在分栏之外：h1 在 .mem-shell 下而不在 .mem-panel 内", async () => {
+    renderPanel();
+    const h1 = await screen.findByRole("heading", { level: 1, name: "记忆库" });
+    expect(h1.closest(".mem-shell")).not.toBeNull();
+    expect(h1.closest(".mem-panel")).toBeNull();
+    expect(document.querySelector(".mem-panel")).not.toBeNull();
+    // 页头动作（立即备份）与页内入口（备份与恢复）语义不同，同时存在。
+    expect(screen.getByRole("button", { name: "立即备份" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "备份与恢复" })).toBeInTheDocument();
   });
 });

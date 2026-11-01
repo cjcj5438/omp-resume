@@ -1,0 +1,16 @@
+/* 插件面板专属：徽标/表格列宽/KPI 间距。表格行列走共享 .tbl/.grid-4/.kpi。 */
+.plugins-kpis { margin-bottom: var(--sp-3); }
+.plugin-name { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.plugin-sq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--bg-inset);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}

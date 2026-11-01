@@ -1,5 +1,5 @@
 /**
- * AgentsTab 测试：页头 + 交互流程图 + Vibe + Agent 行；stale-effective 回归
+ * AgentsTab 测试：页头 + 交互组织图 + Vibe + Agent 行；stale-effective 回归
  * （改 picker 后「当前使用」立即更新，不必等保存）；revert 分块语义由
  * modelDraft.test.ts 的纯函数测试覆盖，这里补一条组件级还原隔离。
  */
@@ -117,7 +117,7 @@ function stubConfig(config: ModelConfig = BASE_CONFIG): void {
 
 function Harness(props: { onToast: ToastFn }) {
   const l = useModelDraft(props.onToast);
-  return l.status === "ready" ? <AgentsTab state={l.state} /> : null;
+  return l.status === "ready" ? <AgentsTab state={l.state} onToast={props.onToast} /> : null;
 }
 
 beforeEach(() => {
@@ -129,23 +129,23 @@ describe("AgentsTab 页头", () => {
   it("停用后 chips 计数同步", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     fireEvent.click(screen.getByLabelText("停用 task"));
     expect(screen.getByRole("status", { name: "Agent 状态" })).toHaveTextContent("停用 1");
   });
 
-  it("渲染 Vibe 卡 + 流程图 + Agent 行 + 生效提示", async () => {
+  it("渲染 Vibe 卡 + 组织图 + Agent 行 + 生效提示", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     expect(screen.getByTestId("vibe-card")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-task")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-scout")).toBeInTheDocument();
     expect(screen.getByTestId("agent-row-deployer")).toBeInTheDocument();
-    // 流程图只渲染一次（AgentsTab 的可交互图；AgentsSection 不再渲染）。
-    expect(screen.getAllByTestId("agent-flow")).toHaveLength(1);
+    // 组织图只渲染一次（AgentsTab 的可交互图；AgentsSection 不再渲染）。
+    expect(screen.getAllByTestId("agent-org")).toHaveLength(1);
     expect(screen.getByText(/新开的 omp 会话使用新配置/)).toBeInTheDocument();
   });
   it("兜底总开关关闭时显示警告", async () => {
@@ -154,18 +154,18 @@ describe("AgentsTab 页头", () => {
       retryStatus: { modelFallback: false, fallbackOn: "any", fallbackRevertPolicy: "never" },
     });
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
     expect(screen.getByText(/兜底已关闭/)).toHaveTextContent("不会生效");
   });
 });
 
-describe("流程图交互", () => {
+describe("组织图交互", () => {
   it("节点可聚焦可点击：点击后滚动到对应行并高亮约 1.6s", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
-    const node = screen.getByTestId("agent-flow-node-task");
+    const node = screen.getByTestId("agent-org-node-task");
     expect(node).toHaveAttribute("role", "button");
     expect(node).toHaveAttribute("tabindex", "0");
 
@@ -181,13 +181,13 @@ describe("流程图交互", () => {
   it("高亮一段时间后自动移除", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     vi.useFakeTimers();
     try {
       const row = screen.getByTestId("agent-row-task");
       row.scrollIntoView = vi.fn();
-      fireEvent.click(screen.getByTestId("agent-flow-node-task"));
+      fireEvent.click(screen.getByTestId("agent-org-node-task"));
       expect(row.classList.contains("agent-row-flash")).toBe(true);
       vi.advanceTimersByTime(5000);
       expect(row.classList.contains("agent-row-flash")).toBe(false);
@@ -199,12 +199,12 @@ describe("流程图交互", () => {
   it("键盘 Enter/Space 同样定位", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     const row = screen.getByTestId("agent-row-scout");
     const scrollSpy = vi.fn();
     row.scrollIntoView = scrollSpy;
-    fireEvent.keyDown(screen.getByTestId("agent-flow-node-scout"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("agent-org-node-scout"), { key: "Enter" });
     expect(scrollSpy).toHaveBeenCalledTimes(1);
     expect(row.classList.contains("agent-row-flash")).toBe(true);
   });
@@ -214,7 +214,7 @@ describe("stale-effective 回归", () => {
   it("改 Agent picker 后「当前使用」立即更新，不必等保存", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     expect(screen.getByTestId("agent-effective-task")).toHaveTextContent("MiMo v2.6 Pro (5438)");
     fireEvent.click(screen.getByRole("button", { name: "task 改用的模型" }));
@@ -226,7 +226,7 @@ describe("stale-effective 回归", () => {
   it("Vibe 档位同理：改 picker 后档位行与指挥者吸附立即更新", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     const tier = screen.getByTestId("vibe-tier-good");
     fireEvent.click(
@@ -242,7 +242,7 @@ describe("stale-effective 回归", () => {
   it("清掉覆盖（不改用）后按无覆盖重算，不再显示旧值", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     fireEvent.click(screen.getByRole("button", { name: "scout 改用的模型" }));
     fireEvent.click(screen.getByRole("button", { name: "不改用" }));
@@ -270,7 +270,7 @@ describe("刷新按钮", () => {
       throw { code: "UNKNOWN", message: `未知命令：${cmd}` };
     });
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
     // 模型命中进程内缓存时挂载不读 list_models：只断言刷新带来的增量。
     const modelsBefore = modelsReads;
     const configBefore = configReads;
@@ -285,7 +285,7 @@ describe("刷新按钮", () => {
   it("有未保存修改时禁用并提示先保存或还原", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled();
     fireEvent.click(screen.getByLabelText("停用 deployer"));
@@ -309,7 +309,7 @@ describe("还原隔离（组件级）", () => {
   it("Agent 还原不丢 Vibe/覆盖以外的展示（保存条按块独立出现）", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     fireEvent.click(screen.getByLabelText("停用 deployer"));
     const bar = within(screen.getByRole("region", { name: "Agent" })).getByRole("status");
@@ -324,7 +324,7 @@ describe("还原隔离（组件级）", () => {
   it("改 picker 后「当前使用」跟随草稿，还原后回到保存值", async () => {
     stubConfig();
     render(<Harness onToast={vi.fn()} />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
 
     const effective = screen.getByTestId("agent-effective-task");
     expect(effective).toHaveTextContent("MiMo v2.6 Pro (5438)");
@@ -368,5 +368,60 @@ describe("saveBlock 双击竞态（A5）", () => {
     ]);
     await Promise.all([first, second]);
     expect(saves).toHaveLength(1);
+  });
+});
+
+describe("组织图与对话框", () => {
+  it("组织图渲染编排器 + 子节点 + legend；节点可定位到配置行", async () => {
+    stubConfig();
+    render(<Harness onToast={vi.fn()} />);
+    const org = await screen.findByTestId("agent-org");
+    expect(within(org).getByTestId("agent-org-node-orchestrator")).toHaveTextContent("主代理");
+    expect(within(org).getByTestId("agent-org-node-task")).toBeInTheDocument();
+    expect(within(org).getByText("定义来源：~/.omp/agent/agents/")).toBeInTheDocument();
+  });
+
+  it("Agent 库对话框只读列出定义", async () => {
+    stubConfig();
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("agent-org");
+    fireEvent.click(screen.getByRole("button", { name: "Agent 库" }));
+    const dialog = await screen.findByRole("dialog", { name: "Agent 库" });
+    expect(within(dialog).getByText("task · 通用")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog", { name: "Agent 库" })).toBeNull();
+  });
+
+  it("角色按钮打开角色对话框，保存回填覆盖草稿", async () => {
+    stubConfig();
+    render(<Harness onToast={vi.fn()} />);
+    await screen.findByTestId("agent-org");
+    const defs = screen.getByText("Agent 定义").closest("section") ?? document.body;
+    fireEvent.click(within(defs as HTMLElement).getAllByRole("button", { name: "角色" })[0]);
+    const dialog = await screen.findByRole("dialog", { name: /编辑 .* 的角色/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存角色" }));
+  });
+
+  it("主代理编辑角色：改某角色 → 草稿 roles 变化、角色 save-bar 出现", async () => {
+    stubConfig();
+    render(<Harness onToast={vi.fn()} />);
+    const org = await screen.findByTestId("agent-org");
+    fireEvent.click(within(org).getByRole("button", { name: "编辑主代理的角色" }));
+    const dialog = await screen.findByRole("dialog", { name: "编辑 主代理 的角色" });
+    // 每角色一行 select：把 default 从 mimo 换成 deepseek。
+    fireEvent.change(within(dialog).getByLabelText("主对话（default）"), { target: { value: "5438/deepseek-v4.1-flash" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存角色" }));
+    expect(screen.queryByRole("dialog", { name: "编辑 主代理 的角色" })).toBeNull();
+  });
+
+  it("新建 Agent：空名 toast 报错；成功后刷新配置", async () => {
+    stubConfig();
+    const onToast = vi.fn<ToastFn>();
+    render(<Harness onToast={onToast} />);
+    await screen.findByTestId("agent-org");
+    fireEvent.click(screen.getByRole("button", { name: "新建 Agent" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建 Agent" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+    expect(onToast).toHaveBeenCalledWith("请填写 Agent 名称", "error");
   });
 });

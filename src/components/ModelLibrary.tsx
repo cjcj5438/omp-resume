@@ -7,7 +7,6 @@
 import { useState } from "react";
 import type { ModelInfo, ModelSpec } from "../types";
 import { setModelHidden, useHiddenModels } from "../hiddenModels";
-import { benchRunner, type BenchConfig } from "../modelBench";
 import { selectorBase } from "../roleCards";
 import { formatContextWindow, roleInfo } from "../roleCards";
 import type { ToastFn } from "./useOmpOp";
@@ -21,10 +20,14 @@ interface ModelLibraryProps {
   roles: Record<string, unknown>;
   agentOverrides?: Record<string, unknown>;
   specs: Map<string, ModelSpec>;
-  bench: BenchConfig;
-  onAddBench: (selector: string) => void;
   onOpenSpec: (selector: string) => void;
   onToast: ToastFn;
+  /** 跳 bench 并预选：由 models 页传入导航回调。 */
+  onTestInBench?: (selector: string) => void;
+  /** 表 foot 的 rev 短 hash（models.yml revision 真值）。 */
+  footRevision?: string;
+  /** 模型列表失败重试。 */
+  onRetryModels?: () => void;
 }
 
 /** 用途徽章：角色中文名 + 引用该 base 的 agent 名（muted 小 chips，最多 2 个 +N，title 列出剩余）。 */
@@ -51,31 +54,9 @@ function UsageBadges(props: { roles: Record<string, unknown>; agentOverrides?: R
   );
 }
 
-function formatMaxTokens(value: number | null): string {
-  return value === null ? "—" : value.toLocaleString();
-}
-
-/** 库表上下文简写：`1M 上下文` → `1M`（表头已说明，完整口径放 title）。 */
-function formatContextCompact(contextWindow: number | null): string | null {
-  const full = formatContextWindow(contextWindow);
-  if (full === null) return null;
-  return full.endsWith(" 上下文") ? full.slice(0, -" 上下文".length) : full;
-}
-
-/** 库表目录价简写：`$输入 / $输出`（单值/双空降级，完整口径放 title）。 */
-function formatCostCompact(input: number | null, output: number | null): { text: string; title: string } | null {
-  if (input === null && output === null) return null;
-  const inText = input === null ? "–" : `$${input}`;
-  const outText = output === null ? "–" : `$${output}`;
-  const title = `输入 ${inText} / 输出 ${outText}（USD / 百万 token）`;
-  const text = input === null ? outText : output === null ? inText : `${inText} / ${outText}`;
-  return { text, title };
-}
-
 export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
-  const { models, modelsLoading, modelsError, roles, agentOverrides, specs, bench, onAddBench, onOpenSpec, onToast } = props;
+  const { models, modelsLoading, modelsError, roles, agentOverrides, specs, onOpenSpec, onToast, onTestInBench, footRevision, onRetryModels } = props;
   const [query, setQuery] = useState("");
-  const inBench = new Set(bench.entries.map((e) => e.selector));
   const hidden = useHiddenModels();
   const [showHidden, setShowHidden] = useState(false);
   const hiddenCount = models.filter((m) => hidden.has(m.selector)).length;
@@ -91,6 +72,7 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
           m.id.toLowerCase().includes(needle) ||
           m.selector.toLowerCase().includes(needle),
       );
+  const defaultBase = typeof roles.default === "string" ? selectorBase(roles.default) : null;
 
   return (
     <div className="model-lib">
@@ -115,7 +97,7 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
       {modelsLoading && models.length === 0 ? (
         <div className="pane-note">模型列表加载中（首次加载可能需要几秒）…</div>
       ) : modelsError !== null && models.length === 0 ? (
-        <div className="pane-note">模型列表加载失败：{modelsError}</div>
+        <div className="pane-note">模型列表加载失败：{modelsError} <button type="button" className="btn btn-small" disabled={onRetryModels === undefined} onClick={() => onRetryModels?.()}>重试</button></div>
       ) : visible.length === 0 ? (
         <div className="pane-note">
           {models.length === 0
@@ -125,110 +107,88 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
               : "没有命中筛选的模型。"}
         </div>
       ) : (
-        <div className="lib-table-wrap">
-          <table className="manage-table lib-table">
+        <div className="tbl-wrap lib-table-wrap">
+          <table className="tbl lib-table">
             <colgroup>
               <col className="lib-col-model" />
               <col className="lib-col-context" />
               <col className="lib-col-max" />
-              <col className="lib-col-cost" />
               <col className="lib-col-thinking" />
+              <col className="lib-col-default" />
+              <col className="lib-col-input" />
+              <col className="lib-col-cost" />
+              <col className="lib-col-cost" />
+              <col className="lib-col-roles" />
               <col className="lib-col-act" />
             </colgroup>
             <thead>
               <tr>
                 <th scope="col">模型</th>
-                <th scope="col">上下文</th>
-                <th scope="col" className="lib-nowrap">最大输出</th>
-                <th scope="col">目录价</th>
-                <th scope="col">思考</th>
-                <th scope="col">操作</th>
+                <th scope="col" className="r">上下文</th>
+                <th scope="col" className="r">最大输出</th>
+                <th scope="col" className="c">思考</th>
+                <th scope="col" className="c">默认</th>
+                <th scope="col">输入</th>
+                <th scope="col" className="r">输入价</th>
+                <th scope="col" className="r">输出价</th>
+                <th scope="col">角色</th>
+                <th scope="col" aria-label="操作"><span aria-hidden="true" /></th>
               </tr>
             </thead>
             <tbody>
               {visible.map((m) => {
                 const spec = specs.get(m.selector) ?? null;
-                const context = formatContextCompact(spec?.contextWindow ?? m.contextWindow);
+                const context = spec?.contextWindow ?? m.contextWindow;
                 const maxTokens = spec?.maxTokens ?? m.maxTokens;
-                const cost = formatCostCompact(spec?.costInput ?? m.costInput, spec?.costOutput ?? m.costOutput);
+                const costIn = spec?.costInput ?? m.costInput;
+                const costOut = spec?.costOutput ?? m.costOutput;
+                const inputs = (spec?.input ?? m.input ?? []).join(" / ");
                 const isHidden = hidden.has(m.selector);
+                const isDefault = defaultBase !== null && m.selector === defaultBase;
                 return (
-                  <tr key={m.selector} className={isHidden ? "lib-row lib-row-hidden" : "lib-row"} onClick={() => onOpenSpec(m.selector)}>
+                  <tr
+                    key={m.selector}
+                    className={isHidden ? "is-click lib-row lib-row-hidden" : "is-click lib-row"}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`查看 ${m.selector} 的规格`}
+                    onClick={() => onOpenSpec(m.selector)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      if (e.target !== e.currentTarget) return;
+                      e.preventDefault();
+                      onOpenSpec(m.selector);
+                    }}
+                  >
                     <td>
-                      <span className="lib-model">
-                        <span className="lib-model-top">
-                          <span className="lib-name" title={m.name}>{m.name}</span>
-                        </span>
-                        <span className="lib-model-sub">
-                          <span className="lib-id muted mono" title={m.selector}>{m.selector}</span>
-                          {m.reasoning ? <span className="badge badge-branch">推理</span> : null}
-                          {spec !== null ? <span className="badge badge-fork">可编辑</span> : null}
-                          {isHidden ? <span className="badge badge-grey">已隐藏</span> : null}
-                          <UsageBadges roles={roles} agentOverrides={agentOverrides} base={m.selector} />
-                        </span>
-                      </span>
+                      <span className="strong lib-name" title={m.name}>{m.name}</span>
+                      <span className="sub mono" title={m.selector}>{m.selector}</span>
                     </td>
-                    <td className="lib-nowrap">{context === null ? <span className="muted">—</span> : <span title={`${context} tokens`}>{context}</span>}</td>
-                    <td className="lib-nowrap">{formatMaxTokens(maxTokens)}</td>
-                    <td className="lib-nowrap">{cost === null ? <span className="muted">—</span> : <span title={cost.title}>{cost.text}</span>}</td>
+                    <td className="r mono">{context === null || context === undefined ? <span className="muted">—</span> : <span title={`${context.toLocaleString()} tokens`}>{formatContextWindow(context)}</span>}</td>
+                    <td className="r mono">{maxTokens === null || maxTokens === undefined ? <span className="muted">—</span> : maxTokens.toLocaleString()}</td>
+                    <td className="c">{m.reasoning ? <span className="mark-yes" aria-label="支持推理">✓</span> : <span className="muted">—</span>}</td>
+                    <td className="c">{isDefault ? <span className="mark-yes" aria-label="默认模型">✓</span> : <span className="muted">—</span>}</td>
+                    <td>{inputs === "" ? <span className="muted">—</span> : <span title={inputs}>{inputs}</span>}</td>
+                    <td className="r mono">{costIn === null || costIn === undefined ? <span className="muted">—</span> : `$${costIn}`}</td>
+                    <td className="r mono">{costOut === null || costOut === undefined ? <span className="muted">—</span> : `$${costOut}`}</td>
                     <td>
-                      {m.thinkingLevels.length === 0 ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <span className="lib-levels" title={m.thinkingLevels.join(" / ")}>
-                          {m.thinkingLevels.map((lvl) => (
-                            <span key={lvl} className="lib-level">
-                              {lvl}
-                            </span>
-                          ))}
-                        </span>
-                      )}
+                      <UsageBadges roles={roles} agentOverrides={agentOverrides} base={m.selector} />
                     </td>
-                    <td className="lib-act-cell">
+                    <td className="cell-actions">
                       <span className="lib-actions">
-                        {inBench.has(m.selector) ? null : (
-                          <button
-                            type="button"
-                            className="btn btn-small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAddBench(m.selector);
-                            }}
-                          >
-                            加入测试
-                          </button>
-                        )}
                         <button
                           type="button"
-                          className="btn btn-small"
-                          aria-label={`测试 ${m.selector}`}
+                          className="btn btn-small btn-quiet"
                           onClick={(e) => {
                             e.stopPropagation();
-                            // 非 bench 模型先走 onAddBench 落行（否则结果无处显示），再入队。
-                            if (!inBench.has(m.selector)) {
-                              onAddBench(m.selector);
-                              onToast(`已加入测试列表并开始测试：${m.selector}`, "info");
-                            } else {
-                              onToast(`已加入测试队列：${m.selector}`, "info");
-                            }
-                            benchRunner.enqueue(m.selector);
+                            onTestInBench?.(m.selector);
                           }}
                         >
                           测试 <Ico icon={Play} size={12} />
                         </button>
                         <button
                           type="button"
-                          className="btn btn-small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenSpec(m.selector);
-                          }}
-                        >
-                          规格
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-small"
+                          className="btn btn-small btn-quiet"
                           aria-label={isHidden ? `取消隐藏 ${m.selector}` : `隐藏 ${m.selector}`}
                           title={isHidden ? "取消隐藏" : "隐藏（仅本应用，不改 omp 配置）"}
                           onClick={(e) => {
@@ -249,6 +209,9 @@ export function ModelLibrary(props: ModelLibraryProps): React.ReactNode {
               })}
             </tbody>
           </table>
+          {footRevision === undefined || footRevision === "" ? null : (
+            <div className="panel-foot"><span>价格单位：每百万 token（USD）。</span><span className="mono">models.yml · rev {footRevision.slice(0, 12)}</span></div>
+          )}
         </div>
       )}
     </div>

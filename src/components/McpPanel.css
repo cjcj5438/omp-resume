@@ -1,141 +1,32 @@
-/* MCP 配置面板：范围选择 + 条目列表 + 编辑抽屉内容。
+/* MCP 配置面板：范围切换 + 表格 + 对话框。表格/面板走共享 .tbl/.panel。
  * 取色/间距一律用 App.css 的语义变量。 */
 
-.mcp-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  padding: var(--sp-4);
-  overflow-y: auto;
-}
+.mcp-panel { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 
-.mcp-toolbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--sp-2);
-}
+.mcp-toolbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.mcp-toolbar .spacer { flex: 1; }
+.mcp-toolbar .meta { font-size: 11px; color: var(--text-muted); }
 
-.mcp-scope {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  min-width: 0;
-  flex: 1;
-}
+.mcp-scope { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); color: var(--text-muted); }
 
-.mcp-scope select {
-  max-width: 100%;
-}
+.mcp-table { table-layout: fixed; min-width: 760px; }
+.mcp-cmd { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+.mcp-shadowed td { opacity: 0.65; }
 
-.mcp-path {
-  font-size: var(--fs-xs);
-  overflow-wrap: anywhere;
-}
+/* 对话框字段走共享 .fld 结构（label 大写 10.5px）；input/select 字号统一 12.5px（Page.css .fld）。 */
 
-.mcp-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-/* 条目行：无边框卡片，靠底色与留白分层。 */
-.mcp-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.mcp-row:hover {
-  background: var(--bg-inset);
-}
-
-.mcp-row-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-
-.mcp-name {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.mcp-endpoint {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-}
-
-.mcp-keys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-}
-
-.mcp-key-chip {
-  font-size: var(--fs-xs);
-  padding: 0 var(--sp-2);
-  border-radius: var(--radius-sm);
-  background: var(--bg-inset);
-  color: var(--text-muted);
-  line-height: 17px;
-}
-
-.mcp-actions {
-  display: flex;
-  gap: var(--sp-1);
-  margin-top: var(--sp-1);
-}
-
-.mcp-hint {
-  font-size: var(--fs-xs);
-}
-
-/* 被覆盖的用户级同名条目：虚线分隔，弱化。 */
-.mcp-secondary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-top: var(--sp-1);
-  padding-top: var(--sp-2);
-  box-shadow: inset 0 1px 0 var(--border);
-  font-size: var(--fs-xs);
-}
-
-.mcp-row-peer {
-  flex-direction: row;
-  align-items: center;
-  background: transparent;
-  padding: var(--sp-1) var(--sp-2);
-}
-
-.mcp-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  margin-bottom: var(--sp-2);
-}
-
-/* 编辑抽屉内的输入：与全局 .filter-input 同形态（这里只补多行差异）。 */
+/* 编辑对话框内的输入：与全局 .filter-input 同形态（这里只补多行差异）。 */
 .mcp-input,
 .mcp-textarea {
-  width: 100%;
-  padding: var(--sp-2) var(--sp-3);
   font-family: inherit;
-  font-size: var(--fs-md);
+  font-size: 12.5px;
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  transition: border-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
+  padding: 0 var(--sp-3);
+  height: 32px;
+  outline: none;
 }
 
 .mcp-input:hover:not(:disabled),
@@ -148,21 +39,23 @@
 .mcp-input:focus-visible,
 .mcp-textarea:focus-visible {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  outline: none;
+  box-shadow: 0 0 0 1px var(--accent-ring);
 }
 
 .mcp-input:disabled,
 .mcp-textarea:disabled {
-  color: var(--text-muted);
-  background: var(--bg-card);
+  color: var(--text-faint);
+  background: var(--bg-inset);
+  opacity: 0.7;
 }
 
 .mcp-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
   min-height: 220px;
   min-width: min(420px, 100%);
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.55;
+  padding: var(--sp-2) var(--sp-3);
   resize: vertical;
+  white-space: pre;
 }

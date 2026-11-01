@@ -8,14 +8,17 @@ import "./McpPanel.css";
 import {
   deleteMcpServer,
   getMcpServer,
+  handshakeMcpServer,
   listMcp,
   normalizeError,
+  revealFile,
   saveMcpServer,
   setMcpEnabled,
 } from "../api";
-import { errorText } from "../format";
-import type { McpFileInfo, McpListResult, McpScope, McpServer } from "../types";
+import { displayCwd, errorText, formatRelativeTime } from "../format";
+import type { McpFileInfo, McpHandshakeResult, McpListResult, McpScope, McpServer } from "../types";
 import { Badge, Modal } from "./ui";
+import { PageHeader, Panel, Seg } from "./page";
 
 const ADD_TEMPLATE = `{
   "type": "stdio",
@@ -58,7 +61,8 @@ export function McpPanel(props: {
   onToast: (text: string, kind: "info" | "error") => void;
 }): JSX.Element {
   const { projects, onToast } = props;
-  const [scopeKey, setScopeKey] = useState("user");
+  const [scope, setScope] = useState<McpScope>("user");
+  const [projectCwd, setProjectCwd] = useState<string | null>(null);
   const [data, setData] = useState<McpListResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -66,8 +70,11 @@ export function McpPanel(props: {
   // 同步忙守卫：按钮 disabled 是 state 派生，同一帧内的第二次点击需同步拦截。
   const busyRef = useRef(false);
   const [changedOnce, setChangedOnce] = useState(false);
+  const [savedNote, setSavedNote] = useState(false);
   const [editing, setEditing] = useState<EditState | null>(null);
   const [deleting, setDeleting] = useState<{ scope: McpScope; name: string } | null>(null);
+  const [handshakes, setHandshakes] = useState<Record<string, McpHandshakeResult>>({});
+  const [handshaking, setHandshaking] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     // StrictMode 双挂载会先跑一次清理；不复位会导致首次加载被跳过、永远停在加载中。
@@ -77,20 +84,23 @@ export function McpPanel(props: {
     };
   }, []);
 
-  const projectCwd = scopeKey === "user" ? null : scopeKey;
-  const selectedScope: McpScope = projectCwd === null ? "user" : "project";
+  const selectedScope: McpScope = scope;
+  const effectiveCwd = scope === "project" ? (projectCwd ?? projects[0]?.cwd ?? null) : null;
 
   // 项目列表变化后 previously 选中的 cwd 消失则回到用户级。
   useEffect(() => {
-    if (projectCwd !== null && !projects.some((p) => p.cwd === projectCwd)) setScopeKey("user");
-  }, [projects, projectCwd]);
+    if (scope === "project" && effectiveCwd !== null && !projects.some((p) => p.cwd === effectiveCwd)) {
+      setProjectCwd(null);
+      setScope("user");
+    }
+  }, [projects, scope, effectiveCwd]);
 
   const load = useCallback(async (): Promise<{ data: McpListResult | null; error: string | null }> => {
     if (!alive.current) return { data: null, error: null };
     setLoading(true);
     setLoadError(null);
     try {
-      const result = await listMcp(projectCwd === null ? {} : { project: projectCwd });
+      const result = await listMcp(effectiveCwd === null ? {} : { project: effectiveCwd });
       if (!alive.current) return { data: null, error: null };
       setData(result);
       return { data: result, error: null };
@@ -103,7 +113,7 @@ export function McpPanel(props: {
     } finally {
       if (alive.current) setLoading(false);
     }
-  }, [projectCwd]);
+  }, [effectiveCwd]);
 
   useEffect(() => {
     void load();
@@ -124,6 +134,28 @@ export function McpPanel(props: {
         )
       : [];
 
+  /** 握手测试：只在用户点击时执行；结果进内存态（工具数来自最近一次握手）。 */
+  async function handshake(s: McpServer) {
+    const key = `${s.scope}:${s.name}`;
+    if (handshaking !== null || busyRef.current) return;
+    setHandshaking(key);
+    try {
+      const res = await handshakeMcpServer({ scope: s.scope, project: effectiveCwd, name: s.name });
+      if (!alive.current) return;
+      setHandshakes((prev) => ({ ...prev, [key]: res }));
+      if (res.ok) {
+        onToast(res.tools === null ? `${s.name} 握手成功` : `${s.name} 握手成功 · ${res.tools} 个工具`, "info");
+      } else {
+        onToast(`${s.name} 握手失败：${res.error ?? "未知错误"}`, "error");
+      }
+    } catch (e) {
+      if (!alive.current) return;
+      onToast(errorText(normalizeError(e)), "error");
+    } finally {
+      if (alive.current) setHandshaking(null);
+    }
+  }
+
   async function toggle(s: McpServer) {
     if (s.shadowedBy === "disabledServers") return;
     const file = fileFor(s.scope);
@@ -133,7 +165,7 @@ export function McpPanel(props: {
     try {
       await setMcpEnabled({
         scope: s.scope,
-        project: projectCwd,
+        project: effectiveCwd,
         name: s.name,
         enabled: !s.enabled,
         expectedRevision: file.revision,
@@ -157,7 +189,7 @@ export function McpPanel(props: {
     busyRef.current = true;
     setBusy(true);
     try {
-      const raw = await getMcpServer({ scope: s.scope, project: projectCwd, name: s.name });
+      const raw = await getMcpServer({ scope: s.scope, project: effectiveCwd, name: s.name });
       if (!alive.current) return;
       setEditing({
         mode: "edit",
@@ -194,14 +226,33 @@ export function McpPanel(props: {
     });
   }
 
+  async function revealConfig() {
+    if (targetFile === undefined || busyRef.current) return;
+    try {
+      await revealFile(targetFile.path);
+    } catch (e) {
+      if (!alive.current) return;
+      onToast(errorText(normalizeError(e)), "error");
+    }
+  }
+
   async function submitEdit() {
     if (!editing || busyRef.current) return;
+    // 作用域在对话框内可切换：revision 取对话框 scope 对应文件的 revision。
+    const scopeFile = fileFor(editing.scope);
+    if (editing.mode === "add" && scopeFile !== undefined && scopeFile.revision !== editing.expectedRevision) {
+      setEditing({ ...editing, expectedRevision: scopeFile.revision });
+    }
     let config: unknown;
     try {
       config = JSON.parse(editing.text) as unknown;
     } catch (e) {
       setEditing({ ...editing, error: `JSON 格式不正确：${e instanceof Error ? e.message : String(e)}` });
       return;
+    }
+    // 手工把 type 留空串也按自动推断处理：删字段而非发 ""（后端拒空串）。
+    if (typeof config === "object" && config !== null && (config as Record<string, unknown>).type === "") {
+      delete (config as Record<string, unknown>).type;
     }
     const renamed = editing.mode === "edit" && editing.originalName !== null && editing.name !== editing.originalName;
     const savedName = editing.name;
@@ -211,15 +262,16 @@ export function McpPanel(props: {
     try {
       await saveMcpServer({
         scope: editing.scope,
-        project: projectCwd,
+        project: effectiveCwd,
         name: editing.name,
         config,
         expectedRevision: editing.expectedRevision,
         originalName: renamed && editing.originalName !== null ? editing.originalName : null,
       });
       if (!alive.current) return;
-      onToast(`已保存 ${savedName}`, "info");
+      onToast(editing.mode === "add" ? `已添加 MCP 服务器 · ${savedName}` : "MCP 配置已保存 · revision 已校验", "info");
       setChangedOnce(true);
+      setSavedNote(true);
       setEditing(null);
       await load();
     } catch (e) {
@@ -277,7 +329,7 @@ export function McpPanel(props: {
     try {
       await deleteMcpServer({
         scope: deleting.scope,
-        project: projectCwd,
+        project: effectiveCwd,
         name: deleting.name,
         expectedRevision: file.revision,
       });
@@ -299,28 +351,57 @@ export function McpPanel(props: {
 
   return (
     <div className="mcp-panel">
+      <PageHeader
+        kicker="环境配置 · MCP"
+        title="MCP 服务器"
+        sub="用户级与项目级两套作用域。写入前校验字段白名单，并携带 revision 以避免并发覆盖。"
+        actions={
+          <>
+            <button type="button" className="btn btn-ghost" disabled={busy || loading} onClick={() => void revealConfig()}>
+              打开配置文件
+            </button>
+            <button type="button" className="btn btn-primary" disabled={busy || loading || targetBlocked} onClick={openAdd}>
+              添加服务器
+            </button>
+          </>
+        }
+      />
       <div className="mcp-toolbar">
-        <label className="mcp-scope">
-          配置范围
-          <select
-            aria-label="配置范围"
-            value={scopeKey}
-            disabled={busy}
-            onChange={(e) => setScopeKey(e.target.value)}
-          >
-            <option value="user">用户级 (~/.omp/agent/mcp.json)</option>
-            {projects.map((p) => (
-              <option key={p.cwd} value={p.cwd}>
-                {p.name} — {p.cwd}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="btn btn-small" disabled={busy || loading || targetBlocked} onClick={openAdd}>
-          新增
-        </button>
+        <Seg
+          label="配置范围"
+          value={scope}
+          disabled={busy}
+          onChange={(v) => setScope(v)}
+          options={[
+            { value: "user", label: "用户级" },
+            { value: "project", label: "项目级" },
+          ]}
+        />
+        {scope === "project" ? (
+          <label className="mcp-scope">
+            项目
+            <select
+              aria-label="项目"
+              value={effectiveCwd ?? ""}
+              disabled={busy || projects.length === 0}
+              onChange={(e) => setProjectCwd(e.target.value === "" ? null : e.target.value)}
+            >
+              {projects.map((p) => (
+                <option key={p.cwd} value={p.cwd}>
+                  {p.name} — {p.cwd}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <span className="spacer" />
+        {targetFile !== undefined ? (
+          <span className="meta" title={targetFile.revision}>
+            rev {targetFile.revision === "absent" || targetFile.revision === "unreadable" ? targetFile.revision : targetFile.revision.slice(0, 12)}
+            {targetFile.modifiedAt === null ? null : ` · ${formatRelativeTime(targetFile.modifiedAt)}`}
+          </span>
+        ) : null}
       </div>
-      {targetFile !== undefined && <div className="muted mono mcp-path">{targetFile.path}</div>}
       {loadError !== null && (
         <div className="banner banner-error">
           <span>{loadError}</span>
@@ -338,114 +419,137 @@ export function McpPanel(props: {
       {loading && data === null ? (
         <div className="muted">加载中…</div>
       ) : (
-        <div className="mcp-list">
-          {targetFile !== undefined && !targetFile.exists && (
-            <div className="muted">该范围还没有 MCP 配置文件，新增第一条服务器即可创建。</div>
-          )}
-          {rows.map((s) => (
-            <div key={`${s.scope}:${s.name}`} className="mcp-row" data-testid={`mcp-row-${s.scope}-${s.name}`}>
-              <div className="mcp-row-head">
-                <span className="mono mcp-name">{s.name}</span>
-                <Badge tone={s.transport === "unknown" ? "danger" : "grey"}>{s.transport}</Badge>
-                <Badge
-                  tone={s.effective ? "accent" : s.shadowedBy === "disabledServers" ? "danger" : "grey"}
-                >
-                  {statusText(s)}
-                </Badge>
-                {s.hasAuth && <Badge tone="grey">OAuth/auth</Badge>}
-              </div>
-              <div className="muted mono mcp-endpoint">
-                {s.command !== null ? (
-                  <>
-                    {s.command}
-                    {s.argCount > 0 && <span> · {s.argCount} 个参数</span>}
-                  </>
-                ) : (
-                  (s.url ?? "—")
-                )}
-              </div>
-              {(s.envKeys.length > 0 || s.headerKeys.length > 0) && (
-                <div className="mcp-keys">
-                  {s.envKeys.map((k) => (
-                    <span key={`env:${k}`} className="mcp-key-chip mono" title="环境变量名（值不会展示）">
-                      env:{k}
-                    </span>
-                  ))}
-                  {s.headerKeys.map((k) => (
-                    <span key={`header:${k}`} className="mcp-key-chip mono" title="请求头名（值不会展示）">
-                      header:{k}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="mcp-actions">
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  aria-label={`${s.enabled ? "禁用" : "启用"} ${s.name}`}
-                  title={
-                    s.shadowedBy === "disabledServers"
-                      ? DISABLED_SERVERS_HINT
-                      : s.effective
-                        ? undefined
-                        : `该条目当前不会生效：${statusText(s)}`
-                  }
-                  disabled={busy || targetBlocked || s.shadowedBy === "disabledServers"}
-                  onClick={() => void toggle(s)}
-                >
-                  {s.enabled ? "禁用" : "启用"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  aria-label={`编辑 ${s.name}`}
-                  disabled={busy || targetBlocked}
-                  onClick={() => void openEdit(s)}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small btn-danger"
-                  aria-label={`删除 ${s.name}`}
-                  disabled={busy || targetBlocked}
-                  onClick={() => setDeleting({ scope: s.scope, name: s.name })}
-                >
-                  删除
-                </button>
-              </div>
-              {s.shadowedBy === "disabledServers" ? (
-                <div className="muted mcp-hint">{DISABLED_SERVERS_HINT}</div>
-              ) : null}
+        <Panel
+          title="服务器"
+          body="flush"
+          foot={<><span>{rows.length} 个服务器 · 工具数来自最近一次握手</span><span className="mono">{savedNote ? "revision 已校验" : targetFile === undefined ? "—" : targetFile.revision.slice(0, 12)}</span></>}
+        >
+          {targetFile !== undefined && !targetFile.exists ? (
+            <div className="pane-note">该范围还没有 MCP 配置文件，新增第一条服务器即可创建。</div>
+          ) : rows.length === 0 ? (
+            <div className="pane-note">该范围还没有服务器。</div>
+          ) : (
+            <div className="tbl-wrap">
+            <table className="tbl mcp-table">
+              <thead>
+                <tr>
+                  <th scope="col">服务器</th>
+                  <th scope="col">传输</th>
+                  <th scope="col">命令 · 地址</th>
+                  <th scope="col" className="r">工具</th>
+                  <th scope="col">状态</th>
+                  <th scope="col" className="r">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((s) => {
+                  const key = `${s.scope}:${s.name}`;
+                  const hs = handshakes[key];
+                  // mcp-P1-5：argv 可能含 token，后端只给首词 + 计数；此处渲染首词 + 参数计数，
+                  // 完整命令见编辑框（避免泄露凭据）。
+                  const endpoint = s.command !== null ? s.command : (s.url ?? "—");
+                  const argsHint = s.command !== null && s.argCount > 0 ? ` · ${s.argCount} 个参数` : "";
+                  const sub = s.scope === "user" ? "~/.omp/agent/mcp.json" : `${displayCwd(effectiveCwd ?? "")}/.omp/mcp.json`;
+                  return (
+                    <tr key={key} data-testid={`mcp-row-${s.scope}-${s.name}`}>
+                      <td>
+                        <span className="strong">{s.name}</span>
+                        <span className="sub mono" title={targetFile?.path}>{sub}</span>
+                      </td>
+                      <td>
+                        <Badge tone="quiet">{s.transport}</Badge>
+                      </td>
+                      <td className="mono mcp-cmd" title={s.command !== null ? `${endpoint}${argsHint}（完整命令见编辑框）` : endpoint}>{endpoint}{argsHint === "" ? null : <span className="muted">{argsHint}</span>}</td>
+                      <td className="r mono">{hs === undefined ? <span className="muted">—</span> : hs.ok ? (hs.tools ?? "—") : <span className="muted">—</span>}</td>
+                      <td>
+                        <Badge tone={s.effective ? "ok" : s.shadowedBy === "disabledServers" ? "danger" : "grey"}>
+                          {s.effective ? <span className="dot ok" aria-hidden="true" /> : null}
+                          {statusText(s)}
+                        </Badge>
+                      </td>
+                      <td className="r cell-actions">
+                        <button
+                          type="button"
+                          className="btn btn-small btn-quiet"
+                          disabled={busy || targetBlocked || handshaking !== null}
+                          aria-busy={handshaking === key}
+                          onClick={() => void handshake(s)}
+                        >
+                          {handshaking === key ? "测试中…" : "测试"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-small btn-quiet"
+                          aria-label={`${s.enabled ? "禁用" : "启用"} ${s.name}`}
+                          title={
+                            s.shadowedBy === "disabledServers"
+                              ? DISABLED_SERVERS_HINT
+                              : s.effective
+                                ? undefined
+                                : `该条目当前不会生效：${statusText(s)}`
+                          }
+                          disabled={busy || targetBlocked || s.shadowedBy === "disabledServers"}
+                          onClick={() => void toggle(s)}
+                        >
+                          {s.enabled ? "禁用" : "启用"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-small btn-quiet"
+                          aria-label={`编辑 ${s.name}`}
+                          disabled={busy || targetBlocked}
+                          onClick={() => void openEdit(s)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-small btn-quiet btn-danger-ghost"
+                          aria-label={`删除 ${s.name}`}
+                          disabled={busy || targetBlocked}
+                          onClick={() => setDeleting({ scope: s.scope, name: s.name })}
+                        >
+                          删除
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {shadowedPeers.map((s) => (
+                  <tr key={`peer:${s.name}`} className="mcp-shadowed" data-testid={`mcp-row-user-${s.name}`}>
+                    <td>
+                      <span className="strong muted">{s.name}</span>
+                      <span className="sub mono">~/.omp/agent/mcp.json</span>
+                    </td>
+                    <td><Badge tone="quiet">{s.transport}</Badge></td>
+                    <td className="mono mcp-cmd muted">{s.command ?? s.url ?? "—"}</td>
+                    <td className="r mono muted">—</td>
+                    <td><Badge tone="grey">被覆盖</Badge></td>
+                    <td className="r muted">只读</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             </div>
-          ))}
-          {shadowedPeers.length > 0 && (
-            <div className="mcp-secondary">
-              <div className="muted">用户级同名条目（已被项目级覆盖，只读；切换到用户级范围可管理）</div>
-              {shadowedPeers.map((s) => (
-                <div key={`peer:${s.name}`} className="mcp-row mcp-row-peer" data-testid={`mcp-row-user-${s.name}`}>
-                  <span className="mono mcp-name">{s.name}</span>
-                  <Badge tone={s.shadowedBy === "disabledServers" ? "danger" : "grey"}>{statusText(s)}</Badge>
-                </div>
-              ))}
-            </div>
           )}
-        </div>
+        </Panel>
       )}
+      <div className="inline-note">同时被其他进程修改时，保存会以冲突返回而不是覆盖；先刷新再保存。</div>
       {changedOnce && (
         <div className="pane-note">已运行的 omp 会话需执行 /mcp reload 或重启后才会读取修改。</div>
       )}
       {editing !== null && (
         <Modal
-          title={editing.mode === "add" ? "新增 MCP 服务器" : "编辑 MCP 服务器"}
+          title={editing.mode === "add" ? "添加 MCP 服务器" : "编辑 MCP 服务器"}
+          sub="写入前会做字段白名单校验，并携带 revision。"
           onClose={() => setEditing(null)}
           footer={
             <>
-              <button type="button" className="btn" onClick={() => setEditing(null)}>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
                 取消
               </button>
-              <button type="button" className="btn btn-accent" disabled={busy} onClick={() => void submitEdit()}>
-                保存
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void submitEdit()}>
+                {editing.mode === "add" ? "添加" : "保存"}
               </button>
             </>
           }
@@ -455,9 +559,10 @@ export function McpPanel(props: {
           )}
           {editing.conflict && <div className="banner banner-error">{CONFLICT_TEXT}</div>}
           {editing.error !== null && <div className="banner banner-error">{editing.error}</div>}
-          <label className="mcp-field">
-            服务器名称
+          <div className="fld">
+            <label htmlFor="mcp-edit-name">服务器名称</label>
             <input
+              id="mcp-edit-name"
               aria-label="服务器名称"
               className="mcp-input"
               data-autofocus
@@ -468,10 +573,51 @@ export function McpPanel(props: {
               spellCheck={false}
               onChange={(e) => setEditing({ ...editing, name: e.target.value })}
             />
-          </label>
-          <label className="mcp-field">
-            配置 JSON
+          </div>
+          <div className="fld-2">
+            <div className="fld">
+              <label htmlFor="mcp-edit-scope">作用域</label>
+              <select
+                id="mcp-edit-scope"
+                aria-label="作用域"
+                disabled={busy}
+                value={editing.scope}
+                onChange={(e) => setEditing({ ...editing, scope: e.target.value as McpScope })}
+              >
+                <option value="user">用户级</option>
+                <option value="project">项目级</option>
+              </select>
+            </div>
+            <div className="fld">
+              <label htmlFor="mcp-edit-transport">传输</label>
+              <select
+                id="mcp-edit-transport"
+                aria-label="传输"
+                disabled={busy}
+                value={(() => { try { const v = JSON.parse(editing.text) as { type?: unknown }; return typeof v.type === "string" ? v.type : ""; } catch { return ""; } })()}
+                onChange={(e) => {
+                  try {
+                    const v = JSON.parse(editing.text) as Record<string, unknown>;
+                    // 自动推断 = 缺省 type（后端无 type 即按 command/url 推断；空串会被拒）。
+                    if (e.target.value === "") delete v.type;
+                    else v.type = e.target.value;
+                    setEditing({ ...editing, text: JSON.stringify(v, null, 2) });
+                  } catch {
+                    // JSON 非法时不改写，等用户修好（保存时有 parse 报错）。
+                  }
+                }}
+              >
+                <option value="">自动推断</option>
+                <option value="stdio">stdio</option>
+                <option value="http">http</option>
+                <option value="sse">sse</option>
+              </select>
+            </div>
+          </div>
+          <div className="fld">
+            <label htmlFor="mcp-edit-json">配置 JSON</label>
             <textarea
+              id="mcp-edit-json"
               aria-label="服务器配置 JSON"
               className="mono mcp-textarea"
               disabled={busy}
@@ -481,8 +627,9 @@ export function McpPanel(props: {
               value={editing.text}
               onChange={(e) => setEditing({ ...editing, text: e.target.value })}
             />
-          </label>
+          </div>
           <p className="muted">env / headers 中的值会原样写入配置文件</p>
+          <div className="inline-note">保存后会立即尝试握手；握手失败不破坏已保存的配置。</div>
         </Modal>
       )}
       {deleting !== null && (

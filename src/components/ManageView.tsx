@@ -1,11 +1,9 @@
 /**
- * 管理视图：模型 / Agent / 插件 / Skills / MCP / 记忆库六个标签页 + 全部更新 + 单操作日志。
- * 单操作模型（useOmpOp）在此创建并传入插件与技能面板；模型/Agent/MCP 面板不感知
- * omp 操作，用 fieldset 在忙时禁用其内部按钮（结构保持不变，不重挂载）。
+ * 管理视图外壳：状态提供者（useModelDraft/useModelSpecs/useOmpOp 共享实例）+ 路由 + 操作日志。
+ * 各面板自渲染 PageHeader；模型/Agent/MCP 面板用 fieldset 在忙时禁用其内部按钮（结构保持不变，不重挂载）。
  */
 import { useState, type ReactNode } from "react";
-import { PageHeader } from "./page";
-import { ROUTE_TITLE, type ConfigRoute } from "../routes";
+import { type ConfigRoute } from "../routes";
 import {
   checkOmpUpdate,
   normalizeError,
@@ -14,11 +12,12 @@ import {
   upgradeOmpPlugins,
 } from "../api";
 import { errorText } from "../format";
-import { useModelDraft, type ModelDraftState } from "../modelDraft";
+import { useModelDraft, useModelSpecs, type ModelDraftState } from "../modelDraft";
 import type { OmpUpdateCheck, PluginUpgradeChange } from "../types";
 import { McpPanel } from "./McpPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { AgentsTab } from "./AgentsTab";
+import { BenchTab } from "./BenchTab";
 import { ModelsTab } from "./ModelsTab";
 import { PluginsPanel, upgradeIsUpToDate } from "./PluginsPanel";
 import { SkillsPanel } from "./SkillsPanel";
@@ -40,6 +39,7 @@ interface ManageViewProps {
   /** 当前列表已加载的会话 id：记忆库「查看来源会话」据此判断可用性。 */
   loadedSessionIds: ReadonlySet<string>;
   onOpenSession: (sessionId: string) => void;
+  onNavigate: (route: "bench") => void;
 }
 
 interface UpdateAllStep {
@@ -48,14 +48,15 @@ interface UpdateAllStep {
   detail: string;
 }
 
-export function ManageView({ projects, onToast, tab, onCheckOmp, loadedSessionIds, onOpenSession }: ManageViewProps) {
+export function ManageView({ projects, onToast, tab, onCheckOmp, loadedSessionIds, onOpenSession, onNavigate }: ManageViewProps) {
   const op = useOmpOp();
   const draftLoad = useModelDraft(onToast);
+  const draftLoadState = draftLoad.status === "ready" ? draftLoad.state : null;
+  const specs = useModelSpecs(draftLoadState === null ? () => {} : (force?: boolean) => void draftLoadState.loadModels(force ?? false));
   const alive = useAlive();
   const [refreshToken, setRefreshToken] = useState(0);
   const [summary, setSummary] = useState<UpdateAllStep[] | null>(null);
   const busy = op.running !== null;
-
   /** 全部更新：顺序执行，首个失败即停并点名失败步骤；最后检查 omp 本体。 */
   async function updateAll() {
     setSummary(null);
@@ -146,34 +147,9 @@ export function ManageView({ projects, onToast, tab, onCheckOmp, loadedSessionId
       </div></div>)
     : render(draftLoad.state);
 
-  const COPY: Record<ConfigRoute, { kicker: string; sub: string }> = {
-    models: { kicker: "环境配置 · models.yml", sub: "模型库 → 测试 → 角色分配，一页闭环；写入前校验并携带 revision。" },
-    bench: { kicker: "工具 · omp bench", sub: "同 models 页，进入后滚动到「测试」区。" },
-    agents: { kicker: "环境配置 · Agent 定义", sub: "主 Agent 角色分配与子 Agent 模型覆盖。" },
-    plugins: { kicker: "环境配置 · Marketplace", sub: "安装、启停与升级；市场来源单独管理。" },
-    skills: { kicker: "环境配置 · 技能", sub: "已安装技能与更新检查。" },
-    mcp: { kicker: "环境配置 · MCP", sub: "用户与项目作用域；写入经字段白名单校验并携带 revision。" },
-    memory: { kicker: "环境配置 · Mnemopi 记忆库", sub: "记忆库概览、召回图、备份与维护；删除前先备份。" },
-  };
-  const copy = COPY[tab];
+  // 各面板自渲染 PageHeader（COPY 随之迁移）；ManageView 只做状态提供者 + 路由 + 日志。
   return (
     <div className="view manage">
-      <PageHeader
-        kicker={copy.kicker}
-        title={ROUTE_TITLE[tab]}
-        sub={busy ? `${copy.sub}正在执行：${op.running}…` : copy.sub}
-        actions={
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={busy}
-            onClick={() => void updateAll()}
-          >
-            {busy ? <span className="spinner" aria-hidden="true" /> : null}
-            全部更新
-          </button>
-        }
-      />
       {summary !== null ? (
         <ul className="manage-summary" aria-label="全部更新结果">
           {summary.map((s) => (
@@ -184,19 +160,23 @@ export function ManageView({ projects, onToast, tab, onCheckOmp, loadedSessionId
         </ul>
       ) : null}
       <div className="page-body">
-        {tab === "models" || tab === "bench" ? (
+        {tab === "models" ? (
           <fieldset disabled={busy} className="manage-fieldset">
-            {/* 忙时整页禁用是故意的：bench 虽不占单写锁，但全部更新期间避免一切中途编辑。 */}
-            {draftPanel((s) => <ModelsTab onToast={onToast} state={s} focus={tab === "bench" ? "bench" : undefined} />)}
+            {draftPanel((s) => <ModelsTab onToast={onToast} state={s} specs={specs} onNavigateBench={() => onNavigate("bench")} />)}
+          </fieldset>
+        ) : tab === "bench" ? (
+          <fieldset disabled={busy} className="manage-fieldset">
+            {/* 忙时整页禁用是故意的：bench 虽不占单写锁，但全部更新期间避免一切中途编辑。BenchTab 自带页头。 */}
+            {draftPanel((s) => <BenchTab onToast={onToast} state={s} specs={specs} bare />)}
           </fieldset>
         ) : tab === "agents" ? (
           <fieldset disabled={busy} className="manage-fieldset">
-            {draftPanel((s) => <AgentsTab state={s} />)}
+            {draftPanel((s) => <AgentsTab state={s} onToast={onToast} />)}
           </fieldset>
         ) : tab === "plugins" ? (
-          <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} />
+          <PluginsPanel op={op} onToast={onToast} refreshToken={refreshToken} busy={busy} onUpdateAll={() => void updateAll()} />
         ) : tab === "skills" ? (
-          <SkillsPanel op={op} onToast={onToast} refreshToken={refreshToken} />
+          <SkillsPanel op={op} onToast={onToast} refreshToken={refreshToken} busy={busy} />
         ) : tab === "mcp" ? (
           <fieldset disabled={busy} className="manage-fieldset">
             <McpPanel projects={projects} onToast={onToast} />
@@ -227,3 +207,4 @@ function upgradeDetail(changes: PluginUpgradeChange[], output: string): string {
   if (upgradeIsUpToDate(changes, output)) return "全部已是最新";
   return "完成";
 }
+

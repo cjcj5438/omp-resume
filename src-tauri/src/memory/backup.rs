@@ -13,7 +13,7 @@ use super::{bank_segment_ok, io, open_readonly, outside, resolve_contained_dir, 
 use crate::model::{AppError, MemoryBackup, MemoryBackupKind};
 
 /// 备份根目录名 / 快照库名 / manifest 名 / `bank-removed` 内的移入目录名 / 自动留存数
-/// （仅 before-delete、before-restore）。
+/// （before-delete、before-restore、manual 各自独立分组留存）。
 pub const BACKUP_DIR_NAME: &str = "memory-backups";
 pub const BACKUP_DB_FILENAME: &str = "mnemopi.db";
 pub const MANIFEST_FILENAME: &str = "manifest.json";
@@ -31,6 +31,7 @@ pub(crate) fn kind_suffix(kind: MemoryBackupKind) -> &'static str {
         MemoryBackupKind::BeforeDelete => "before-delete",
         MemoryBackupKind::BeforeRestore => "before-restore",
         MemoryBackupKind::BankRemoved => "bank-removed",
+        MemoryBackupKind::Manual => "manual",
     }
 }
 
@@ -39,11 +40,12 @@ fn kind_from_suffix(suffix: &str) -> Option<MemoryBackupKind> {
         "before-delete" => Some(MemoryBackupKind::BeforeDelete),
         "before-restore" => Some(MemoryBackupKind::BeforeRestore),
         "bank-removed" => Some(MemoryBackupKind::BankRemoved),
+        "manual" => Some(MemoryBackupKind::Manual),
         _ => None,
     }
 }
 
-/// 严格校验备份目录名：`^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$`。
+/// 严格校验备份目录名：`^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed|manual)$`。
 fn parse_dirname(dirname: &str) -> Option<MemoryBackupKind> {
     // stamp 固定 16 字节（纯 ASCII 逐字节校验，避免多字节切分 panic）。
     let (stamp, rest) = dirname.as_bytes().split_at_checked(16)?;
@@ -429,6 +431,7 @@ mod tests {
             MemoryBackupKind::BeforeDelete,
             MemoryBackupKind::BeforeRestore,
             MemoryBackupKind::BankRemoved,
+            MemoryBackupKind::Manual,
         ] {
             assert_eq!(kind_from_suffix(kind_suffix(kind)), Some(kind));
         }
@@ -444,6 +447,10 @@ mod tests {
         assert_eq!(
             parse_dirname("20261020T120000Z-bank-removed"),
             Some(MemoryBackupKind::BankRemoved)
+        );
+        assert_eq!(
+            parse_dirname("20261020T120000Z-manual"),
+            Some(MemoryBackupKind::Manual)
         );
         // 分隔符/长度/大小写/多字节/路径 任一不符即拒（防切分 panic 与穿越）。
         for bad in [

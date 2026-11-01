@@ -8,6 +8,8 @@
  * Esc 关闭；页面里有模态对话框时不抢 Esc（让对话框先关自己）。
  */
 import { useEffect, useRef, type ReactNode } from "react";
+import { X } from "lucide-react";
+import { Ico } from "./ui";
 import "./Drawer.css";
 
 export function Drawer(props: {
@@ -15,9 +17,13 @@ export function Drawer(props: {
   label: string;
   onClose: () => void;
   inline?: boolean;
+  /** 窄版（392–440px，规格/bench 抽屉用）；默认宽版。 */
+  narrow?: boolean;
+  /** 底栏（保存/取消等操作）；无则不渲染。 */
+  footer?: ReactNode;
   children: ReactNode;
 }): ReactNode {
-  const { title, label, onClose, inline = false, children } = props;
+  const { title, label, onClose, inline = false, narrow = false, footer, children } = props;
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -36,7 +42,7 @@ export function Drawer(props: {
 
   return (
     <div
-      className={inline ? "drawer drawer-inline" : "drawer"}
+      className={inline ? "drawer drawer-inline" : narrow ? "drawer drawer-narrow" : "drawer"}
       role="complementary"
       aria-label={label}
       tabIndex={inline ? undefined : -1}
@@ -44,11 +50,12 @@ export function Drawer(props: {
     >
       <header className="drawer-head">
         <h2 className="drawer-title">{title}</h2>
-        <button type="button" className="btn btn-small drawer-close" onClick={onClose} aria-label={`关闭${label}`}>
-          关闭
+        <button type="button" className="btn btn-small btn-quiet drawer-close" onClick={onClose} aria-label={`关闭${label}`}>
+          <Ico icon={X} size={14} />
         </button>
       </header>
       <div className="drawer-body">{children}</div>
+      {footer !== undefined ? <footer className="drawer-foot">{footer}</footer> : null}
     </div>
   );
 }

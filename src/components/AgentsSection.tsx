@@ -1,6 +1,6 @@
 /**
  * 「Agent」区块：VibeCard（指挥者 + fast/good 两档）、AgentRow 列表与保存条。
- * 纯渲染组件，状态全部来自 ModelDraftState。编排图（AgentFlow）由 AgentsTab
+ * 纯渲染组件，状态全部来自 ModelDraftState。组织图（AgentOrgTree）由 AgentsTab
  * 直接渲染（可交互），这里不渲染，只保留 agentNodes 供 AgentRow 列表使用。
  * 与 ModelsSection 同源（见 modelDraft.ts 头注）；组件测试在
  * ModelSections.test.tsx / AgentsTab.test.tsx。
@@ -26,7 +26,6 @@ import {
 } from "../roleCards";
 import type { ModelDraftState } from "../modelDraft";
 import { attachedTitle, configFromDraft } from "../modelDraft";
-import { agentFlowNodes } from "./AgentFlow";
 import { ModelPicker } from "./ModelPicker";
 import { ChainChip, ThinkingSegment } from "./ModelDraftWidgets";
 
@@ -36,9 +35,12 @@ export function AgentsSection(props: { state: ModelDraftState }) {
   // 「当前使用」按草稿视角重算：picker 一改就更新，不必等保存。
   const view = configFromDraft(config, draft);
 
-  const agentNodes = agentFlowNodes(s).map((node) => ({
-    ...node,
-    row: draft.overrides.get(node.agent.name) ?? { selector: null, thinking: "", touched: false },
+  const agentNodes = config.agents.map((agent) => ({
+    agent,
+    effective: resolveAgentEffective(agent, view.agentOverrides[agent.name], view.roles, modelsList),
+    disabled: draft.disabled.has(agent.name),
+    advisor: draft.advisor.get(agent.name) ?? "default",
+    row: draft.overrides.get(agent.name) ?? { selector: null, thinking: "", touched: false },
   }));
 
   return (

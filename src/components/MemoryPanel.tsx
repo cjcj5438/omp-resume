@@ -1,10 +1,12 @@
 /** 记忆库面板：管理视图「记忆库」标签页——概览头条 → 健康卡 → 项目库图表 →（选中库）右侧抽屉。 */
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { memoryOverview, normalizeError } from "../api";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { memoryBackupAll, memoryOverview, normalizeError } from "../api";
 import type { MemoryBankSummary, MemoryOverview } from "../types";
 import { displayCwd, errorText, formatSize } from "../format";
 import { Drawer } from "./Drawer";
+import { PageHeader, Panel } from "./page";
 import { MemoryBackupsDialog } from "./MemoryBackupsDialog";
+import { MemoryBackupTable } from "./MemoryBackupTable";
 import { MemoryBankHeader, MemoryBanks } from "./MemoryBanks";
 import { MemoryGraph } from "./MemoryGraph";
 import { MemoryList } from "./MemoryList";
@@ -32,11 +34,35 @@ export function MemoryPanel(props: {
   const [memView, setMemView] = useState<"list" | "graph">("list");
   /** 从关系图跳过来的定位 id（列表拉详情置顶展示，可跨分页）。 */
   const [graphFocusId, setGraphFocusId] = useState<string | null>(null);
-  /** 备份面板：null = 关闭，否则为打开时预选的库（null = 全部）。 */
-  const [backupsOpen, setBackupsOpen] = useState<{ bank: string | null } | null>(null);
+  /** 备份面板：null = 关闭，否则为打开时预选的库（null = 全部）+ 可选直达备份。 */
+  const [backupsOpen, setBackupsOpen] = useState<{ bank: string | null; backupId?: string | null } | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [recallStats, setRecallStats] = useState<{ nodes: number; edges: number } | null>(null);
+  /** 召回图计数回调：值不变时返回 prev，避免无意义重渲染。 */
+  const handleRecallStats = useCallback((nodes: number, edges: number): void => {
+    setRecallStats((prev) => (prev !== null && prev.nodes === nodes && prev.edges === edges ? prev : { nodes, edges }));
+  }, []);
   const listRef = useRef<HTMLDivElement>(null);
   const refresh = (): void => setRefreshToken((t) => t + 1);
-
+  async function backupAll(): Promise<void> {
+    if (backingUp) return;
+    setBackingUp(true);
+    try {
+      const res = await memoryBackupAll();
+      const ok = res.backups.length;
+      const failed = res.errors.length;
+      if (failed === 0) {
+        onToast(`${ok} 个记忆库已备份`, "info");
+      } else {
+        onToast(`${ok} 个记忆库已备份，${failed} 个失败`, "error");
+      }
+      refresh();
+    } catch (e: unknown) {
+      onToast(errorText(normalizeError(e)), "error");
+    } finally {
+      setBackingUp(false);
+    }
+  }
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -101,133 +127,181 @@ export function MemoryPanel(props: {
     setGraphFocusId(null);
   }
 
+  const recallBank = [...overview.banks].sort((a, b) => bankMemories(b) - bankMemories(a))[0] ?? null;
+
   return (
-    <div className="mem-panel">
-      <div className="mem-main">
-        <div className="mem-head">
-          <span>
-            记忆后端：{overview.backend ?? "未知"} · {totals.banks} 个项目库 · 共 {totalMemories} 条记忆 · 占用磁盘{" "}
-            {formatSize(totals.bytes)}
-          </span>
-          <span className="mem-head-actions">
-            <button type="button" className="btn btn-small" onClick={() => setBackupsOpen({ bank: null })}>备份与恢复</button>
-            <button type="button" className="btn btn-small" onClick={refresh}>刷新</button>
-          </span>
+    <div className="mem-shell">
+      <PageHeader
+        kicker="环境配置 · Mnemopi 记忆库"
+        title="记忆库"
+        sub="长期记忆库的条目数、覆盖与召回图。删除任何记忆前都会先做一次备份。"
+        actions={
+          <button type="button" className="btn btn-ghost" disabled={backingUp} onClick={() => void backupAll()}>
+            {backingUp ? <span className="spinner" aria-hidden="true" /> : null}
+            立即备份
+          </button>
+        }
+      />
+      <div className="mem-panel">
+        <div className="mem-main">
+          <div className="mem-head">
+            <span>
+              记忆后端：{overview.backend ?? "未知"} · 根目录 <span className="mono">{displayCwd(overview.root)}</span>
+            </span>
+            <span className="mem-head-actions">
+              <button type="button" className="btn btn-small" onClick={() => setBackupsOpen({ bank: null })}>备份与恢复</button>
+              <button type="button" className="btn btn-small" onClick={refresh}>刷新</button>
+            </span>
+          </div>
+          <p className="muted mem-intro">omp 自动从对话中提取并长期保存的记忆；删除类操作前会自动备份。</p>
+          {loadError !== null ? <div className="pane-note">刷新失败：{loadError}</div> : null}
+          {overview.backend !== null && overview.backend !== "mnemopi" ? (
+            <p className="muted">当前后端为 {overview.backend}；本页只展示本地 Mnemopi 库，其他后端的记忆不在这里。</p>
+          ) : null}
+
+          <div className="mem-cards" aria-label="记忆库健康状况">
+            <div className="mem-card">
+              <span className="mem-card-label">记忆总数</span>
+              <span className="mem-card-value">{totalMemories.toLocaleString()}</span>
+              <span className="mem-card-sub">工作 {totals.working.toLocaleString()} · 情节 {totals.episodic.toLocaleString()}</span>
+            </div>
+            <div className={neverRatio > 0.5 ? "mem-card mem-card-warn" : "mem-card"}>
+              <span className="mem-card-label">从未被召回</span>
+              <span className="mem-card-value">{totals.neverRecalled.toLocaleString()}</span>
+              <span className="mem-card-sub">占 {pctText(totals.neverRecalled, totalMemories)} · 从未被再次用过</span>
+            </div>
+            <div className={unconsRatio > 0.5 ? "mem-card mem-card-warn" : "mem-card"}>
+              <span className="mem-card-label">尚未合并</span>
+              <span className="mem-card-value">{totals.unconsolidated.toLocaleString()}</span>
+              <span className="mem-card-sub">占工作记忆 {pctText(totals.unconsolidated, totals.working)} · 等待合并</span>
+            </div>
+            <div className="mem-card">
+              <span className="mem-card-label">磁盘占用</span>
+              <span className="mem-card-value">{formatSize(totals.bytes)}</span>
+              <span className="mem-card-sub">{totals.facts.toLocaleString()} 条事实 · 本地占用</span>
+            </div>
+          </div>
+
+          <div className="mem-grid">
+            <MemoryBanks banks={overview.banks} selected={selected} onSelect={selectBank} onOpenBackups={(bank) => setBackupsOpen({ bank })} onToast={onToast} onChanged={refresh} />
+            {recallBank !== null ? (
+              <Panel
+                title="召回图"
+                meta={recallStats === null ? `${recallBank.displayName}` : `${recallBank.displayName} · ${recallStats.nodes} nodes · ${recallStats.edges} edges`}
+                body="tight"
+                foot={<><span>节点大小代表被召回频率。</span><span className="mono">{recallBank.bank}</span></>}
+              >
+                {bankMemories(recallBank) > 0 ? (
+                  <div className="mem-graph-mini">
+                    <MemoryGraph
+                      bank={recallBank.bank}
+                      displayName={recallBank.displayName}
+                      onOpenInList={(id) => {
+                        selectBank(recallBank.bank);
+                        setGraphFocusId(id);
+                        setMemView("list");
+                      }}
+                      onToast={onToast}
+                      maxNodes={30}
+                      compact
+                      onStats={handleRecallStats}
+                    />
+                  </div>
+                ) : (
+                  <div className="pane-note">该库暂无记忆。</div>
+                )}
+              </Panel>
+            ) : null}
+          </div>
+
+          {selected === null ? (
+            <div className="pane-note">
+              {overview.banks.length === 0 ? "暂无项目库。" : "点上面的项目库，在右侧查看其中的记忆。"}
+            </div>
+          ) : null}
+          <MemoryBackupTable
+            refreshToken={refreshToken}
+            onRestore={(backup) => setBackupsOpen({ bank: backup.bank, backupId: backup.id })}
+          />
         </div>
-        <p className="muted mem-intro">omp 自动从对话中提取并长期保存的记忆；删除类操作前会自动备份。</p>
-        {loadError !== null ? <div className="pane-note">刷新失败：{loadError}</div> : null}
-        {overview.backend !== null && overview.backend !== "mnemopi" ? (
-          <p className="muted">当前后端为 {overview.backend}；本页只展示本地 Mnemopi 库，其他后端的记忆不在这里。</p>
-        ) : null}
 
-        <div className="mem-cards" aria-label="记忆库健康状况">
-          <div className="mem-card">
-            <span className="mem-card-label">记忆总数</span>
-            <span className="mem-card-value">{totalMemories}</span>
-            <span className="mem-card-sub">工作 {totals.working} · 情节 {totals.episodic}</span>
-          </div>
-          <div className={neverRatio > 0.5 ? "mem-card mem-card-warn" : "mem-card"}>
-            <span className="mem-card-label">从未被召回</span>
-            <span className="mem-card-value">{totals.neverRecalled}</span>
-            <span className="mem-card-sub">占 {pctText(totals.neverRecalled, totalMemories)} · 从未被再次用过</span>
-          </div>
-          <div className={unconsRatio > 0.5 ? "mem-card mem-card-warn" : "mem-card"}>
-            <span className="mem-card-label">尚未合并</span>
-            <span className="mem-card-value">{totals.unconsolidated}</span>
-            <span className="mem-card-sub">占工作记忆 {pctText(totals.unconsolidated, totals.working)} · 等待合并</span>
-          </div>
-          <div className="mem-card">
-            <span className="mem-card-label">磁盘占用</span>
-            <span className="mem-card-value">{formatSize(totals.bytes)}</span>
-            <span className="mem-card-sub">{totals.facts} 条事实 · 本地占用</span>
-          </div>
-        </div>
-
-        <MemoryBanks banks={overview.banks} selected={selected} onSelect={selectBank} onOpenBackups={(bank) => setBackupsOpen({ bank })} onToast={onToast} onChanged={refresh} />
-
-        {selected === null ? (
-          <div className="pane-note">
-            {overview.banks.length === 0 ? "暂无项目库。" : "点上面的项目库，在右侧查看其中的记忆。"}
-          </div>
+        {selected === null ? null : (
+          <Drawer
+            inline
+            label={`项目库 ${selected.displayName}`}
+            title={
+              <span className="mem-drawer-title">
+                <span>{selected.displayName}</span>
+                <span className="muted mono">{selected.cwd === null ? "—" : displayCwd(selected.cwd)}</span>
+              </span>
+            }
+            onClose={() => setSelectedBank(null)}
+          >
+            <div ref={listRef} className="mem-list-anchor">
+              <MemoryBankHeader
+                bank={selected}
+                onOpenBackups={(bank) => setBackupsOpen({ bank })}
+                onToast={onToast}
+                onChanged={() => {
+                  setSelectedBank(null);
+                  refresh();
+                }}
+              />
+              {selected.readable ? (
+                <div className="mem-view-switch mem-chips" role="group" aria-label="记忆视图">
+                  {(["list", "graph"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      className="btn btn-small"
+                      aria-pressed={memView === v}
+                      onClick={() => {
+                        setMemView(v);
+                        if (v === "graph") setGraphFocusId(null);
+                      }}
+                    >
+                      {v === "list" ? "列表" : "关系图"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {selected.readable ? (
+                memView === "graph" ? (
+                  <MemoryGraph
+                    key={selected.bank}
+                    bank={selected.bank}
+                    displayName={selected.displayName}
+                    onToast={onToast}
+                    onOpenInList={(id) => {
+                      setGraphFocusId(id);
+                      setMemView("list");
+                      requestAnimationFrame(() => listRef.current?.scrollIntoView({ block: "start" }));
+                    }}
+                  />
+                ) : (
+                  <MemoryList
+                    key={selected.bank}
+                    bank={selected.bank}
+                    displayName={selected.displayName}
+                    loadedSessionIds={loadedSessionIds}
+                    onOpenSession={onOpenSession}
+                    onToast={onToast}
+                    refreshToken={refreshToken}
+                    onRefresh={refresh}
+                    focusId={graphFocusId}
+                    onClearFocus={() => setGraphFocusId(null)}
+                  />
+                )
+              ) : (
+                <div className="pane-note">该库不可读：{selected.error ?? "未知原因"}。</div>
+              )}
+            </div>
+          </Drawer>
+        )}
+        {backupsOpen !== null ? (
+          <MemoryBackupsDialog key={`${backupsOpen.bank ?? "all"}:${backupsOpen.backupId ?? ""}`} initialBank={backupsOpen.bank} initialBackupId={backupsOpen.backupId ?? null} banks={overview.banks} onClose={() => setBackupsOpen(null)} onToast={onToast} onChanged={refresh} />
         ) : null}
       </div>
-
-      {selected === null ? null : (
-        <Drawer
-          inline
-          label={`项目库 ${selected.displayName}`}
-          title={
-            <span className="mem-drawer-title">
-              <span>{selected.displayName}</span>
-              <span className="muted mono">{selected.cwd === null ? "—" : displayCwd(selected.cwd)}</span>
-            </span>
-          }
-          onClose={() => setSelectedBank(null)}
-        >
-          <div ref={listRef} className="mem-list-anchor">
-            <MemoryBankHeader
-              bank={selected}
-              onOpenBackups={(bank) => setBackupsOpen({ bank })}
-              onToast={onToast}
-              onChanged={() => {
-                setSelectedBank(null);
-                refresh();
-              }}
-            />
-            {selected.readable ? (
-              <div className="mem-view-switch mem-chips" role="group" aria-label="记忆视图">
-                {(["list", "graph"] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    className="btn btn-small"
-                    aria-pressed={memView === v}
-                    onClick={() => {
-                      setMemView(v);
-                      if (v === "graph") setGraphFocusId(null);
-                    }}
-                  >
-                    {v === "list" ? "列表" : "关系图"}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {selected.readable ? (
-              memView === "graph" ? (
-                <MemoryGraph
-                  key={selected.bank}
-                  bank={selected.bank}
-                  displayName={selected.displayName}
-                  onToast={onToast}
-                  onOpenInList={(id) => {
-                    setGraphFocusId(id);
-                    setMemView("list");
-                    requestAnimationFrame(() => listRef.current?.scrollIntoView({ block: "start" }));
-                  }}
-                />
-              ) : (
-                <MemoryList
-                  key={selected.bank}
-                  bank={selected.bank}
-                  displayName={selected.displayName}
-                  loadedSessionIds={loadedSessionIds}
-                  onOpenSession={onOpenSession}
-                  onToast={onToast}
-                  refreshToken={refreshToken}
-                  onRefresh={refresh}
-                  focusId={graphFocusId}
-                  onClearFocus={() => setGraphFocusId(null)}
-                />
-              )
-            ) : (
-              <div className="pane-note">该库不可读：{selected.error ?? "未知原因"}。</div>
-            )}
-          </div>
-        </Drawer>
-      )}
-      {backupsOpen !== null ? (
-        <MemoryBackupsDialog initialBank={backupsOpen.bank} banks={overview.banks} onClose={() => setBackupsOpen(null)} onToast={onToast} onChanged={refresh} />
-      ) : null}
     </div>
   );
 }

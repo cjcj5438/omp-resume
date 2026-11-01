@@ -43,6 +43,17 @@
 
 .drawer-close { flex: none; }
 
+.drawer-narrow { width: clamp(392px, 40vw, 440px); }
+
+.drawer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  border-top: 1px solid var(--border);
+}
+
 .drawer-body {
   flex: 1;
   min-height: 0;
@@ -54,12 +65,13 @@
   gap: var(--sp-3);
 }
 
-/* 内联形态：作为父级 flex 行的右列，不再贴窗口边缘，也不遮挡左列。 */
+/* 内联形态：父级 flex 行的右列。sticky 贴外层滚动顶部 + 自身定高滚动（设计稿 ws-rail 同构）；页面窄到抽屉改覆盖层时 max-height 失效，由 fixed inset 接管。 */
 .drawer-inline {
-  position: static;
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 120px);
   width: clamp(360px, 44%, 620px);
   flex: none;
-  height: 100%;
   border-left: 1px solid var(--border);
   border-top: none;
   box-shadow: none;

@@ -7,14 +7,15 @@
 //! - 绝不读取 `~/.omp/agent/models.yml` / `models.json` 等含凭据文件，
 //!   绝不运行 `omp config list`（会输出 token 类设置）；
 //! - 任何 omp 输出都不写日志。
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
 use crate::model::{
-    AgentDefinition, AgentDetail, AgentSource, AppError, ErrorCode, ModelConfig, ModelInfo,
-    RetryStatus, UpdateModelConfigResult,
+    AgentDefinition, AgentDetail, AgentSource, AppError, CreateAgentDefinitionResult, ErrorCode,
+    ModelConfig, ModelInfo, RetryStatus, UpdateModelConfigResult,
 };
 use crate::omp_cli::{
     omp_not_found, require_success, resolve_omp, run_omp, strip_ansi, OmpBusy, CHECK_TIMEOUT,
@@ -651,6 +652,118 @@ pub fn update_model_config_impl(
 }
 
 // ---------------------------------------------------------------------------
+// 新建用户 agent 定义
+// ---------------------------------------------------------------------------
+
+/// agent 名校验：1–64 个小写字母、数字、下划线或连字符（文件名即 `<name>.md`，
+/// 字符集本身排除路径穿越）。
+fn validate_agent_name(name: &str) -> Result<(), AppError> {
+    let ok = !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "agent 名称须为 1–64 个小写字母、数字、下划线或连字符",
+        ))
+    }
+}
+
+/// agent 描述校验：trim 后 1–500 字符、不含控制字符；返回 trim 后的正文。
+fn validate_agent_description(description: &str) -> Result<String, AppError> {
+    let trimmed = description.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 500 {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "agent 描述须为 1–500 字符",
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            "agent 描述不能包含控制字符",
+        ));
+    }
+    Ok(trimmed.to_owned())
+}
+
+/// YAML 双引号标量：只转义 `\` 与 `"`（与 `util::unquote` 双引号分支 roundtrip）。
+fn yaml_double_quote(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 2);
+    out.push('"');
+    for c in raw.chars() {
+        if matches!(c, '\\' | '"') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
+/// CONTRACT §4.70：新建 `~/.omp/agent/agents/<name>.md`（frontmatter + 空正文）。
+/// 目录缺失则建 0700；同名文件已存在则拒绝；整体持有 `OmpBusy` 单写门禁。
+pub fn create_agent_definition_impl(
+    home: &Path,
+    busy: &OmpBusy,
+    name: &str,
+    description: &str,
+) -> Result<CreateAgentDefinitionResult, AppError> {
+    validate_agent_name(name)?;
+    let description = validate_agent_description(description)?;
+    let _guard = busy.try_acquire()?;
+    // 与 `user_agents` 同一路径来源：`~/.omp/agent/agents`。
+    let dir = home.join(".omp/agent/agents");
+    if !dir.is_dir() {
+        std::fs::create_dir_all(&dir).map_err(|e| io_error("无法创建 agent 目录", e))?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| io_error("无法设置 agent 目录权限", e))?;
+    }
+    let path = dir.join(format!("{name}.md"));
+    if path.exists() {
+        return Err(AppError::new(
+            ErrorCode::InvalidInput,
+            format!("agent 定义已存在：{name}"),
+        ));
+    }
+    let text = format!(
+        "---\nname: {}\ndescription: {}\n---\n",
+        yaml_double_quote(name),
+        yaml_double_quote(&description),
+    );
+    atomic_write_agent(&path, text.as_bytes())?;
+    Ok(CreateAgentDefinitionResult {
+        name: name.to_owned(),
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// 原子写 agent 定义：同目录临时文件（0600）+ fsync + rename（`model_specs::io` 同模式）。
+fn atomic_write_agent(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    use crate::util::{AtomicStage, PendingAtomic};
+    let pending =
+        PendingAtomic::stage(path, bytes, "agent.md", None).map_err(|(stage, error)| {
+            match (stage, error.kind()) {
+                (AtomicStage::Create, std::io::ErrorKind::InvalidInput) => {
+                    io_error("agent 定义路径无效", error)
+                }
+                (AtomicStage::Create, _) => io_error("无法创建 agent 临时文件", error),
+                (AtomicStage::Write, _) => io_error("无法写入 agent 定义", error),
+                (AtomicStage::Chmod, _) => io_error("无法设置 agent 定义权限", error),
+                (AtomicStage::Sync, _) => io_error("无法同步 agent 定义", error),
+                (AtomicStage::Rename, _) => io_error("无法保存 agent 定义", error),
+            }
+        })?;
+    pending
+        .commit(path)
+        .map_err(|(_, error)| io_error("无法保存 agent 定义", error))
+}
+
+// ---------------------------------------------------------------------------
 // Tauri 命令
 // ---------------------------------------------------------------------------
 
@@ -701,6 +814,21 @@ pub async fn update_model_config(
         let busy = app.state::<OmpBusy>();
         let bin = resolve_omp().ok_or_else(omp_not_found)?;
         update_model_config_impl(&bin, &busy, &key, &value, &expected)
+    })
+    .await
+}
+
+/// CONTRACT §4.70：新建用户 agent 定义（`~/.omp/agent/agents/<name>.md`，frontmatter + 空正文）。
+#[tauri::command]
+pub async fn create_agent_definition(
+    app: tauri::AppHandle,
+    name: String,
+    description: String,
+) -> Result<CreateAgentDefinitionResult, AppError> {
+    crate::blocking(move || {
+        use tauri::Manager;
+        let busy = app.state::<OmpBusy>();
+        create_agent_definition_impl(&crate::util::home_dir(), &busy, &name, &description)
     })
     .await
 }
@@ -1208,5 +1336,101 @@ mod tests {
         let err = get_model_config_impl(&bin, &home).unwrap_err();
         assert_eq!(err.code, ErrorCode::OmpFailed);
         assert!(err.message.contains(KEY_DISABLED_AGENTS), "{}", err.message);
+    }
+
+    #[test]
+    fn create_agent_rejects_illegal_names_and_descriptions() {
+        let home = tempfile::tempdir().unwrap();
+        let busy = OmpBusy::default();
+        let create = |name: &str, description: &str| {
+            create_agent_definition_impl(home.path(), &busy, name, description)
+        };
+        let long_name = "x".repeat(65);
+        for name in [
+            "",
+            "Upper",
+            "has space",
+            "a/b",
+            "..",
+            "a.b",
+            "trail!",
+            long_name.as_str(),
+        ] {
+            let err = create(name, "描述").unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidInput, "{name}");
+        }
+        let long_desc = "描".repeat(501);
+        for description in ["", "   ", long_desc.as_str(), "含\n换行", "含\t制表"] {
+            let err = create("scout", description).unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidInput, "{description:?}");
+        }
+        // 校验拒绝后不得建目录、不得写盘。
+        assert!(!home.path().join(".omp").exists());
+        // 边界合法：1 / 64 字符名、1 / 500 字符描述。
+        create("a", "描").unwrap();
+        create("y".repeat(64).as_str(), "描".repeat(500).as_str()).unwrap();
+    }
+
+    #[test]
+    fn create_agent_refuses_existing_file_without_touching_it() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join(".omp/agent/agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("scout.md"), "原内容").unwrap();
+        let err = create_agent_definition_impl(home.path(), &OmpBusy::default(), "scout", "新描述")
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        assert!(err.message.contains("已存在"), "{}", err.message);
+        assert_eq!(
+            std::fs::read(dir.join("scout.md")).unwrap(),
+            "原内容".as_bytes()
+        );
+    }
+
+    #[test]
+    fn create_agent_file_roundtrips_through_parse_frontmatter() {
+        let home = tempfile::tempdir().unwrap();
+        let description = r#"带 "引号" 与 \ 反斜杠"#;
+        let result =
+            create_agent_definition_impl(home.path(), &OmpBusy::default(), "scout", description)
+                .unwrap();
+        assert_eq!(result.name, "scout");
+        assert!(
+            result.path.ends_with(".omp/agent/agents/scout.md"),
+            "{}",
+            result.path
+        );
+        let text =
+            String::from_utf8(std::fs::read(&result.path).unwrap()).expect("写入的是合法 UTF-8");
+        let frontmatter = parse_frontmatter(&text).expect("frontmatter 可解析");
+        assert_eq!(frontmatter.name.as_deref(), Some("scout"));
+        assert_eq!(frontmatter.description.as_deref(), Some(description));
+        let def = parse_agent_file(&text, "fallback");
+        assert_eq!(def.name, "scout");
+        assert_eq!(def.description, description);
+        assert!(def.system_prompt.is_empty(), "正文为空");
+    }
+
+    #[test]
+    fn create_agent_creates_missing_dir_0700_and_file_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        assert!(!home.path().join(".omp").exists());
+        let result =
+            create_agent_definition_impl(home.path(), &OmpBusy::default(), "scout", "描述")
+                .unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&home.path().join(".omp/agent/agents")), 0o700);
+        assert_eq!(mode(std::path::Path::new(&result.path)), 0o600);
+    }
+
+    #[test]
+    fn create_agent_holds_ompbusy_single_write_gate() {
+        let home = tempfile::tempdir().unwrap();
+        let busy = OmpBusy::default();
+        let _guard = busy.try_acquire().unwrap();
+        let err = create_agent_definition_impl(home.path(), &busy, "scout", "描述").unwrap_err();
+        assert_eq!(err.code, ErrorCode::Busy);
+        assert!(!home.path().join(".omp").exists(), "门禁拒绝后不得写盘");
     }
 }

@@ -12,10 +12,11 @@ import { useOmpOp, type ToastFn } from "./useOmpOp";
 
 function Host({ onToast, show = true }: { onToast: ToastFn; show?: boolean }) {
   const op = useOmpOp();
+  const busy = op.running !== null;
   return (
     <>
       <div data-testid="op-state">{op.running ?? "idle"}</div>
-      {show ? <PluginsPanel op={op} onToast={onToast} refreshToken={0} /> : null}
+      {show ? <PluginsPanel op={op} onToast={onToast} refreshToken={0} busy={busy} onUpdateAll={() => {}} /> : null}
     </>
   );
 }
@@ -44,14 +45,14 @@ describe("PluginsPanel（有状态 mock）", () => {
   it("渲染已安装行、状态徽章、时间与 npm 只读列表", async () => {
     await installMockBackend();
     renderPanel();
-    await screen.findByRole("button", { name: "禁用 hello-plugin@probe-mkt" });
+    await screen.findByRole("switch", { name: "禁用 hello-plugin@probe-mkt" });
 
     const hello = pluginRow("hello-plugin", "probe-mkt");
-    expect(within(hello).getByText("启用")).toBeInTheDocument();
+    expect(within(hello).getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" })).toHaveAttribute("aria-checked", "true");
     expect(within(hello).getByText("1.0.0")).toBeInTheDocument();
     expect(within(hello).getByText(/安装 /)).toBeInTheDocument();
     const formatter = pluginRow("formatter", "community");
-    expect(within(formatter).getByText("已禁用")).toBeInTheDocument();
+    expect(within(formatter).getByRole("switch", { name: "启用 formatter@community" })).toHaveAttribute("aria-checked", "false");
 
     expect(screen.getByText("npm 插件（只读）")).toBeInTheDocument();
     expect(screen.getByText("omp-enforce-uv")).toBeInTheDocument();
@@ -59,29 +60,29 @@ describe("PluginsPanel（有状态 mock）", () => {
     expect(screen.getByText("Marketplace")).toBeInTheDocument();
   });
 
-  it("禁用再启用往返，徽章同步更新", async () => {
+  it("禁用再启用往返，开关同步更新", async () => {
     await installMockBackend();
     const { onToast } = renderPanel();
-    await screen.findByRole("button", { name: "禁用 hello-plugin@probe-mkt" });
+    await screen.findByRole("switch", { name: "禁用 hello-plugin@probe-mkt" });
 
-    fireEvent.click(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" }));
+    fireEvent.click(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith("已禁用 hello-plugin@probe-mkt", "info"),
     );
     expect(
-      await screen.findByRole("button", { name: "启用 hello-plugin@probe-mkt" }),
+      await screen.findByRole("switch", { name: "启用 hello-plugin@probe-mkt" }),
     ).toBeInTheDocument();
     expect(
-      within(pluginRow("hello-plugin", "probe-mkt")).getByText("已禁用"),
-    ).toBeInTheDocument();
+      within(pluginRow("hello-plugin", "probe-mkt")).getByRole("switch", { name: "启用 hello-plugin@probe-mkt" }),
+    ).toHaveAttribute("aria-checked", "false");
 
-    fireEvent.click(screen.getByRole("button", { name: "启用 hello-plugin@probe-mkt" }));
+    fireEvent.click(screen.getByRole("switch", { name: "启用 hello-plugin@probe-mkt" }));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith("已启用 hello-plugin@probe-mkt", "info"),
     );
     expect(
-      within(pluginRow("hello-plugin", "probe-mkt")).getByText("启用"),
-    ).toBeInTheDocument();
+      within(pluginRow("hello-plugin", "probe-mkt")).getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 
   it("卸载需确认：取消无事，确认删除行", async () => {
@@ -177,10 +178,10 @@ describe("PluginsPanel（有状态 mock）", () => {
     window.history.replaceState({}, "", "/?latency=200");
     await installMockBackend();
     renderPanel();
-    await screen.findByRole("button", { name: "禁用 hello-plugin@probe-mkt" });
+    await screen.findByRole("switch", { name: "禁用 hello-plugin@probe-mkt" });
 
-    fireEvent.click(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" }));
-    expect(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }));
+    expect(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "升级全部插件" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "刷新 marketplace 目录" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "添加" })).toBeDisabled();
@@ -192,7 +193,7 @@ describe("PluginsPanel（有状态 mock）", () => {
     expect(screen.getByRole("button", { name: "浏览 probe-mkt" })).toBeEnabled();
 
     expect(
-      await screen.findByRole("button", { name: "启用 hello-plugin@probe-mkt" }),
+      await screen.findByRole("switch", { name: "启用 hello-plugin@probe-mkt" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "升级全部插件" })).toBeEnabled();
     expect(screen.getByTestId("op-state")).toHaveTextContent("idle");
@@ -202,21 +203,21 @@ describe("PluginsPanel（有状态 mock）", () => {
     window.history.replaceState({}, "", "/?fail=omp_plugin_set_enabled");
     await installMockBackend();
     const { onToast } = renderPanel();
-    await screen.findByRole("button", { name: "禁用 hello-plugin@probe-mkt" });
+    await screen.findByRole("switch", { name: "禁用 hello-plugin@probe-mkt" });
 
-    fireEvent.click(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" }));
+    fireEvent.click(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith(
         "mock 强制失败：omp_plugin_set_enabled",
         "error",
       ),
     );
-    expect(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "升级全部插件" })).toBeEnabled();
     expect(screen.getByTestId("op-state")).toHaveTextContent("idle");
     expect(
-      within(pluginRow("hello-plugin", "probe-mkt")).getByText("启用"),
-    ).toBeInTheDocument();
+      within(pluginRow("hello-plugin", "probe-mkt")).getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 
   it("操作中卸载面板不崩：完成后面板可重新挂载", async () => {
@@ -224,9 +225,9 @@ describe("PluginsPanel（有状态 mock）", () => {
     await installMockBackend();
     const onToast = vi.fn();
     const { rerender } = render(<Host onToast={onToast} show />);
-    await screen.findByRole("button", { name: "禁用 hello-plugin@probe-mkt" });
+    await screen.findByRole("switch", { name: "禁用 hello-plugin@probe-mkt" });
 
-    fireEvent.click(screen.getByRole("button", { name: "禁用 hello-plugin@probe-mkt" }));
+    fireEvent.click(screen.getByRole("switch", { name: "禁用 hello-plugin@probe-mkt" }));
     expect(screen.getByTestId("op-state")).toHaveTextContent("禁用 hello-plugin@probe-mkt");
     rerender(<Host onToast={onToast} show={false} />);
     await waitFor(() => expect(screen.getByTestId("op-state")).toHaveTextContent("idle"));
@@ -235,7 +236,7 @@ describe("PluginsPanel（有状态 mock）", () => {
     rerender(<Host onToast={onToast} show />);
     // 后端操作实际完成了：重挂载后插件已是禁用态。
     expect(
-      await screen.findByRole("button", { name: "启用 hello-plugin@probe-mkt" }),
+      await screen.findByRole("switch", { name: "启用 hello-plugin@probe-mkt" }),
     ).toBeInTheDocument();
   });
 });

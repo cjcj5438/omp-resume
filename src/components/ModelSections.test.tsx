@@ -1,7 +1,7 @@
 /**
  * ModelSections 测试：角色卡融合、Agent 实际使用、其他兜底、未知值保留、
  * 部分失败与冲突。保存载荷断言用直连 mockIPC 桩。
- * Harness 用 useModelDraft + ModelDraftStatus + ModelsSection + AgentFlow
+ * Harness 用 useModelDraft + ModelDraftStatus + ModelsSection
  * + AgentsSection 拼出与旧 ModelsAgentsPanel 相同的 DOM（旧 wrapper 已删除）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +10,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { AgentDefinition, ModelConfig, ModelInfo } from "../types";
 import { useModelDraft } from "../modelDraft";
 import { AgentsSection } from "./AgentsSection";
-import { AgentFlow, agentFlowNodes } from "./AgentFlow";
 import { ModelDraftStatus } from "./ModelDraftStatus";
 import { ModelsSection } from "./ModelsSection";
 import type { ToastFn } from "./useOmpOp";
@@ -35,7 +34,6 @@ function Harness(props: { onToast: ToastFn }) {
     <div className="manage-section">
       <ModelDraftStatus state={s} />
       <ModelsSection state={s} />
-      <AgentFlow nodes={agentFlowNodes(s)} orchestratorText={s.orchestratorText} />
       <AgentsSection state={s} />
       <div className="pane-note">新开的 omp 会话使用新配置；已运行的会话可能需重启后生效。</div>
     </div>
@@ -547,39 +545,6 @@ describe("未配置角色与吸底保存条", () => {
     await waitFor(() =>
       expect(within(blockOf("主要模型")).queryByRole("status")).not.toBeInTheDocument(),
     );
-  });
-});
-
-describe("Agent 编排流程图", () => {
-  it("主代理显示 default 角色当前模型；节点显示中文职责与当前使用", async () => {
-    stubConfig([]);
-    render(<Harness onToast={vi.fn()} />);
-    await screen.findByRole("region", { name: "Agent" });
-
-    const flow = screen.getByTestId("agent-flow");
-    const orchestrator = within(flow).getByTestId("agent-flow-node-orchestrator");
-    expect(orchestrator).toHaveTextContent("主代理");
-    expect(orchestrator).toHaveTextContent("编排器");
-    expect(orchestrator).toHaveTextContent("MiMo v2.6 Pro (5438) · high");
-
-    // 内置 agent：中文职责（fixture 里的英文/占位描述换成职责文案）。
-    const task = within(flow).getByTestId("agent-flow-node-task");
-    expect(task).toHaveTextContent("完整能力的通用子代理，执行多步委派任务");
-    expect(task).toHaveTextContent("当前使用：");
-    // 自定义 agent：保留 frontmatter 描述，打「自定义」标签。
-    const deployer = within(flow).getByTestId("agent-flow-node-deployer");
-    expect(deployer).toHaveTextContent("自定义");
-  });
-
-  it("停用后流程图节点标注「已停用」", async () => {
-    stubConfig([]);
-    render(<Harness onToast={vi.fn()} />);
-    await screen.findByRole("region", { name: "Agent" });
-
-    fireEvent.click(screen.getByLabelText("停用 task"));
-    expect(
-      within(screen.getByTestId("agent-flow-node-task")).getByText("已停用"),
-    ).toBeInTheDocument();
   });
 });
 

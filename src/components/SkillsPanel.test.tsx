@@ -10,7 +10,7 @@ import { useOmpOp, type ToastFn } from "./useOmpOp";
 
 function Host({ onToast }: { onToast: ToastFn }) {
   const op = useOmpOp();
-  return <SkillsPanel op={op} onToast={onToast} refreshToken={0} />;
+  return <SkillsPanel op={op} onToast={onToast} refreshToken={0} busy={op.running !== null} />;
 }
 
 const NOTE =
@@ -22,15 +22,15 @@ beforeEach(() => {
 });
 
 describe("SkillsPanel（有状态 mock）", () => {
-  it("渲染行、来源徽章、描述 tooltip 与说明文案", async () => {
+  it("渲染卡片、来源徽章、描述 tooltip 与说明文案", async () => {
     await installMockBackend();
     render(<Host onToast={vi.fn()} />);
-    await screen.findByText("registry-example");
+    await screen.findByText("registry-example", { selector: ".skill-name" });
 
     const desc = screen.getByText("由 registry 管理的示例技能");
-    expect(desc.closest("td")).toHaveAttribute("title", "由 registry 管理的示例技能");
+    expect(desc).toHaveAttribute("title", "由 registry 管理的示例技能");
     expect(screen.getByText("registry")).toBeInTheDocument();
-    expect(screen.getByText("agents-example")).toBeInTheDocument();
+    expect(screen.getByText("agents-example", { selector: ".skill-name" })).toBeInTheDocument();
     expect(screen.getByText("agents:user")).toBeInTheDocument();
     expect(screen.getByText(NOTE)).toBeInTheDocument();
   });
@@ -40,9 +40,9 @@ describe("SkillsPanel（有状态 mock）", () => {
     await installMockBackend();
     const onToast = vi.fn();
     render(<Host onToast={onToast} />);
-    await screen.findByText("registry-example");
+    await screen.findByText("registry-example", { selector: ".skill-name" });
 
-    const button = screen.getByRole("button", { name: "更新 registry skills" });
+    const button = screen.getByRole("button", { name: /^更新全部/ });
     fireEvent.click(button);
     expect(button).toBeDisabled();
 
@@ -52,7 +52,7 @@ describe("SkillsPanel（有状态 mock）", () => {
     expect(
       await screen.findByText("由 registry 管理的示例技能（已更新）"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "更新 registry skills" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^更新全部/ })).toBeEnabled();
   });
 
   it("更新失败后 toast 报错且按钮恢复可用", async () => {
@@ -60,13 +60,13 @@ describe("SkillsPanel（有状态 mock）", () => {
     await installMockBackend();
     const onToast = vi.fn();
     render(<Host onToast={onToast} />);
-    await screen.findByText("registry-example");
+    await screen.findByText("registry-example", { selector: ".skill-name" });
 
-    fireEvent.click(screen.getByRole("button", { name: "更新 registry skills" }));
+    fireEvent.click(screen.getByRole("button", { name: /^更新全部/ }));
     await waitFor(() =>
       expect(onToast).toHaveBeenCalledWith("mock 强制失败：omp_skills_update", "error"),
     );
-    expect(screen.getByRole("button", { name: "更新 registry skills" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^更新全部/ })).toBeEnabled();
   });
 });
 

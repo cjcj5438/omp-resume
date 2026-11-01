@@ -95,6 +95,18 @@ export function BenchDrawer(props: BenchDrawerProps): ReactNode {
         {model.thinking !== "" ? <span className="badge badge-branch">思考强度：{model.thinking}</span> : null}
       </div>
 
+      <div className="bench-drawer-block bench-score-block">
+        <div className="score-ring" role="img" aria-label={row.stats === null ? "综合评分：未测试" : `综合评分 ${row.score}`}>
+          <span className="score-value">{row.stats === null ? "—" : row.score}</span>
+          <span className="score-label">composite score</span>
+        </div>
+        <dl className="detail-list">
+          <div className="detail-row"><dt>TTFT p50/p95</dt><dd className="mono">{row.stats === null ? "—" : `${formatMs(row.stats.ttftP50Ms)} / ${formatMs(row.stats.ttftP95Ms)}`}</dd></div>
+          <div className="detail-row"><dt>吞吐</dt><dd className="mono">{row.stats === null ? "—" : `${formatTps(row.stats.tpsP50)} tok/s${row.stats.tpsCv === null ? "" : ` · CV ${(row.stats.tpsCv * 100).toFixed(0)}%`}`}</dd></div>
+          <div className="detail-row"><dt>回写角色</dt><dd>{model.tags.length === 0 ? "—" : model.tags.map(tagLabel).join("、")}</dd></div>
+        </dl>
+      </div>
+
       <div className="bench-drawer-block">
         <div className="bench-drawer-title">标签</div>
         <div className="bench-chips">

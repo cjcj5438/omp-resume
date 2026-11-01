@@ -1,8 +1,10 @@
 /* 记忆库标签页：状态头条 / 健康卡 / 项目库图表 / 操作条 / 记忆列表。 */
-/* 面板 = 左列（概览/健康卡/项目库）+ 右抽屉；两列各自滚动。 */
-.mem-panel { display: flex; flex: 1; min-height: 0; gap: 0; container-type: inline-size; }
+/* 外壳 = 页头（顶）+ 面板（左右分栏）；整页由外层 .main-pane 纵滚。 */
+.mem-shell { display: flex; flex-direction: column; min-width: 0; }
+/* 面板 = 左列（概览/健康卡/项目库）+ 右抽屉；左列自然高度，抽屉自滚。 */
+.mem-panel { display: flex; gap: 0; container-type: inline-size; align-items: flex-start; }
 /* 左列保底 420px：再窄就把抽屉切成覆盖层（见文件末尾容器查询）。 */
-.mem-main { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 420px; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior: contain; }
+.mem-main { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 420px; padding: 16px; }
 .mem-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--fs-md); }
 .mem-intro { margin: 0; font-size: var(--fs-sm); }
 .mem-main > p.muted { margin: 0; font-size: var(--fs-sm); }
@@ -10,79 +12,41 @@
 .mem-empty h3 { margin: 0 0 8px; font-size: var(--fs-xl); }
 .mem-empty p { margin: 0 0 12px; font-size: var(--fs-md); line-height: 1.7; }
 
-/* ---- 健康卡 ---- */
-.mem-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-.mem-card { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-4); border-radius: var(--radius-lg); background: var(--bg-card); transition: background-color var(--motion-fast) var(--ease-out); }
+/* ---- 健康卡（一行 4 小卡） ---- */
+.mem-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.mem-card { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius-lg); background: var(--bg-card); transition: background-color var(--motion-fast) var(--ease-out); }
 /* 健康卡是只读看板，但悬停给一点边界反馈，扫视时能定位到当前卡。 */
 .mem-card:hover { background: var(--bg-inset); }
 /* 告警卡：保持与普通卡同一底色，只用左侧琥珀色竖条表达「需要留意」，避免整块脏色。 */
 .mem-card-warn { box-shadow: inset 3px 0 0 var(--badge-inuse-bg); }
 .mem-card-warn .mem-card-value { color: var(--badge-inuse-ink); }
 .mem-card-label { font-size: var(--fs-xs); color: var(--text-muted); }
-.mem-card-value { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.mem-card-value { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.3; }
 .mem-card-sub { font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 1120px) { .mem-cards { grid-template-columns: repeat(2, 1fr); } }
 
-/* ---- 分区头 ---- */
-.mem-section { display: flex; flex-direction: column; gap: 8px; }
-.mem-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.mem-section-head h3 { margin: 0; font-size: var(--fs-lg); }
-.mem-section-head .filter-input { max-width: 240px; }
+/* ---- 双栏：记忆库 + 召回图 ---- */
+.mem-grid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 16px; align-items: start; }
+@media (max-width: 1120px) { .mem-grid { grid-template-columns: 1fr; } }
+
 .mem-kind { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-muted); }
 .mem-kind select { font-size: var(--fs-sm); }
+.mem-bank-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); }
+.mem-bank-toolbar .filter-input { max-width: 240px; }
 
-/* ---- 项目库图表：每行一个按钮，统一 grid 三段（名称 / 条形 / 条数），不嵌套表格。 ---- */
-.mem-bank-chart { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.mem-bank-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 260px) minmax(80px, 1fr) 3.5em;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
-}
-.mem-bank-row:hover { background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--border); }
-.mem-bank-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.mem-bank-active { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
-/* 已选中的库再悬停：加深底色与左侧强调条，提示「再点一次仍是这个库」。 */
-.mem-bank-active:hover { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--accent-soft); }
-.mem-bank-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-/* 两行都固定高度：不受字形（如下行字母）影响，每行严格等高。 */
-.mem-bank-title { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; height: 18px; overflow: hidden; }
-.mem-bank-name { flex: 0 1 auto; min-width: 0; font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mem-bank-title .badge { flex: none; }
-/* 元信息恒为单行：路径可省略（min-width:0），计数/大小/时间不截断。 */
-.mem-bank-sub { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; height: 16px; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
-.mem-bank-sub > span:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mem-bank-sub > span:not(:first-child) { flex: none; }
-.mem-bank-bars { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.mem-bank-bar { display: block; height: 9px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
-.mem-bank-fill { display: flex; height: 100%; min-width: 4px; border-radius: var(--radius-xs); overflow: hidden; }
-.mem-bank-fill > i { display: block; height: 100%; }
-.mem-bar-work { background: var(--accent); }
-.mem-bar-epi { background: var(--badge-label-bg); }
-/* 两条独立占比条（未召回 / 未合并），各自按自己的分母，不叠加以免误导。 */
-.mem-bank-health { display: flex; flex-direction: column; gap: 2px; }
-.mem-meter { display: block; height: 2px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
-.mem-meter > i { display: block; height: 100%; border-radius: var(--radius-xs); }
-.mem-meter-never { background: var(--badge-inuse-bg); }
-.mem-meter-uncons { background: var(--danger); opacity: 0.6; }
-.mem-bank-num { text-align: right; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text-muted); }
-/* 无效库：条纹条 + 弱化文字，仍可选中（用于查看错误或清理）。 */
-.mem-bank-invalid .mem-bank-bar { background: repeating-linear-gradient(135deg, var(--border) 0 3px, transparent 3px 7px); }
-.mem-bank-invalid .mem-bank-name { color: var(--text-muted); }
-.mem-bank-invalid .mem-bank-num { color: var(--text-muted); }
-.mem-footnote { margin: 0; font-size: var(--fs-xs); }
-@media (max-width: 900px) {
-  .mem-bank-row { grid-template-columns: minmax(120px, 1fr) minmax(60px, 1fr) 3em; }
-}
+/* ---- 库表覆盖率条：6px 互斥二段（已召回 accent / 从未召回 accent 55% mix，设计稿 styles.css:894-896） ---- */
+.bank-track { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg-raised); margin-top: 4px; }
+.bank-fill { display: block; height: 100%; background: var(--accent); }
+.bank-fill.alt { background: color-mix(in srgb, var(--accent) 55%, var(--bg-raised)); }
+.mem-bank-table tr.is-click { cursor: pointer; }
+.mem-bank-active td { background: var(--accent-soft); }
+/* 库表第一列（库名/路径/覆盖率条）：窄窗下省略而非折行撑宽，数字列不折行。 */
+.mem-bank-table td:first-child { min-width: 0; max-width: 380px; }
+.mem-bank-table td:first-child .strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-bank-table td:first-child .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-bank-table td.r { white-space: nowrap; }
+.mem-graph-mini { min-height: 200px; }
+.mem-backup-table td:first-child { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 面板自身宽度不够容纳两列（左列 480 + 抽屉）时，抽屉改覆盖层，避免项目库行被压成两字。 */
 @container (max-width: 800px) {
   .mem-main { min-width: 0; }
@@ -121,7 +85,7 @@
 .mem-list-head [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .mem-list-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .mem-list-toolbar .filter-input { min-width: 200px; max-width: 320px; }
-@media (max-width: 1050px) {
+@media (max-width: 1120px) {
   .mem-list-toolbar .filter-input { flex: 1 1 100%; max-width: none; }
 }
 .mem-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
@@ -154,7 +118,7 @@
 .mem-meta > div { display: flex; gap: 6px; }
 .mem-meta dt { flex: none; color: var(--text-muted); }
 .mem-meta dd { margin: 0; overflow-wrap: anywhere; }
-@media (max-width: 1100px) { .mem-meta { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1120px) { .mem-meta { grid-template-columns: repeat(2, 1fr); } }
 .mem-facts h4 { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--text-muted); font-weight: 600; }
 .mem-facts ul { margin: 0; padding-left: 18px; font-size: var(--fs-sm); line-height: 1.8; }
 

@@ -7,13 +7,13 @@
  * `revert(block)` 只还原该区块的草稿（见 revertBlock）；只读展示走
  * configFromDraft 的草稿视角，未触碰的键与值原样保留。
  */
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { getModelConfig, getModelSpecs, listModels, normalizeError, updateModelConfig } from "./api";
 import { useAlive, type ToastFn } from "./components/useOmpOp";
 import { errorText } from "./format";
 import { deepEqual, rawValueText } from "./modelConfig";
 import { emitModelConfigChanged, onModelConfigChanged } from "./modelPresets";
-import type { ModelConfig, ModelInfo } from "./types";
+import type { ModelConfig, ModelInfo, ModelSpec, ModelSpecUpdateResult } from "./types";
 import {
   SAVE_KEY_LABELS,
   attachedChainKeys,
@@ -707,5 +707,85 @@ export function useModelDraft(onToast: ToastFn): ModelDraftLoad {
       setNewKeyError,
       addChain,
     },
+  };
+}
+
+export interface ModelSpecsSnapshot {
+  specs: ModelSpec[];
+  specsBySelector: Map<string, ModelSpec>;
+  specsPath: string;
+  revision: string;
+  specsError: string | null;
+  specsReloading: boolean;
+  loadSpecs: () => void;
+  /** 保存成功先顶本地（防快速连存自冲突），再 reload；CONFLICT 传 null 只 reload。 */
+  specSaved: (result: ModelSpecUpdateResult | null) => void;
+}
+
+/**
+ * models.yml 规格快照（ModelsTab 与 BenchTab 共用；实例只在 ManageView 一处创建）。
+ * 挂载 + 窗口聚焦重载；竞态用单调序号守卫。
+ */
+export function useModelSpecs(loadModels: (force?: boolean) => void): ModelSpecsSnapshot {
+  const alive = useAlive();
+  const specsSeq = useRef(0);
+  const [specs, setSpecs] = useState<ModelSpec[]>([]);
+  const [specsPath, setSpecsPath] = useState("");
+  const [revision, setRevision] = useState("");
+  const [specsError, setSpecsError] = useState<string | null>(null);
+  const [specsReloading, setSpecsReloading] = useState(false);
+
+  const loadSpecs = useCallback(async () => {
+    const id = ++specsSeq.current;
+    setSpecsReloading(true);
+    try {
+      const result = await getModelSpecs();
+      if (!alive.current || id !== specsSeq.current) return;
+      setSpecs(result.available ? result.specs : []);
+      setSpecsPath(result.path);
+      setRevision(result.revision);
+      setSpecsError(result.error);
+    } catch (e: unknown) {
+      if (!alive.current || id !== specsSeq.current) return;
+      setSpecsError(errorText(normalizeError(e)));
+    } finally {
+      if (alive.current && id === specsSeq.current) setSpecsReloading(false);
+    }
+  }, [alive]);
+
+  useEffect(() => {
+    void loadSpecs();
+  }, [loadSpecs]);
+
+  // 外部改了 models.yml 后回到应用：规格快照随模型列表一起更新。
+  useEffect(() => {
+    const onFocus = (): void => {
+      void loadSpecs();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadSpecs]);
+
+  const specsBySelector = useMemo(() => new Map(specs.map((s) => [s.selector, s])), [specs]);
+
+  const specSaved = useCallback((result: ModelSpecUpdateResult | null): void => {
+    if (result !== null) {
+      ++specsSeq.current;
+      setRevision(result.revision);
+      setSpecs((prev) => prev.map((entry) => (entry.selector === result.spec.selector ? result.spec : entry)));
+    }
+    void loadModels(true);
+    void loadSpecs();
+  }, [loadModels, loadSpecs]);
+
+  return {
+    specs,
+    specsBySelector,
+    specsPath,
+    revision,
+    specsError,
+    specsReloading,
+    loadSpecs: () => void loadSpecs(),
+    specSaved,
   };
 }

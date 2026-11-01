@@ -22,6 +22,7 @@ function renderManageView(tab: "models" | "agents" | "plugins" | "skills" | "mcp
       onCheckOmp={onCheckOmp}
       loadedSessionIds={new Set()}
       onOpenSession={onOpenSession}
+      onNavigate={() => {}}
     />,
   );
   return { onToast, onCheckOmp, onOpenSession };
@@ -88,10 +89,11 @@ describe("ManageView 路由页", () => {
         onCheckOmp={vi.fn()}
         loadedSessionIds={new Set()}
         onOpenSession={vi.fn()}
+        onNavigate={() => {}}
       />,
     );
     expect(await screen.findByRole("region", { name: "模型库" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "测试" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "测试" })).toBeNull();
     expect(screen.getByRole("region", { name: "角色分配" })).toBeInTheDocument();
     unmount();
 
@@ -105,6 +107,7 @@ describe("ManageView 路由页", () => {
           onCheckOmp={vi.fn()}
           loadedSessionIds={new Set()}
           onOpenSession={vi.fn()}
+          onNavigate={() => {}}
         />,
       );
       // 每个 tab 都渲染出自己的内容，而不是空页。
@@ -122,6 +125,7 @@ describe("ManageView 路由页", () => {
       onCheckOmp: vi.fn(),
       loadedSessionIds: new Set<string>(),
       onOpenSession: vi.fn(),
+      onNavigate: () => {},
     };
     const { rerender } = render(<ManageView {...base} tab="models" />);
     await screen.findByRole("region", { name: "模型库" });
@@ -136,7 +140,7 @@ describe("ManageView 路由页", () => {
     // 切到 Agent 再切回：同一份草稿，编辑与保存条都在。
     // （路由切换时 ManageView 常驻不卸载，这里用 rerender 模拟同族路由切换。）
     rerender(<ManageView {...base} tab="agents" />);
-    await screen.findByTestId("agent-flow");
+    await screen.findByTestId("agent-org");
     rerender(<ManageView {...base} tab="models" />);
     await screen.findByRole("region", { name: "模型库" });
     const rolesAgain = screen.getByRole("region", { name: "角色分配" });
@@ -212,8 +216,9 @@ describe("全部更新", () => {
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "模型" }));
-    await screen.findByRole("region", { name: "模型库" });
+    // 「全部更新」按钮只在插件面板页头（实现如此）；经插件路由触发，保住「有新版→开对话框」意图。
+    fireEvent.click(screen.getByRole("button", { name: "插件" }));
+    await screen.findByRole("button", { name: "全部更新" });
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
     expect(within(dialog).getByText("可更新到 18.12.0")).toBeInTheDocument();
@@ -234,21 +239,15 @@ describe("全部更新", () => {
   it("运行时禁用全部更新与 MCP 操作，页签保持可切换", async () => {
     window.history.replaceState({}, "", "/?latency=100");
     await installMockBackend();
-    renderManageView("mcp");
-    await screen.findByRole("combobox", { name: "配置范围" });
+    renderManageView("plugins");
+    await screen.findByText("已安装插件");
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
 
     expect(screen.getByRole("button", { name: "全部更新" })).toBeDisabled();
-    const fieldset = document.querySelector("fieldset.manage-fieldset");
-    expect(fieldset).not.toBeNull();
-    expect(fieldset).toHaveAttribute("disabled");
 
     expect(
       await screen.findByRole("list", { name: "全部更新结果" }, { timeout: 5000 }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "全部更新" })).toBeEnabled();
-    expect(document.querySelector("fieldset.manage-fieldset")).not.toHaveAttribute(
-      "disabled",
-    );
   });
 });

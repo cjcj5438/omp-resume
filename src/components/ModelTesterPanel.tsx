@@ -15,6 +15,7 @@ import type { AgentDefinition, BenchRound, ModelConfig, ModelInfo, ModelPerf } f
 import { errorText, formatMs, formatRate, formatTps } from "../format";
 import {
   BENCH_ERROR_LABEL,
+  BENCH_FOCUS_KEY,
   benchRunner,
   classifyBenchError,
   addToBench,
@@ -78,7 +79,12 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => {
+    // models 页跳入的预选：消费一次即清除。
+    const focused = sessionStorage.getItem(BENCH_FOCUS_KEY);
+    if (focused !== null) sessionStorage.removeItem(BENCH_FOCUS_KEY);
+    return focused;
+  });
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
   const [tagModalOpen, setTagModalOpen] = useState(false);
@@ -279,13 +285,14 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
 
       {!hasHistory ? <div className="muted bench-hint">还没有测试数据，点「测试全部」跑一轮即可看到速度与稳定性。</div> : null}
       {displayRows.length === 0 ? (
-        <div className="pane-note">{tagFilter === null ? "还没有模型，点「添加模型」加一个。" : "这个标签下还没有模型。"}</div>
+        <div className="pane-note">{tagFilter === null ? "还没有模型，点「加入测试」加一个。" : "这个标签下还没有模型。"}</div>
       ) : (
-        <div className="bench-table-wrap">
-        <table className="manage-table bench-table">
+        <div className="tbl-wrap bench-table-wrap">
+        <table className="tbl bench-table">
           <colgroup>
             <col />
             <col className="bench-col-tags" />
+            <col className="bench-col-score" />
             <col className="bench-col-rate" />
             <col className="bench-col-ttft" />
             <col className="bench-col-tps" />
@@ -298,11 +305,12 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
             <tr>
               <th scope="col">模型</th>
               <th scope="col">标签</th>
-              <th scope="col" className="bench-num">成功率</th>
-              <th scope="col" className="bench-num">TTFT p50/p95</th>
-              <th scope="col" className="bench-num">tok/s(±CV)</th>
-              <th scope="col" className="bench-num" title="tok/s 相对主模型（基线）的倍率">对比基线</th>
-              {showPerfColumn ? <th scope="col" className="bench-num">日常实测</th> : null}
+              <th scope="col" className="r">评分</th>
+              <th scope="col" className="r">成功率</th>
+              <th scope="col" className="r">TTFT p50/p95</th>
+              <th scope="col" className="r">tok/s(±CV)</th>
+              <th scope="col" className="r" title="tok/s 相对主模型（基线）的倍率">对比基线</th>
+              {showPerfColumn ? <th scope="col" className="r">日常实测</th> : null}
               <th scope="col">趋势</th>
               <th scope="col" aria-label="操作"><span aria-hidden="true" /></th>
             </tr>
@@ -341,7 +349,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       {name === null ? <span className="badge badge-grey">未知值 · 保留</span> : null}
                     </span>
                     {running || queued ? (
-                      <span className="bench-running"><span className="spinner" aria-hidden="true" /> 测试中…</span>
+                      <span className="bench-running"><span className="spinner" aria-hidden="true" /> 测试中…结果稍后更新</span>
                     ) : lastError !== undefined ? (
                       <span className="bench-errline" title={lastError}>上次失败：{lastError}</span>
                     ) : classify !== undefined && classify !== null ? (
@@ -355,8 +363,15 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       ))}
                     </span>
                   </td>
-                  <td className="bench-num">{stats === null ? <span className="muted">未测试</span> : formatRate(stats.rate)}</td>
-                  <td className="bench-num bench-nowrap">
+                  <td className="r">
+                    {stats === null ? (
+                      <span className="muted">—</span>
+                    ) : (
+                      <span className={row.score >= 90 ? "badge badge-ok" : row.score >= 80 ? "badge badge-info" : "badge badge-warn"}>{row.score}</span>
+                    )}
+                  </td>
+                  <td className="r">{stats === null ? <span className="muted">未测试</span> : formatRate(stats.rate)}</td>
+                  <td className="r mono bench-nowrap">
                     {stats === null ? (
                       <span className="muted">—</span>
                     ) : (
@@ -365,7 +380,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       </span>
                     )}
                   </td>
-                  <td className="bench-num bench-nowrap">
+                  <td className="r mono bench-nowrap">
                     {stats === null ? (
                       <span className="muted">—</span>
                     ) : (
@@ -375,9 +390,9 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                       </span>
                     )}
                   </td>
-                  <td className="bench-num">{row.baseline ? <span className="muted">—</span> : <RatioCell ratio={row.ratio} />}</td>
+                  <td className="r mono">{row.baseline ? <span className="muted">—</span> : <RatioCell ratio={row.ratio} />}</td>
                   {showPerfColumn ? (
-                    <td className="bench-num bench-nowrap">
+                    <td className="r mono bench-nowrap">
                       {row.perf === null ? (
                         <span className="muted">—</span>
                       ) : (
@@ -390,10 +405,10 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                   <td>
                     <Sparkline rounds={roundsBySelector.get(model.selector) ?? []} />
                   </td>
-                  <td>
+                  <td className="cell-actions">
                     <button
                       type="button"
-                      className="btn btn-small"
+                      className="btn btn-small btn-quiet"
                       aria-label={`测试 ${model.selector}`}
                       disabled={running || queued}
                       onClick={(e) => {
@@ -401,7 +416,7 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
                         benchRunner.enqueue(model.selector);
                       }}
                     >
-                      <Ico icon={Play} size={12} />
+                      测试 <Ico icon={Play} size={12} />
                     </button>
                   </td>
                 </tr>
@@ -409,6 +424,10 @@ export function ModelTesterPanel(props: ModelTesterPanelProps): ReactNode {
             })}
           </tbody>
         </table>
+        <div className="panel-foot bench-foot">
+          <span>评分 = 成功率×50% + 吞吐×30% + 延迟×20%（24h 窗口；缺项按 0）</span>
+          <span className="mono">{displayRows.length} 条</span>
+        </div>
         </div>
       )}
 

@@ -59,8 +59,13 @@ export function MemoryGraph(props: {
   displayName: string;
   onOpenInList: (id: string) => void;
   onToast: ToastFn;
+  /** 截断节点数（首屏小图用，默认全量）；compact 时隐藏标题行/图例/侧栏。 */
+  maxNodes?: number;
+  compact?: boolean;
+  /** 数据到达后上报（首屏 panel-meta 计数用）。 */
+  onStats?: (nodes: number, edges: number) => void;
 }): ReactNode {
-  const { bank, displayName, onOpenInList, onToast } = props;
+  const { bank, displayName, onOpenInList, onToast, maxNodes, compact = false, onStats } = props;
   const [data, setData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,20 +109,35 @@ export function MemoryGraph(props: {
     };
   }, [bank, onToast]);
 
+  // maxNodes 截断：按 degree 取前 N，边只保留两端都在的（首屏小图用）。
+  const shown = useMemo(() => {
+    if (data === null) return null;
+    if (maxNodes === undefined || data.nodes.length <= maxNodes) return data;
+    const top = [...data.nodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
+    const ids = new Set(top.map((n) => n.id));
+    return { ...data, nodes: top, edges: data.edges.filter((e) => ids.has(e.source) && ids.has(e.target)) };
+  }, [data, maxNodes]);
+  // onStats 存 ref：父组件传内联回调时避免 effect 因回调身份变化而反复触发。
+  const statsRef = useRef(onStats);
+  statsRef.current = onStats;
+  useEffect(() => {
+    if (shown !== null) statsRef.current?.(shown.nodes.length, shown.edges.length);
+  }, [shown]);
+
   const visibleEdges = useMemo(
-    () => (data === null ? [] : data.edges.filter((e) => !hidden[e.kind])),
-    [data, hidden],
+    () => (shown === null ? [] : shown.edges.filter((e) => !hidden[e.kind])),
+    [shown, hidden],
   );
   // 全量边参与布局，图例只控制显隐，开关不过度跳动。
   // 小库收缩布局盒（按 sqrt(n)，上限全画布）再居中，避免几个点被扯满屏。
   const basePos = useMemo(() => {
-    if (data === null) return new Map<string, { x: number; y: number }>();
-    const s = Math.min(1, Math.sqrt(Math.max(data.nodes.length, 1) / 30));
+    if (shown === null) return new Map<string, { x: number; y: number }>();
+    const s = Math.min(1, Math.sqrt(Math.max(shown.nodes.length, 1) / 30));
     const w = Math.max(240, VB_W * s);
     const h = Math.max(200, VB_H * s);
     const m = layoutGraph(
-      data.nodes.map((n) => n.id),
-      data.edges.map((e) => ({ source: e.source, target: e.target })),
+      shown.nodes.map((n) => n.id),
+      shown.edges.map((e) => ({ source: e.source, target: e.target })),
       { width: w, height: h },
     );
     for (const p of m.values()) {
@@ -125,7 +145,7 @@ export function MemoryGraph(props: {
       p.y += (VB_H - h) / 2;
     }
     return m;
-  }, [data]);
+  }, [shown]);
 
   useEffect(() => {
     setPos(new Map(basePos));
@@ -143,8 +163,8 @@ export function MemoryGraph(props: {
   }, [visibleEdges]);
 
   const nodeById = useMemo(
-    () => new Map((data?.nodes ?? []).map((n) => [n.id, n])),
-    [data],
+    () => new Map((shown?.nodes ?? []).map((n) => [n.id, n])),
+    [shown],
   );
   const focusId = hoverId ?? selectedId;
   const focusSet = useMemo(() => {
@@ -191,32 +211,36 @@ export function MemoryGraph(props: {
 
   if (loading) return <div className="pane-note">关系图加载中…</div>;
   if (loadError !== null) return <div className="pane-note">关系图加载失败：{loadError}</div>;
-  if (data === null) return null;
+  if (data === null || shown === null) return null;
 
   const selected = selectedId === null ? null : nodeById.get(selectedId) ?? null;
   const selectedNeighbors = selectedId === null ? [] : (neighbors.get(selectedId) ?? []);
 
   return (
     <section className="mem-graph" aria-label={`${displayName}的引用关系图`}>
-      <div className="mem-list-head">
-        <h3 className="mem-list-title">{displayName} 的关系图</h3>
-        <button type="button" className="btn btn-small" onClick={resetView}>
-          重置视图
-        </button>
-      </div>
+      {compact ? null : (
+        <div className="mem-list-head">
+          <h3 className="mem-list-title">{displayName} 的关系图</h3>
+          <button type="button" className="btn btn-small" onClick={resetView}>
+            重置视图
+          </button>
+        </div>
+      )}
       {data.totalNodes === 0 ? (
         <div className="pane-note">该库暂无记忆，没有可展示的关系。</div>
-      ) : data.nodes.length === 0 ? (
+      ) : shown.nodes.length === 0 ? (
         <div className="pane-note">
           该库暂无引用关系（另有 {data.unlinkedCount} 条记忆没有引用关系）。
         </div>
       ) : (
         <>
-          <p className="muted mem-graph-count" aria-live="polite">
-            显示 {data.nodes.length} / 共 {data.totalNodes} 条记忆 · {visibleEdges.length} 条引用边
-            {data.truncated ? "（已按关联度取前 200）" : ""}
-            {data.unlinkedCount > 0 ? ` · 另有 ${data.unlinkedCount} 条记忆没有引用关系` : ""}
-          </p>
+          {compact ? null : (
+            <p className="muted mem-graph-count" aria-live="polite">
+              显示 {shown.nodes.length} / 共 {data.totalNodes} 条记忆 · {visibleEdges.length} 条引用边
+              {data.truncated ? "（已按关联度取前 200）" : ""}
+              {data.unlinkedCount > 0 ? ` · 另有 ${data.unlinkedCount} 条记忆没有引用关系` : ""}
+            </p>
+          )}
           <div className="mem-graph-wrap">
             <div className="mem-graph-main">
               <svg
@@ -306,11 +330,11 @@ export function MemoryGraph(props: {
                       </g>
                     );
                   })}
-                  {data.nodes.map((n) => {
+                  {shown.nodes.map((n) => {
                     const p = pos.get(n.id);
                     if (!p) return null;
                     const inFocus = focusSet !== null && focusSet.has(n.id);
-                    const r = 6 + Math.min(10, n.degree * 1.5);
+                    const r = compact ? 6 + Math.min(10, n.recallCount * 1.5) : 6 + Math.min(10, n.degree * 1.5);
                     return (
                       <g
                         key={n.id}
@@ -343,6 +367,7 @@ export function MemoryGraph(props: {
                   })}
                 </g>
               </svg>
+              {compact ? null : (
               <div className="mem-graph-legend" aria-label="图例">
                 <span className="mem-graph-legend-item">
                   <i className="mem-graph-dot" style={{ background: NODE_FILL.working }} />
@@ -368,8 +393,9 @@ export function MemoryGraph(props: {
                 </span>
                 <span className="muted">节点大小按关联数</span>
               </div>
+              )}
             </div>
-            {selected !== null ? (
+            {!compact && selected !== null ? (
               <aside className="mem-graph-side" aria-label="选中记忆">
                 <div className="mem-row">
                   <span className={`mem-pill mem-pill-${selected.kind}`}>{NODE_LABEL[selected.kind]}</span>

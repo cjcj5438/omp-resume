@@ -47,7 +47,7 @@ export function ModelEntryModal(props: ModelEntryModalProps): ReactNode {
   };
 
   return (
-    <Modal title={mode === "add" ? "添加模型" : "编辑模型"} wide onClose={onClose} footer={<>
+    <Modal title={mode === "add" ? "加入测试" : "编辑测试"} wide onClose={onClose} footer={<>
       <button type="button" className="btn" onClick={onClose}>取消</button>
       <button
         type="button"

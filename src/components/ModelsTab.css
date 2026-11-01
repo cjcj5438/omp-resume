@@ -3,52 +3,36 @@
 
 .models-tab { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 .models-tab-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
-.models-tab-intro { margin: 0; margin-right: auto; }
 .models-tab-chips { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
 .models-tab-hint { margin: 0 0 var(--sp-2); font-size: var(--fs-xs); color: var(--text-muted); }
-
-/* 模型库表格。 */
+.models-panels { margin-bottom: var(--sp-3); }
+.model-testbar { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); padding: 13px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-card); }
+.model-testbar .spacer { flex: 1; }
+/* 模型库表格（行列走共享 .tbl；这里只留列宽与本页结构）。 */
 .model-lib { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .lib-toolbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .lib-search { max-width: 320px; }
-.lib-table-wrap { overflow: auto; max-height: 520px; }
-.lib-table { table-layout: fixed; min-width: 952px; }
-.lib-table thead th { position: sticky; top: 0; background: var(--bg-elevated); z-index: var(--z-sticky); }
-/* 模型列弹性兜底 280px，其余列宽锁死；表头 sticky。操作列 244px 保住四按钮。 */
-.lib-col-model { min-width: 280px; }
-.lib-col-context { width: 64px; }
-.lib-col-max { width: 84px; }
-.lib-col-cost { width: 100px; }
-.lib-col-thinking { width: 132px; }
-.lib-col-act { width: 244px; }
+.lib-table-wrap { overflow-x: auto; overflow-y: visible; }
+.lib-table { table-layout: fixed; min-width: 1020px; }
+/* 模型列弹性兜底 260px，其余列宽锁死。操作列 128px（测试 + 隐藏两 quiet 按钮）。 */
+.lib-col-model { min-width: 260px; }
+.lib-col-context { width: 88px; }
+.lib-col-max { width: 88px; }
+.lib-col-thinking { width: 48px; }
+.lib-col-default { width: 48px; }
+.lib-col-input { width: 88px; }
+.lib-col-cost { width: 76px; }
+.lib-col-roles { width: 150px; }
+.lib-col-act { width: 128px; }
 .lib-table td { overflow: hidden; text-overflow: ellipsis; }
-/* 思考档位列：每个档位是一个不可断行的片段，换行只发生在档位之间。 */
-.lib-levels { display: flex; flex-wrap: wrap; gap: 2px var(--sp-1); }
-.lib-level { white-space: nowrap; color: var(--text-muted); font-size: var(--fs-xs); }
-.lib-level + .lib-level::before {
-  content: "·";
-  margin-right: 2px;
-  color: var(--text-faint);
-}
-/* 数值列右对齐 + 等宽数字：上下文、输出、价格纵向可直接对读。 */
-.lib-table th:nth-child(2),
-.lib-table th:nth-child(3),
-.lib-table th:nth-child(4),
-.lib-table td:nth-child(2),
-.lib-table td:nth-child(3),
-.lib-table td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
-.lib-nowrap { white-space: nowrap; }
-.lib-model { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.lib-model-top { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: nowrap; min-width: 0; overflow: hidden; }
-.lib-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.lib-model-sub { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; row-gap: 2px; min-width: 0; overflow: hidden; }
-.lib-model-sub > .badge, .lib-model-sub > .lib-usage { flex: none; }
-.lib-id { font-size: var(--fs-xs); color: var(--text-muted); flex: 1 1 120px; min-width: 120px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-usage { display: inline-flex; align-items: center; gap: var(--sp-1); flex-wrap: nowrap; overflow: hidden; }
-.lib-act-cell { white-space: nowrap; }
 .lib-actions { display: inline-flex; align-items: center; gap: var(--sp-1); }
-.lib-row { cursor: default; }
-.lib-row-hidden td:not(.lib-act-cell) { opacity: 0.55; }
+.lib-row { cursor: pointer; }
+.lib-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lib-row-hidden td:not(.cell-actions) { opacity: 0.55; }
+.mark-yes { color: var(--accent); font-weight: 600; }
+.drawer-title-sub { font-size: var(--fs-sm); font-weight: 400; color: var(--text-muted); }
 
 /* 规格抽屉。 */
 .spec-facts { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); }
@@ -58,6 +42,7 @@
 .spec-form { display: flex; flex-direction: column; gap: var(--sp-3); padding-top: var(--sp-3); box-shadow: inset 0 1px 0 var(--border); }
 .spec-form-title { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); }
 .spec-field { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); }
+.spec-field > span { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 .spec-check { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
 .spec-check-row { display: flex; gap: var(--sp-3); }

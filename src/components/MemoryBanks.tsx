@@ -1,5 +1,5 @@
 /**
- * 项目库：单列排名条形图（工作 + 情节堆叠，下方细条为未召回 / 未合并占比）。
+ * 项目库：记忆库 Panel（覆盖率条 + 库/条目/体积表）+ 过滤/无效清理入口。
  * 点行选中库；无效库（目录已不存在 / 空库 / 不可读）标徽章并可批量清理。
  * 行内不放操作按钮；备份 / 移除在选中库的操作条里（MemoryBankHeader）。
  */
@@ -8,6 +8,7 @@ import { memoryBankStatus, memoryDeleteBank, normalizeError } from "../api";
 import type { MemoryBankStatus, MemoryBankSummary } from "../types";
 import { displayCwd, errorText, formatFullTime, formatRelativeTime, formatSize } from "../format";
 import { Ico, Modal } from "./ui";
+import { Panel } from "./page";
 import type { ToastFn } from "./useOmpOp";
 import {
   BANK_INVALID_LABEL,
@@ -57,12 +58,11 @@ export function MemoryBanks(props: {
         (!onlyInvalid || bankInvalidKinds(b).length > 0),
     ),
   );
-  const max = Math.max(1, ...rows.map(bankMemories));
+  const totalMemories = banks.reduce((n, b) => n + bankMemories(b), 0);
 
   return (
-    <section className="mem-section" aria-label="项目库">
-      <div className="mem-section-head">
-        <h3>项目库（{rows.length}）</h3>
+    <Panel title="记忆库" meta={`${banks.length} 个库 · ${totalMemories.toLocaleString()} 条`} body="flush">
+      <div className="mem-bank-toolbar">
         <input type="search" className="filter-input" placeholder="过滤项目名 / 路径" aria-label="过滤项目库" value={query} onChange={(e) => setQuery(e.target.value)} />
         <button type="button" className="btn btn-small" aria-pressed={onlyInvalid} disabled={invalid.length === 0} onClick={() => setOnlyInvalid((v) => !v)}>
           只看无效库（{invalid.length}）
@@ -74,64 +74,64 @@ export function MemoryBanks(props: {
       {rows.length === 0 ? (
         <div className="pane-note">{banks.length === 0 ? "暂无项目库。" : "没有匹配的项目库。"}</div>
       ) : (
-        <ul className="mem-bank-chart" aria-label="项目库记忆分布">
-          {rows.map((b) => {
-            const total = bankMemories(b);
-            const kinds = bankInvalidKinds(b);
-            const pct = (a: number, d: number): string => (d > 0 ? `${((a / d) * 100).toFixed(1)}%` : "—");
-            const tip = b.readable
-              ? `${b.displayName}\n${b.cwd ?? "—"}\n工作 ${b.working} · 情节 ${b.episodic}\n未召回 ${b.neverRecalled}/${total} (${pct(b.neverRecalled, total)})\n未合并 ${b.unconsolidated}/${b.working} (${pct(b.unconsolidated, b.working)})\n${formatSize(b.bytes)} · ${b.lastMemoryAt === null ? "无记忆" : formatRelativeTime(b.lastMemoryAt)}`
-              : `${b.displayName}\n${b.cwd ?? "—"}\n${b.error ?? "项目库不可读"}`;
-            return (
-              <li key={b.bank}>
-                <button
-                  type="button"
-                  className={`mem-bank-row${kinds.length > 0 ? " mem-bank-invalid" : ""}${b.bank === selected?.bank ? " mem-bank-active" : ""}`}
+        <div className="tbl-wrap">
+        <table className="tbl mem-bank-table">
+          <thead><tr><th scope="col">库</th><th scope="col" className="r">条目</th><th scope="col" className="r">体积</th></tr></thead>
+          <tbody>
+            {rows.map((b) => {
+              // 互斥二段（memory-P0-2）：分母 total = working + episodic；
+              // neverRecalled 跨 working+episodic 计数（src-tauri/src/memory/mod.rs:602-604），
+              // 故「已召回 = total − neverRecalled」与「从未召回」天然互斥、和恒为 total。
+              // unconsolidated 只计 working 表且可与「从未召回」重叠，不单独占段，只在脚注提示。
+              const total = bankMemories(b);
+              const never = total > 0 ? Math.min(b.neverRecalled, total) : 0;
+              const recalled = total > 0 ? total - never : 0;
+              const segs = [
+                { w: total > 0 ? (recalled / total) * 100 : 0, cls: "bank-fill" },
+                { w: total > 0 ? (never / total) * 100 : 0, cls: "bank-fill alt" },
+              ];
+              return (
+                <tr
+                  key={b.bank}
+                  className={b.bank === selected?.bank ? "is-click mem-bank-active" : "is-click"}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`查看 ${b.displayName} 的记忆`}
                   aria-pressed={b.bank === selected?.bank}
-                  aria-label={b.displayName}
-                  data-tip={tip}
                   onClick={() => onSelect(b.bank)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    onSelect(b.bank);
+                  }}
                 >
-                  <span className="mem-bank-main">
-                    <span className="mem-bank-title">
-                      <span className="mem-bank-name">{b.displayName}</span>
-                      <BankBadges b={b} />
+                  <td>
+                    <span className="strong">{b.displayName} <BankBadges b={b} /></span>
+                    <span className="sub mono">{b.cwd === null ? "—" : displayCwd(b.cwd)}</span>
+                    <span
+                      className="bank-track"
+                      role="img"
+                      aria-label={`已召回 ${recalled} 条，从未召回 ${never} 条${b.unconsolidated > 0 ? `，其中未合并 ${b.unconsolidated} 条` : ""}`}
+                      title={`已召回 ${recalled} / 从未召回 ${never}${b.unconsolidated > 0 ? `（其中未合并 ${b.unconsolidated}）` : ""}`}
+                    >
+                      {segs.map((s, i) => (
+                        <i key={i} className={s.cls} style={{ width: `${s.w}%` }} />
+                      ))}
                     </span>
-                    <span className="mem-bank-sub">
-                      <span className="mono">{b.cwd === null ? "—" : displayCwd(b.cwd)}</span>
-                      <span>{b.readable ? `${b.working} 工作 · ${b.episodic} 情节` : "—"}</span>
-                      <span>{formatSize(b.bytes)}</span>
-                      <span>{b.lastMemoryAt === null ? "无记忆" : formatRelativeTime(b.lastMemoryAt)}</span>
-                    </span>
-                  </span>
-                  <span className="mem-bank-bars" aria-hidden="true">
-                    <span className="mem-bank-bar">
-                      {total > 0 ? (
-                        <span className="mem-bank-fill" style={{ width: `${(total / max) * 100}%` }}>
-                          {b.working > 0 ? <i className="mem-bar-work" style={{ flexGrow: b.working }} /> : null}
-                          {b.episodic > 0 ? <i className="mem-bar-epi" style={{ flexGrow: b.episodic }} /> : null}
-                        </span>
-                      ) : null}
-                    </span>
-                    {b.readable ? (
-                      <span className="mem-bank-health">
-                        <span className="mem-meter"><i className="mem-meter-never" style={{ width: `${(b.neverRecalled / Math.max(1, total)) * 100}%` }} /></span>
-                        <span className="mem-meter"><i className="mem-meter-uncons" style={{ width: `${(b.unconsolidated / Math.max(1, b.working)) * 100}%` }} /></span>
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="mem-bank-num" aria-hidden="true">{total}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                  </td>
+                  <td className="r mono">{total.toLocaleString()}</td>
+                  <td className="r mono">{formatSize(b.bytes)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        </div>
       )}
-      <p className="muted mem-footnote">条 = 工作 + 情节；细条为未召回（占总条数）与未合并（占工作记忆）比例。点一行查看该库记忆。</p>
       {cleanupOpen ? (
         <CleanupDialog banks={invalid} onClose={() => setCleanupOpen(false)} onToast={onToast} onChanged={onChanged} onOpenBackups={onOpenBackups} />
       ) : null}
-    </section>
+    </Panel>
   );
 }
 
@@ -180,12 +180,12 @@ export function MemoryBankHeader(props: {
           <span className="muted mono">{bank.cwd === null ? "—" : displayCwd(bank.cwd)}</span>
         </div>
         <div className="mem-bank-header-stats muted">
-          <span>工作 {bank.working} · 情节 {bank.episodic} · 事实 {bank.facts}</span>
+          <span>工作 {bank.working.toLocaleString()} · 情节 {bank.episodic.toLocaleString()} · 事实 {bank.facts.toLocaleString()}</span>
           <span>{formatSize(bank.bytes)}</span>
           <span title={bank.lastMemoryAt === null ? undefined : formatFullTime(bank.lastMemoryAt)}>
             最近记忆 {bank.lastMemoryAt === null ? "—" : formatRelativeTime(bank.lastMemoryAt)}
           </span>
-          <span>未召回 {bank.neverRecalled} · 未合并 {bank.unconsolidated}</span>
+          <span>未召回 {bank.neverRecalled.toLocaleString()} · 未合并 {bank.unconsolidated.toLocaleString()}</span>
         </div>
       </div>
       <div className="mem-bank-header-actions">
@@ -345,7 +345,7 @@ function CleanupDialog(props: {
         })}
       </ul>
       <p className="muted">
-        将移除 {selected.length} 个库、共 {totalMemories} 条记忆（{formatSize(totalBytes)}）。逐个执行，某个失败会继续。
+        将移除 {selected.length} 个库、共 {totalMemories.toLocaleString()} 条记忆（{formatSize(totalBytes)}）。逐个执行，某个失败会继续。
       </p>
       {results !== null ? (
         <ul className="mem-cleanup-results" aria-label="清理结果">

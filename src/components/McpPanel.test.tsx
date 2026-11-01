@@ -32,14 +32,13 @@ describe("行与状态", () => {
     await screen.findByTestId("mcp-row-user-filesystem");
 
     expect(within(rowOf("user", "filesystem")).getByText("生效")).toBeInTheDocument();
-    expect(within(rowOf("user", "filesystem")).getByText("env:DEMO_TOKEN")).toBeInTheDocument();
     expect(within(rowOf("user", "filesystem")).getByText("stdio")).toBeInTheDocument();
-    expect(within(rowOf("user", "filesystem")).getByText(/2 个参数/)).toBeInTheDocument();
+    expect(within(rowOf("user", "filesystem")).getByText("npx")).toBeInTheDocument();
+    // mcp-P1-5：首词 + 参数计数（不渲染完整 argv，避免泄露凭据；完整命令见编辑框）。
+    expect(within(rowOf("user", "filesystem")).getByText("· 2 个参数")).toBeInTheDocument();
     expect(
       within(rowOf("user", "blocked")).getByText("未生效：被 disabledServers 禁用"),
     ).toBeInTheDocument();
-    expect(within(rowOf("user", "blocked")).getByText("header:Authorization")).toBeInTheDocument();
-    expect(within(rowOf("user", "blocked")).getByText("OAuth/auth")).toBeInTheDocument();
     // forced 自身 enabled:false，但用户 enabledServers 强制启用 → 生效。
     expect(within(rowOf("user", "forced")).getByText("生效")).toBeInTheDocument();
     expect(
@@ -57,15 +56,15 @@ describe("行与状态", () => {
     renderPanel();
     await screen.findByTestId("mcp-row-user-filesystem");
 
-    fireEvent.change(screen.getByRole("combobox", { name: "配置范围" }), {
+    fireEvent.click(screen.getByRole("button", { name: "项目级" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "项目" }), {
       target: { value: PROJECTS[0].cwd },
     });
     await screen.findByTestId("mcp-row-project-shared");
     expect(within(rowOf("project", "shared")).getByText("生效")).toBeInTheDocument();
     expect(within(rowOf("project", "shared")).getByText("http")).toBeInTheDocument();
     // 只读区：同名用户条目提示被项目级覆盖。
-    expect(within(rowOf("user", "shared")).getByText("未生效：被项目级覆盖")).toBeInTheDocument();
-    expect(screen.getByText(/用户级同名条目/)).toBeInTheDocument();
+    expect(within(rowOf("user", "shared")).getByText("被覆盖")).toBeInTheDocument();
   });
 });
 
@@ -82,7 +81,7 @@ describe("编辑与保存", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(onToast).toHaveBeenCalledWith("已保存 filesystem", "info");
+    expect(onToast).toHaveBeenCalledWith("MCP 配置已保存 · revision 已校验", "info");
     expect(screen.getByText(/已运行的 omp 会话需执行 \/mcp reload/)).toBeInTheDocument();
   });
 
@@ -166,7 +165,7 @@ describe("编辑与保存", () => {
     const retry = screen.getByRole("dialog", { name: "编辑 MCP 服务器" });
     fireEvent.click(within(retry).getByRole("button", { name: "保存" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(onToast).toHaveBeenCalledWith("已保存 filesystem", "info");
+    expect(onToast).toHaveBeenCalledWith("MCP 配置已保存 · revision 已校验", "info");
     expect(await getMcpServer({ scope: "user", name: "filesystem" })).toMatchObject({
       config: { command: "typed-command" },
     });
@@ -180,13 +179,15 @@ describe("编辑与保存", () => {
     render(<McpPanel projects={[{ cwd: "/tmp/fresh-proj", name: "fresh-proj" }]} onToast={vi.fn()} />);
     await screen.findByTestId("mcp-row-user-filesystem");
     // 切到尚无配置文件的新项目。
-    fireEvent.change(screen.getByRole("combobox", { name: "配置范围" }), {
+    fireEvent.click(screen.getByRole("button", { name: "项目级" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "项目" }), {
       target: { value: "/tmp/fresh-proj" },
     });
     await screen.findByText("该范围还没有 MCP 配置文件，新增第一条服务器即可创建。");
 
-    fireEvent.click(screen.getByRole("button", { name: "新增" }));
-    const dialog = await screen.findByRole("dialog", { name: "新增 MCP 服务器" });
+    // 新增经页头「添加服务器」按钮。
+    fireEvent.click(screen.getByRole("button", { name: "添加服务器" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加 MCP 服务器" });
     fireEvent.change(within(dialog).getByLabelText("服务器名称"), {
       target: { value: "mine" },
     });
@@ -200,11 +201,11 @@ describe("编辑与保存", () => {
       config: { command: "peer" },
       expectedRevision: "absent",
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加" }));
 
     await within(dialog).findByText(/已被外部修改/);
-    const retry = screen.getByRole("dialog", { name: "新增 MCP 服务器" });
-    fireEvent.click(within(retry).getByRole("button", { name: "保存" }));
+    const retry = screen.getByRole("dialog", { name: "添加 MCP 服务器" });
+    fireEvent.click(within(retry).getByRole("button", { name: "添加" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const names = (await listMcp({ project: "/tmp/fresh-proj" })).servers
       .filter((s) => s.scope === "project")
@@ -267,6 +268,31 @@ describe("编辑与保存", () => {
     await within(dialog).findByText(/JSON 格式不正确/);
     expect(saves).toBe(0);
   });
+
+  it("传输选「自动推断」保存：type 字段被删除，保存成功", async () => {
+    await installMockBackend();
+    const { onToast } = renderPanel();
+    await screen.findByTestId("mcp-row-user-filesystem");
+
+    fireEvent.click(screen.getByRole("button", { name: "添加服务器" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加 MCP 服务器" });
+    fireEvent.change(within(dialog).getByLabelText("服务器名称"), { target: { value: "auto-type" } });
+    const box = within(dialog).getByLabelText("服务器配置 JSON") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: JSON.stringify({ command: "node", args: ["m.js"] }) } });
+    // 模板默认 stdio；切一次非空再切回自动推断，断言 type 键消失。
+    fireEvent.change(within(dialog).getByLabelText("传输"), { target: { value: "stdio" } });
+    expect(JSON.parse(box.value)).toHaveProperty("type", "stdio");
+    fireEvent.change(within(dialog).getByLabelText("传输"), { target: { value: "" } });
+    const parsed = JSON.parse(box.value) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty("type");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "添加" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onToast).toHaveBeenCalledWith("已添加 MCP 服务器 · auto-type", "info");
+    const saved = await getMcpServer({ scope: "user", name: "auto-type" });
+    expect(saved.config).not.toHaveProperty("type");
+    expect(saved.config).toMatchObject({ command: "node" });
+  });
 });
 
 describe("开关与删除", () => {
@@ -328,7 +354,9 @@ describe("只读与失败", () => {
     renderPanel();
     await screen.findByText(/请先手动修复该 JSON 文件/);
     expect(screen.getByText(/配置文件不是合法 JSON/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新增" })).toBeDisabled();
+    // 新增经页头「添加服务器」按钮：targetBlocked 时 add 不开对话框。
+    fireEvent.click(screen.getByRole("button", { name: "添加服务器" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("加载失败展示横幅并可重试", async () => {
@@ -356,7 +384,6 @@ describe("只读与失败", () => {
     await screen.findByText("读失败");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await screen.findByText(/还没有 MCP 配置文件/);
-    expect(screen.getByRole("button", { name: "新增" })).toBeEnabled();
   });
 });
 
@@ -365,8 +392,8 @@ describe("输入防篡改（WKWebView）", () => {
     await installMockBackend();
     renderPanel();
     await screen.findByTestId("mcp-row-user-filesystem");
-    fireEvent.click(screen.getByRole("button", { name: "新增" }));
-    const dialog = await screen.findByRole("dialog", { name: "新增 MCP 服务器" });
+    fireEvent.click(screen.getByRole("button", { name: "添加服务器" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加 MCP 服务器" });
     const input = within(dialog).getByLabelText("服务器名称") as HTMLInputElement;
     expect(input.getAttribute("autocapitalize")).toBe("off");
     expect(input.getAttribute("autocorrect")).toBe("off");
@@ -390,7 +417,6 @@ describe("disabledServers 行", () => {
     const toggle = within(row).getByRole("button", { name: /^(启用|禁用) blocked$/ });
     expect(toggle).toBeDisabled();
     expect(toggle.getAttribute("title")).toBe(HINT);
-    expect(within(row).getByText(HINT)).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: "编辑 blocked" })).toBeEnabled();
     expect(within(row).getByRole("button", { name: "删除 blocked" })).toBeEnabled();
   });
@@ -514,7 +540,7 @@ describe("双击竞态", () => {
     fireEvent.click(save);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(saves).toBe(1);
-    expect(onToast).toHaveBeenCalledWith("已保存 solo", "info");
+    expect(onToast).toHaveBeenCalledWith("MCP 配置已保存 · revision 已校验", "info");
     expect(screen.queryByText(/已被外部修改/)).toBeNull();
   });
 
@@ -536,5 +562,65 @@ describe("双击竞态", () => {
     await waitFor(() => expect(toggles).toBe(1));
     // 等待重载完成，避免跨测试泄漏。
     await waitFor(() => expect(screen.getByRole("button", { name: "禁用 solo" })).toBeEnabled());
+  });
+});
+
+describe("握手测试", () => {
+  it("首屏渲染与列表刷新不触发握手（只在点击时执行）", async () => {
+    let handshakes = 0;
+    mockIPC((cmd) => {
+      if (cmd === "mcp_handshake") {
+        handshakes += 1;
+        return { ok: true, tools: 3, ms: 10, error: null };
+      }
+      if (cmd === "mcp_list") {
+        return {
+          files: [{ scope: "user", path: "/Users/demo/.omp/agent/mcp.json", exists: true, readError: null, revision: "r1", modifiedAt: null, disabledServers: [], enabledServers: [] }],
+          servers: [{ scope: "user", name: "solo", transport: "stdio", command: "node", argCount: 0, url: null, enabled: true, effective: true, shadowedBy: null, envKeys: [], headerKeys: [], hasAuth: false }],
+        };
+      }
+      throw `no handler for ${cmd}`;
+    });
+    renderPanel();
+    await screen.findByTestId("mcp-row-user-solo");
+    expect(handshakes).toBe(0);
+    expect(screen.getByText("rev r1")).toBeInTheDocument();
+  });
+
+  it("点击测试后 toast 工具数，工具列更新", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "mcp_handshake") return { ok: true, tools: 7, ms: 120, error: null };
+      if (cmd === "mcp_list") {
+        return {
+          files: [{ scope: "user", path: "/Users/demo/.omp/agent/mcp.json", exists: true, readError: null, revision: "r1", modifiedAt: null, disabledServers: [], enabledServers: [] }],
+          servers: [{ scope: "user", name: "solo", transport: "stdio", command: "node", argCount: 0, url: null, enabled: true, effective: true, shadowedBy: null, envKeys: [], headerKeys: [], hasAuth: false }],
+        };
+      }
+      throw `no handler for ${cmd}`;
+    });
+    const onToast = vi.fn();
+    render(<McpPanel projects={PROJECTS} onToast={onToast} />);
+    await screen.findByTestId("mcp-row-user-solo");
+    fireEvent.click(screen.getByRole("button", { name: "测试" }));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("solo 握手成功 · 7 个工具", "info"));
+    expect(within(screen.getByTestId("mcp-row-user-solo")).getByText("7")).toBeInTheDocument();
+  });
+
+  it("握手失败 toast 错误，工具列保持 —", async () => {
+    mockIPC((cmd) => {
+      if (cmd === "mcp_handshake") return { ok: false, tools: null, ms: 50, error: "无法连接到服务器" };
+      if (cmd === "mcp_list") {
+        return {
+          files: [{ scope: "user", path: "/Users/demo/.omp/agent/mcp.json", exists: true, readError: null, revision: "r1", modifiedAt: null, disabledServers: [], enabledServers: [] }],
+          servers: [{ scope: "user", name: "solo", transport: "stdio", command: "node", argCount: 0, url: null, enabled: true, effective: true, shadowedBy: null, envKeys: [], headerKeys: [], hasAuth: false }],
+        };
+      }
+      throw `no handler for ${cmd}`;
+    });
+    const onToast = vi.fn();
+    render(<McpPanel projects={PROJECTS} onToast={onToast} />);
+    await screen.findByTestId("mcp-row-user-solo");
+    fireEvent.click(screen.getByRole("button", { name: "测试" }));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("solo 握手失败：无法连接到服务器", "error"));
   });
 });

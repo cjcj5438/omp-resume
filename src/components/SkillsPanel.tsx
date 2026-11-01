@@ -1,28 +1,31 @@
 /**
- * 技能面板：只读列表 + 更新 registry skills。
+ * 技能面板：卡片网格（设计稿 skill-grid）+ 更新 registry skills。
+ * CLI 无版本/可更新字段（2026-10-31 实测）：不渲染版本与检查更新。
  * 变更走 useOmpOp 单操作模型；忙时更新按钮禁用。
  */
 import { useCallback, useEffect, useState } from "react";
+import { ShieldCheck } from "lucide-react";
 import { listOmpSkills, normalizeError, updateOmpSkills } from "../api";
 import { errorText } from "../format";
 import type { AppError, SkillsListResult } from "../types";
-import { Badge } from "./ui";
+import { Badge, Ico } from "./ui";
+import { PageHeader } from "./page";
 import { useAlive, type OmpOpController, type ToastFn } from "./useOmpOp";
-
-interface SkillsPanelProps {
+import "./SkillsPanel.css";
+ interface SkillsPanelProps {
   op: OmpOpController;
   onToast: ToastFn;
   /** 全部更新完成后递增，触发列表重载。 */
   refreshToken: number;
+  busy: boolean;
 }
 
-export function SkillsPanel({ op, onToast, refreshToken }: SkillsPanelProps) {
+export function SkillsPanel({ op, onToast, refreshToken, busy }: SkillsPanelProps) {
   const alive = useAlive();
   const [data, setData] = useState<SkillsListResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<AppError | null>(null);
   const [ompMissing, setOmpMissing] = useState(false);
-  const busy = op.running !== null;
 
   const load = useCallback(async () => {
     if (alive.current) {
@@ -78,6 +81,17 @@ export function SkillsPanel({ op, onToast, refreshToken }: SkillsPanelProps) {
 
   return (
     <div className="manage-section">
+      <PageHeader
+        kicker="环境配置 · 技能"
+        title="技能"
+        sub="已安装技能。更新只拉取 registry 版本，不会自动改写技能内容。"
+        actions={
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void update()}>
+            {busy ? <span className="spinner" aria-hidden="true" /> : null}
+            更新全部{data.skills.length > 0 ? ` (${data.skills.length})` : ""}
+          </button>
+        }
+      />
       {loading ? <div className="pane-note">正在加载技能…</div> : null}
       {listError !== null ? (
         <div className="banner banner-error" role="alert">
@@ -96,49 +110,27 @@ export function SkillsPanel({ op, onToast, refreshToken }: SkillsPanelProps) {
           </ul>
         </div>
       ) : null}
-      <div className="toolbar">
-        <button type="button" className="btn" disabled={busy} onClick={() => void update()}>
-          更新 registry skills
-        </button>
-      </div>
       <p className="pane-hint">仅更新通过 omp skill 从 registry 安装的技能；~/.agents/skills 下的技能由其他工具管理，不受影响。</p>
       <h3 className="manage-sub">已安装技能</h3>
       {data.skills.length === 0 ? (
         <div className="pane-note">暂无技能</div>
       ) : (
-        <table className="manage-table">
-          <thead>
-            <tr>
-              <th scope="col">名称</th>
-              <th scope="col">描述</th>
-              <th scope="col">来源</th>
-              <th scope="col">状态</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.skills.map((s) => (
-              <tr key={s.filePath}>
-                <td className="mono">{s.name}</td>
-                <td className="manage-desc" title={s.description}>
-                  {s.description}
-                </td>
-                <td>
-                  <Badge tone={s.source === "registry" ? "accent" : "grey"}>
-                    {s.source}
-                  </Badge>
-                </td>
-                <td>
-                  {s.hide ? (
-                    <Badge tone="grey">隐藏</Badge>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="skill-grid">
+          {data.skills.map((s) => (
+            <article key={s.filePath} className="skill-card">
+              <div className="skill-head">
+                <span className="skill-name" title={s.filePath}>{s.name}</span>
+                {s.hide ? <Badge tone="grey">隐藏</Badge> : <Badge tone="quiet">{s.source}</Badge>}
+              </div>
+              <p className="skill-desc" title={s.description}>{s.description}</p>
+              <div className="skill-foot">
+                <span className="mono" title={s.baseDir}>{s.baseDir.split("/").pop() ?? s.baseDir}</span>
+              </div>
+            </article>
+          ))}
+        </div>
       )}
+      <div className="inline-note"><Ico icon={ShieldCheck} size={12} /> 技能目录是只读材料，更新只拉取 registry 版本；如需修改技能本体，请直接编辑技能文件。</div>
     </div>
   );
 }

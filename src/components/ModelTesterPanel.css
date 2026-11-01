@@ -14,33 +14,31 @@
 .bench-segment .segment-item:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .bench-segment .segment-item-active:hover:not(:disabled) { background: var(--bg-elevated); }
 
-.bench-chips { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+.bench-chips { display: flex; gap: var(--sp-1); flex-wrap: wrap; align-items: center; }
+.bench-chips .tag-chip { font-size: 10.5px; line-height: 1.5; padding: 0 6px; }
 .bench-chipwrap { display: inline-flex; align-items: center; gap: 2px; }
 .bench-chip-x { padding: 1px 5px; }
 
-.bench-table-wrap { overflow: auto; max-height: 62vh; }
-.bench-table { table-layout: fixed; min-width: 860px; }
+.bench-probe-hint { flex-basis: 100%; font-size: 10.5px; margin: 0; }
+.bench-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+
+.bench-table-wrap { overflow-x: auto; overflow-y: visible; }
+.bench-table { table-layout: fixed; min-width: 920px; }
 .bench-table td { overflow: hidden; text-overflow: ellipsis; }
-/* 数值列右对齐 + 等宽数字，便于纵向对比。
- * 选择器带 .bench-table 前缀：App.css 的 `.manage-table th, td { text-align: left }`
- * 是 class + 元素，单类选择器压不过它。 */
-.bench-table th.bench-num,
-.bench-table td.bench-num { text-align: right; font-variant-numeric: tabular-nums; }
 /* 标签列：允许换行，不撑破固定列宽。 */
 .bench-tags { display: flex; gap: 4px; flex-wrap: wrap; align-items: flex-start; }
-/* 表头吸顶（滚动容器是 .bench-table-wrap）。 */
-.bench-table thead th { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--bg-elevated); }
 /* 固定列用 colgroup 宽度（perf 列有时不存在，nth-child 会错位）：数值/徽章列内容宽度固定。 */
 .bench-col-tags { width: 110px; }
-.bench-col-rate { width: 60px; }
-.bench-col-ttft { width: 108px; }
-.bench-col-tps { width: 84px; }
+.bench-col-score { width: 56px; }
+.bench-col-rate { width: 72px; }
+.bench-col-ttft { width: 136px; }
+.bench-col-tps { width: 108px; }
 .bench-col-ratio { width: 66px; }
-.bench-col-perf { width: 92px; }
+.bench-col-perf { width: 116px; }
 .bench-col-trend { width: 84px; }
-.bench-col-act { width: 40px; }
+.bench-col-act { width: 76px; }
 .bench-table th { overflow-wrap: anywhere; }
-/* 行 hover/过渡走共享 .manage-table 规则；这里只加选中态（§19：hover 在 active 之后）。 */
+/* 行 hover/过渡走共享 .tbl 规则；这里只加选中态。 */
 .bench-row { cursor: pointer; }
 .bench-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .bench-row-selected { background: var(--bg-selected); }
@@ -62,6 +60,11 @@
 
 /* 抽屉内容块。 */
 .bench-drawer-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bench-score-block { flex-direction: row; align-items: center; gap: var(--sp-4); }
+.score-ring { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; width: 96px; padding: var(--sp-2) 0; border-radius: var(--radius-lg); background: var(--bg-card); }
+.score-value { font-size: 30px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.score-label { font-size: 9px; color: var(--text-faint); }
+.bench-score-block .detail-list { flex: 1; min-width: 0; }
 .bench-drawer-block { display: flex; flex-direction: column; gap: var(--sp-2); padding-top: var(--sp-3); box-shadow: inset 0 1px 0 var(--border); }
 .bench-drawer-title { font-size: var(--fs-sm); color: var(--text-muted); }
 .bench-check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

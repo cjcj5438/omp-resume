@@ -7,11 +7,13 @@ import { useEffect } from "react";
 import { modelBenchRun, normalizeError } from "./api";
 import type { AgentDefinition, BenchRound, ModelInfo } from "./types";
 import { parseSelectorValue } from "./modelConfig";
-import { ROLE_INFO, roleInfo } from "./roleCards";
+import { MORE_ROLES, ROLE_INFO, roleInfo, rowAfterModelChange, type ModelDrafts } from "./roleCards";
 import { readJson, writeJson } from "./storage";
 
 // ---- 本地配置（localStorage，与 pins 同 pattern） ----
 
+/** models 页跳 bench 的预选透传（sessionStorage，消费后清除）。 */
+export const BENCH_FOCUS_KEY = "omp-resume:bench-focus";
 export const BENCH_CONFIG_KEY = "omp-resume:model-tester:v1";
 
 export type BenchIntervalMin = 0 | 30 | 60 | 360;
@@ -324,6 +326,39 @@ export function recommendChanges(
     if (best.selector !== current) changes.set(tag.id, best.selector);
   }
   return changes;
+}
+
+/**
+ * bench 推荐/设为角色回填到角色草稿（ModelsTab 与 BenchTab 共用；调用方给 draft 操作）。
+ * expand 保证行可见；thinking 恒覆盖（bench 条目的合法才保留，否则回默认）。
+ */
+export function applyBenchRoles(
+  changes: Map<string, string>,
+  ops: {
+    expandRole: (role: string) => void;
+    setMoreOpen: (open: boolean) => void;
+    setDraft: (update: (prev: ModelDrafts | null) => ModelDrafts | null) => void;
+    modelsList: ModelInfo[];
+  },
+): void {
+  for (const [role] of changes) {
+    ops.expandRole(role);
+    if (MORE_ROLES.includes(role)) ops.setMoreOpen(true);
+  }
+  ops.setDraft((prev) => {
+    if (prev === null) return prev;
+    const roles = new Map(prev.roles);
+    for (const [role, selector] of changes) {
+      const current = roles.get(role) ?? { selector: null, thinking: "", touched: false };
+      const parsed = parseSelectorValue(selector);
+      const row = rowAfterModelChange(current, parsed.selector, ops.modelsList);
+      // 恒覆盖：bench 条目的 thinking 合法才保留，否则回默认（防旧值残留与非法后缀）。
+      const levels = ops.modelsList.find((m) => m.selector === parsed.selector)?.thinkingLevels ?? [];
+      const thinking = parsed.thinking !== "" && levels.includes(parsed.thinking) ? parsed.thinking : "";
+      roles.set(role, { ...row, thinking });
+    }
+    return { ...prev, roles };
+  });
 }
 
 // ---- 花费预估（省钱护栏：单轮按 800 输入 + 2300 输出 token 估算） ----

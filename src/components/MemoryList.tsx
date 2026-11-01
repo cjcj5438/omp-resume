@@ -314,7 +314,7 @@ export function MemoryList(props: {
             <option value="mostRecalled">召回最多</option>
           </select>
         </label>
-        <span className="muted" aria-live="polite">{loading ? "加载中…" : `共 ${total} 条`}</span>
+        <span className="muted" aria-live="polite">{loading ? "加载中…" : `共 ${total.toLocaleString()} 条`}</span>
       </div>
       {selecting ? <SelectionBar selection={selection} loadedIds={items.map((m) => m.id)} onDelete={() => setDeleteIds([...checked])} /> : null}
       {listError !== null ? <div className="pane-note">加载失败：{listError}</div> : null}
@@ -427,7 +427,7 @@ export function MemoryList(props: {
       </ul>
       {items.length > 0 && items.length < total ? (
         <div className="mem-more">
-          <span className="muted">已显示 {items.length} / 共 {total} 条</span>
+          <span className="muted">已显示 {items.length.toLocaleString()} / 共 {total.toLocaleString()} 条</span>
           <button type="button" className="btn" disabled={loadingMore} onClick={loadMore}>
             {loadingMore ? "加载中…" : "加载更多"}
           </button>

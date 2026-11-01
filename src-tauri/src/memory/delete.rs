@@ -17,12 +17,13 @@ use super::backup::{
 };
 use super::gate::{bank_files, holders_for_files_with, in_use_message, ProbeFailed};
 use super::{
-    invalid, io, open_readonly, outside, table_schema, validate_bank, TableSchema, DB_FILENAME,
+    invalid, io, list_bank_names, open_readonly, outside, table_schema, validate_bank, TableSchema,
+    DB_FILENAME,
 };
 use crate::model::{
-    AppError, ErrorCode, MemoryBackup, MemoryBackupKind, MemoryBankStatus, MemoryDeleteCascade,
-    MemoryDeleteDeletable, MemoryDeletePreview, MemoryDeleteResult, MemoryRestoreResult,
-    MemorySkipReason, MemorySkipped,
+    AppError, ErrorCode, MemoryBackup, MemoryBackupAllError, MemoryBackupAllResult,
+    MemoryBackupKind, MemoryBankStatus, MemoryDeleteCascade, MemoryDeleteDeletable,
+    MemoryDeletePreview, MemoryDeleteResult, MemoryRestoreResult, MemorySkipReason, MemorySkipped,
 };
 use crate::util::escape_like;
 
@@ -828,6 +829,43 @@ pub fn backups_impl(data_dir: &Path, bank: Option<&str>) -> Vec<MemoryBackup> {
     list_backups(&backup_root(data_dir), bank)
 }
 
+/// CONTRACT §4.74 实现：逐库拍快照。枚举与 overview 同源（`list_bank_names`）；
+/// 无 lsof 门禁（`VACUUM INTO` 只读）；逐库独立成败，唯一整体失败是枚举本身失败。
+pub fn backup_all_impl(
+    bank_root: &Path,
+    data_dir: &Path,
+) -> Result<MemoryBackupAllResult, AppError> {
+    let mut names = list_bank_names(bank_root).ok_or_else(|| io("备份失败：无法读取记忆库目录"))?;
+    names.sort();
+    let broot = backup_root(data_dir);
+    let mut backups = Vec::with_capacity(names.len());
+    let mut errors = Vec::new();
+    for bank in &names {
+        let dir = match validate_bank(bank_root, bank) {
+            Ok(dir) => dir,
+            Err(e) => {
+                errors.push(MemoryBackupAllError {
+                    bank: bank.clone(),
+                    reason: e.message,
+                });
+                continue;
+            }
+        };
+        let bank_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or(bank);
+        match create_snapshot_backup(&broot, &dir, bank_name, MemoryBackupKind::Manual) {
+            Ok(reference) => {
+                prune_backups(&broot, bank_name, MemoryBackupKind::Manual);
+                backups.push(describe_ref(&reference));
+            }
+            Err(e) => errors.push(MemoryBackupAllError {
+                bank: bank.clone(),
+                reason: e.message,
+            }),
+        }
+    }
+    Ok(MemoryBackupAllResult { backups, errors })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,5 +916,120 @@ mod tests {
             .collect();
         assert!(leftovers.is_empty());
         assert!(backups_impl(&data, Some("b-1")).is_empty());
+    }
+
+    /// 建一个最小假 bank（working 2 行 + episodic 1 行，供统计断言）。
+    fn make_bank(banks: &Path, bank: &str) {
+        let dir = banks.join(bank);
+        std::fs::create_dir_all(&dir).unwrap();
+        Connection::open(dir.join(DB_FILENAME))
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE working_memory (id TEXT PRIMARY KEY, content TEXT, session_id TEXT); \
+                 INSERT INTO working_memory VALUES ('w1', 'x', 'b'), ('w2', 'y', 'b'); \
+                 CREATE TABLE episodic_memory (id TEXT PRIMARY KEY, session_id TEXT); \
+                 INSERT INTO episodic_memory VALUES ('e1', 'b');",
+            )
+            .unwrap();
+    }
+
+    /// 两库全成功：两个 backup id + manifest 可解析（条目计数非 null）。
+    #[test]
+    fn backup_all_two_banks_both_succeed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let banks = tmp.path().join("banks");
+        make_bank(&banks, "b-1");
+        make_bank(&banks, "b-2");
+        let data = tmp.path().join("data");
+        let result = backup_all_impl(&banks, &data).unwrap();
+        assert!(result.errors.is_empty());
+        assert_eq!(result.backups.len(), 2);
+        let listed = backups_impl(&data, None);
+        assert_eq!(listed.len(), 2);
+        for backup in &result.backups {
+            assert_eq!(backup.kind, MemoryBackupKind::Manual);
+            // manifest 可解析 ⇒ 计数非 null（形状与生产一致）。
+            assert_eq!(backup.working, Some(2));
+            assert_eq!(backup.episodic, Some(1));
+            assert!(listed.iter().any(|b| b.id == backup.id));
+        }
+    }
+
+    /// 坏库独立失败：坏库进 errors，好库照常出 backup；枚举失败才整体 Err。
+    #[test]
+    fn backup_all_bad_bank_isolated_and_missing_root_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let banks = tmp.path().join("banks");
+        make_bank(&banks, "good");
+        std::fs::create_dir_all(banks.join("bad")).unwrap();
+        std::fs::write(banks.join("bad").join(DB_FILENAME), b"not a database").unwrap();
+        let data = tmp.path().join("data");
+        let result = backup_all_impl(&banks, &data).unwrap();
+        assert_eq!(result.backups.len(), 1);
+        assert_eq!(result.backups[0].bank, "good");
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].bank, "bad");
+        assert!(!result.errors[0].reason.is_empty());
+        assert!(backups_impl(&data, Some("good")).len() == 1);
+        assert!(backups_impl(&data, Some("bad")).is_empty());
+        // 根目录不存在 ⇒ 唯一整体失败。
+        let err = backup_all_impl(&tmp.path().join("no-such-root"), &data).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Io);
+    }
+
+    /// manual 独立分组：连点 6 次 backup_all，before-delete 快照数不变、manual 只留 5。
+    #[test]
+    fn backup_all_manual_group_never_evicts_before_delete() {
+        use super::super::backup::{backup_root, create_snapshot_backup};
+        let tmp = tempfile::tempdir().unwrap();
+        let banks = tmp.path().join("banks");
+        make_bank(&banks, "b-1");
+        let data = tmp.path().join("data");
+        // 先造 2 个 before-delete 快照（模拟删行前备份）。
+        let broot = backup_root(&data);
+        for _ in 0..2 {
+            create_snapshot_backup(
+                &broot,
+                &banks.join("b-1"),
+                "b-1",
+                MemoryBackupKind::BeforeDelete,
+            )
+            .unwrap();
+        }
+        // pick_dirname 同秒冲突自动秒数递增，无需 sleep。
+        for _ in 0..6 {
+            let result = backup_all_impl(&banks, &data).unwrap();
+            assert!(result.errors.is_empty());
+        }
+        let listed = backups_impl(&data, Some("b-1"));
+        let before_delete = listed
+            .iter()
+            .filter(|b| b.kind == MemoryBackupKind::BeforeDelete)
+            .count();
+        let manual = listed
+            .iter()
+            .filter(|b| b.kind == MemoryBackupKind::Manual)
+            .count();
+        assert_eq!(before_delete, 2);
+        assert_eq!(manual, 5);
+    }
+
+    /// manual 快照可列出、可恢复（恢复路径与快照类一致）。
+    #[test]
+    fn backup_all_manual_snapshot_is_listable_and_restorable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let banks = tmp.path().join("banks");
+        make_bank(&banks, "b-1");
+        let data = tmp.path().join("data");
+        let result = backup_all_impl(&banks, &data).unwrap();
+        assert_eq!(result.backups.len(), 1);
+        let id = result.backups[0].id.clone();
+        assert!(id.ends_with("-manual"));
+        assert!(backups_impl(&data, Some("b-1")).iter().any(|b| b.id == id));
+        // 删库后从 manual 快照恢复。
+        std::fs::remove_dir_all(banks.join("b-1")).unwrap();
+        let restored = restore_impl_with(&banks, &data, &id, &idle_gate(tmp.path())).unwrap();
+        assert_eq!(restored.bank, "b-1");
+        assert!(banks.join("b-1").join(DB_FILENAME).is_file());
     }
 }

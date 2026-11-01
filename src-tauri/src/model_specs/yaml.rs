@@ -1567,3 +1567,249 @@ pub(super) fn apply_patch_to_text(
     }
     Ok(out)
 }
+
+/// 新模型条目定位：在 `providers:` 下已存在的 provider 的 `models:` 列表末尾。
+pub(super) struct ModelsTail {
+    /// 插入点行下标（新条目插到该行之前；等于行数时追加到文件尾）。
+    pub(super) insert_at: usize,
+    /// 新条目横线缩进（跟随现有条目；空列表时 `models:` 缩进 + 2）。
+    pub(super) item_indent: usize,
+    /// 新条目字段缩进（跟随现有条目；空列表时横线缩进 + 2）。
+    pub(super) field_indent: usize,
+    /// 插入行沿用的换行符。
+    pub(super) newline: &'static str,
+}
+
+/// 定位 `providers:` 下某 provider 的 `models:` 列表尾。
+/// provider 不存在 → `INVALID_INPUT`（不新建 provider 块）；`models:` 缺失/重复 → 手动改。
+fn locate_models_tail(lines: &[Line<'_>], provider: &str) -> Result<ModelsTail, AppError> {
+    // 1) 顶层 `providers:` 块（与 `locate_model` 同规则）。
+    let mut providers_line = None;
+    for (index, line) in lines.iter().enumerate() {
+        if let Some((key, value)) = parse_key_line(line.content) {
+            if indent_of(line.content) == 0 && key == "providers" && value.is_empty() {
+                providers_line = Some(index);
+                break;
+            }
+        }
+    }
+    let providers_line = providers_line.ok_or_else(|| manual_edit("未找到 providers 配置块"))?;
+    // 2) provider 键（引号键允许；重复 → 手动改）。
+    let mut provider_indent = None;
+    let mut provider_count = 0;
+    let mut provider_line = None;
+    for (index, line) in lines.iter().enumerate().skip(providers_line + 1) {
+        let indent = indent_of(line.content);
+        if indent == 0 {
+            if parse_key_line(line.content).is_some() {
+                break;
+            }
+            continue;
+        }
+        let Some((key, _)) = parse_key_line(line.content) else {
+            continue;
+        };
+        match provider_indent {
+            None => {
+                if key == provider {
+                    provider_indent = Some(indent);
+                    provider_count = 1;
+                    provider_line = Some(index);
+                } else if indent == provider_indent.unwrap_or(indent) {
+                    provider_indent = Some(indent);
+                }
+            }
+            Some(expected) => {
+                if indent < expected {
+                    continue;
+                }
+                if indent == expected && key == provider {
+                    provider_count += 1;
+                    if provider_count == 1 {
+                        provider_line = Some(index);
+                    }
+                }
+            }
+        }
+    }
+    if provider_count > 1 {
+        return Err(manual_edit(
+            format!("provider {provider} 在文件中出现多次").as_str(),
+        ));
+    }
+    let provider_line = provider_line.ok_or_else(|| invalid("未找到指定的 provider"))?;
+    let provider_indent =
+        provider_indent.unwrap_or_else(|| indent_of(lines[provider_line].content));
+    // 3) provider 块内的 `models:`（与 `locate_model` 同规则；缺失不建 → 手动改）。
+    let mut models_line = None;
+    let mut models_indent_found = None;
+    let mut scan = provider_line + 1;
+    while scan < lines.len() {
+        let line = &lines[scan];
+        let indent = indent_of(line.content);
+        if let Some((key, value)) = parse_key_line(line.content) {
+            if indent <= provider_indent {
+                break;
+            }
+            if indent > provider_indent && key == "models" && value.is_empty() {
+                match models_line {
+                    None => {
+                        models_line = Some(scan);
+                        models_indent_found = Some(indent);
+                    }
+                    Some(_) if Some(indent) == models_indent_found => {
+                        return Err(manual_edit("该 provider 下 models 出现多次"));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        scan += 1;
+    }
+    let models_line = models_line.ok_or_else(|| manual_edit("该 provider 下未找到 models 列表"))?;
+    let models_indent = indent_of(lines[models_line].content);
+    // 4) 走到列表尾：复用条目缩进确立规则（首项确立；零额外缩进序列亦可）。
+    let mut item_indent: Option<usize> = None;
+    let mut last_item_start: Option<usize> = None;
+    let mut last_field_indent: Option<usize> = None;
+    let mut index = models_line + 1;
+    let mut list_end = lines.len();
+    while index < lines.len() {
+        let line = &lines[index];
+        if let Some((head_indent, rest)) = item_head(line.content) {
+            if head_indent < item_indent.unwrap_or(models_indent).min(models_indent) {
+                list_end = index;
+                break;
+            }
+            if item_indent.is_none() {
+                item_indent = Some(head_indent);
+            }
+            if Some(head_indent) != item_indent {
+                index += 1;
+                continue;
+            }
+            let rest_trimmed = rest.trim();
+            if rest_trimmed.starts_with('{') {
+                return Err(manual_edit("models 列表含行内对象写法（- {…}）"));
+            }
+            if rest_trimmed.starts_with('*') {
+                index += 1;
+                continue;
+            }
+            if !rest_trimmed.is_empty()
+                && head_key_of(rest).is_none()
+                && !rest_trimmed.starts_with('&')
+            {
+                return Err(manual_edit("models 列表含无法识别的条目写法"));
+            }
+            last_item_start = Some(index);
+            index += 1;
+            continue;
+        }
+        if parse_key_line(line.content).is_some() && indent_of(line.content) <= models_indent {
+            list_end = index;
+            break;
+        }
+        index += 1;
+    }
+    // 现有条目的字段缩进：用末条目确立（`item_field_indent` 同口径）。
+    if let Some(start) = last_item_start {
+        last_field_indent = Some(item_field_indent(
+            lines,
+            start,
+            list_end.saturating_sub(1).max(start),
+        ));
+    }
+    let dash = item_indent.unwrap_or(models_indent + 2);
+    let field = last_field_indent.unwrap_or(dash + 2);
+    // 插入行换行：沿用列表尾上一行的换行（文件尾无换行则用 `\n`）。
+    let newline = if list_end > 0 && !lines[list_end - 1].newline.is_empty() {
+        lines[list_end - 1].newline
+    } else {
+        "\n"
+    };
+    // `split_lines` 只产 `\n` / `\r\n` / 空三种：此处非空即二者之一。
+    let newline: &'static str = if newline == "\r\n" { "\r\n" } else { "\n" };
+    Ok(ModelsTail {
+        insert_at: list_end,
+        item_indent: dash,
+        field_indent: field,
+        newline,
+    })
+}
+
+/// 在 provider 的 `models:` 列表末尾插入新条目，返回新全文。
+/// provider 必须已存在（否则 `INVALID_INPUT`，不新建 provider 块）；
+/// 同 provider 下 id 查重（已存在 → `INVALID_INPUT`「已存在」）。
+/// 新条目字段 `id/name/contextWindow/maxTokens`（name 缺省为 id）；
+/// 缩进跟随现有条目（空 `models:` 按 `models:` 缩进 + 2 推导）；
+/// 其余字节（注释、凭据、换行风格）不动。
+pub(super) fn insert_model_into_text(
+    text: &str,
+    provider: &str,
+    id: &str,
+    name: Option<&str>,
+    context_window: Option<u64>,
+    max_tokens: Option<u64>,
+) -> Result<String, AppError> {
+    let lines = split_lines(text);
+    let tail = locate_models_tail(&lines, provider)?;
+    // 同 provider 下 id 查重：条目存在 → 拒绝。`locate_model` 的形状错误
+    // （`manual_edit`，同样是 `InvalidInput` 码）必须透出，只有精确的
+    // 「未找到指定的模型」才代表可插入。
+    match locate_model(&lines, provider, id) {
+        Ok(_) => {
+            return Err(invalid(format!(
+                "模型 {provider}/{id} 已存在，请换个 id 或直接修改它"
+            )));
+        }
+        Err(error) if error.message == "未找到指定的模型" => {}
+        Err(error) => return Err(error),
+    }
+    let dash = " ".repeat(tail.item_indent);
+    let field = " ".repeat(tail.field_indent);
+    // 新条目：首行 `- id:` + 续行字段；id 永不加引号（校验已排除换行/`/`，
+    // 其余字符 YAML 侧 omp 沙箱兜底）。
+    let mut rows = vec![format!("{dash}- id: {id}")];
+    rows.push(format!("{field}name: {}", quote_name(name.unwrap_or(id))));
+    if let Some(window) = context_window {
+        rows.push(format!("{field}contextWindow: {window}"));
+    }
+    if let Some(tokens) = max_tokens {
+        rows.push(format!("{field}maxTokens: {tokens}"));
+    }
+    let mut out = String::with_capacity(text.len() + rows.join("\n").len() + 32);
+    let mut fixed_newline: Option<&str> = None;
+    if tail.insert_at > 0
+        && tail.insert_at <= lines.len()
+        && lines[tail.insert_at - 1].newline.is_empty()
+    {
+        fixed_newline = Some(tail.newline);
+    }
+    for (index, line) in lines.iter().enumerate() {
+        if index == tail.insert_at {
+            for row in &rows {
+                out.push_str(row);
+                out.push_str(tail.newline);
+            }
+        }
+        out.push_str(line.content);
+        if Some(index)
+            == tail
+                .insert_at
+                .checked_sub(1)
+                .filter(|_| fixed_newline.is_some())
+        {
+            out.push_str(fixed_newline.unwrap_or("\n"));
+        } else {
+            out.push_str(line.newline);
+        }
+    }
+    if tail.insert_at >= lines.len() {
+        for row in &rows {
+            out.push_str(row);
+            out.push_str(tail.newline);
+        }
+    }
+    Ok(out)
+}
