@@ -2,13 +2,14 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.2.3-2f6feb)
+![version](https://img.shields.io/badge/version-0.5.1-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
-![tests](https://img.shields.io/badge/tests-962%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-1214%20passing-2ea043)
 ![ui](https://img.shields.io/badge/UI-Chinese%20(zh--CN)-8b949e)
 
 > UI copy ships in Chinese today; this README is English. Screenshots are from the built-in demo backend, so no real session data is shown.
+> The UI was rebuilt in 0.5.x (page-based shell — see below); screenshots under `docs/media/` predate the rebuild and are pending refresh.
 
 omp stores every session as an append-only JSONL tree under `~/.omp/agent/sessions`. That is a rich, structured record of everything your agent did — and today it is only readable by the CLI, one `--resume` at a time.
 
@@ -30,6 +31,14 @@ Two kinds of tools already exist: chat clients that host their own runtime, and 
 | **omp-resume** | Native macOS inspector + config console + launchpad | Opens the session in a real `omp --resume` iTerm2 tab, and can append a branch marker so that resume continues from any node. |
 
 The design rule is simple: **omp owns the session, omp-resume owns the view.** Writes are limited to app-owned files (`meta.json`, `model-bench.jsonl`, memory backups) and to explicitly confirmed, revision-checked edits of omp's own config files. Session contents are never rewritten.
+
+---
+
+## The shell (0.5.x rebuild)
+
+The main window is a page-based shell: a left sidebar groups every feature into **会话** (sessions), **分析** (usage / health / cleanup / prompt history), **Agent Stage** (pixel office), **环境配置** (models / agents / plugins / skills / MCP / memory), **工具** (model tester / cheat sheet) and **设置** (appearance & behavior / menu bar). Each session opens a **workspace** with three tabs — 概览 (overview), 对话 (conversation) and 树 (tree).
+
+Global keys: **⌘K** command palette (search sessions and pages), **⌘B** collapse the sidebar, **⌘N** new session, **⌘,** settings. The sidebar footer shows the update state (checking / new version / failed / up to date) with the session count badge on the Sessions entry. The titlebar keeps the native macOS traffic lights (`trafficLightPosition` in `tauri.conf.json`).
 
 ---
 
@@ -71,14 +80,14 @@ Nothing here is synthetic. If omp did not record it, the stage does not draw it 
 
 ### Environment and configuration
 
-Six tabs, all editing what omp actually reads:
+Six pages, all editing what omp actually reads:
 
-| Tab | What it manages |
+| Page | What it manages |
 |---|---|
 | **Models** | The model library from `models.yml` + agent config; context window, max output, reasoning, input types, pricing |
 | **Agents** | Agent definitions and their model roles (`modelRoles`) |
 | **Plugins** | Marketplace plugins: install, enable/disable, upgrade, marketplace add/remove |
-| **Skills** | Installed skills with an update check |
+| **Skills** | Installed skills with bulk registry update (read-only version list; omp reports no per-skill update check) |
 | **MCP** | Native MCP server config for user and project scope, with revision-checked writes |
 | **Memory** | Mnemopi long-term memory banks: counts, coverage bars, recall graph, backups, maintenance |
 
@@ -97,7 +106,7 @@ Model **specs** are editable row by row in `models.yml`, with value-shape valida
 
 ### Cheat sheet
 
-A searchable reference pinned to **omp 18.13.3**: 88 built-in slash commands with aliases, argument hints and examples, 3 bundled extension commands, 51 terminal subcommands, plus curated learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
+A searchable reference pinned to **omp 18.13.3**: 88 slash commands (85 built-in + 3 bundled extension commands) with aliases, argument hints and examples, 51 terminal subcommands, plus curated learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
 
 ![Cheat sheet](docs/media/cheatsheet.jpg)
 
@@ -105,7 +114,7 @@ A searchable reference pinned to **omp 18.13.3**: 88 built-in slash commands wit
 
 The tray icon watches **sessions that are running right now** — determined from flock ownership plus the JSONL tail, never from mtime — and classifies them as `working` / `waiting for input` / `idle` / `possibly stuck`. It shows a compact badge (`2·1`), can notify you when a session starts waiting for input, and can focus the owning iTerm2 tab.
 
-The tray menu shows today's cost, the running sessions with native macOS status dots, "new session" and "recent sessions" submenus, a mode switcher, and a settings submenu. Session rows only focus the owning tab (`activate` + `select`); the new/recent submenus open a new iTerm2 tab and run the command there via the same primitive as the main window (`ops::iterm::open_tab`). The tray never kills or signals processes, and never types into an existing tab.
+Left-click opens a real **panel window** (`tray-panel`): today's cost, running sessions with native macOS status dots, search, a "new session" CTA, recent sessions and a mode switcher inline, plus a version row with quit. The panel hides on blur and toggles on repeat clicks (with a 250 ms blur/toggle race guard). Right-click opens the native menu instead (new/recent sessions, settings, quit), and the click behavior (panel vs main window) is configurable in the Menu Bar settings page. Session rows only focus the owning tab (`activate` + `select`); the new/recent entries open a new iTerm2 tab and run the command there via the same primitive as the main window (`ops::iterm::open_tab`). The tray never kills or signals processes, and never types into an existing tab.
 
 ### Appearance
 
@@ -122,7 +131,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.2.3_aarch64.dmg — macOS arm64
+# omp-resume_0.5.1_aarch64.dmg — macOS arm64
 ```
 
 The bundle carries no Developer ID and is not notarized. If Gatekeeper blocks it: **right-click → Open** in Applications, once.
@@ -152,7 +161,7 @@ npm run check        # typecheck + vitest
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-The mock backend is a dev-only import that simulates all 59 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships.
+The mock backend is a dev-only import that simulates all 83 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships.
 
 ### Release
 
@@ -160,7 +169,7 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.2.3 && git push origin v0.2.3
+git tag v0.5.1 && git push origin v0.5.1
 ```
 
 Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
@@ -181,8 +190,8 @@ flowchart LR
     end
 
     subgraph app["omp-resume"]
-        RS["Rust core<br/>59 IPC commands"]
-        UI["React UI<br/>sessions · stats · stage · manage"]
+        RS["Rust core<br/>83 IPC commands"]
+        UI["React UI<br/>shell pages · stage · panel"]
         MB["menu bar poller<br/>flock + JSONL tail"]
     end
 
@@ -206,10 +215,10 @@ flowchart LR
 ### Repo layout
 
 ```
-src/                 React front end (53 test files, 553 tests)
+src/                 React front end (75 test files, 726 tests)
 src/stage/           Agent Stage: sprites, layout, scene, timeline
-src/components/      Views: sessions, stats, cleanup, history, manage tabs
-src-tauri/src/       Rust core (409 tests)
+src/components/      Views: sessions, insight, stage, config, tools, settings
+src-tauri/src/       Rust core (488 tests)
   sessions/          JSONL scan, tree building, conversation parsing
   stage/             Incremental cursors + actor state machine
   usage/             Cost/token aggregation, redaction, caching

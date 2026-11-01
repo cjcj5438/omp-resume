@@ -78,7 +78,7 @@ describe("自动更新", () => {
     await installMockBackend();
     render(<App />);
 
-    await screen.findByRole("searchbox", { name: "过滤会话" });
+    await screen.findByRole("searchbox", { name: "搜索会话" });
     expect(screen.queryByText(/发现新版本/)).toBeNull();
   });
 
@@ -87,7 +87,7 @@ describe("自动更新", () => {
     await installMockBackend();
     render(<App />);
 
-    await screen.findByRole("searchbox", { name: "过滤会话" });
+    await screen.findByRole("searchbox", { name: "搜索会话" });
     expect(screen.queryByText(/发现新版本/)).toBeNull();
     // 无错误 toast，无异常冒泡。
     expect(screen.queryByText(/offline/)).toBeNull();
@@ -100,7 +100,7 @@ describe("手动检查更新", () => {
     await installMockBackend();
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "检查应用更新" }));
+    fireEvent.click(await screen.findByRole("button", { name: "检查更新" }));
     expect(await screen.findByText("已是最新版本 0.1.0")).toBeInTheDocument();
     expect(mockCheck).toHaveBeenCalledTimes(2);
   });
@@ -110,7 +110,7 @@ describe("手动检查更新", () => {
     await installMockBackend();
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "检查应用更新" }));
+    fireEvent.click(await screen.findByRole("button", { name: "检查更新" }));
     expect(await screen.findByText("检查更新失败：offline")).toBeInTheDocument();
   });
 
@@ -119,9 +119,33 @@ describe("手动检查更新", () => {
     await installMockBackend();
     render(<App />);
 
-    await screen.findByRole("button", { name: "检查应用更新" });
+    await screen.findByRole("button", { name: "检查更新" });
     await vi.waitFor(() => expect(trayHandler).not.toBeNull());
     trayHandler?.();
     expect(await screen.findByText("发现新版本 0.2.0")).toBeInTheDocument();
+  });
+
+  it("侧栏状态行：检查后显示「已是最新版本」而非动作文案", async () => {
+    mockCheck.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    await installMockBackend();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "检查更新" }));
+    // omp 对话框会弹（mock upToDate），先关掉再断言状态行。
+    const ompDialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
+    fireEvent.click(ompDialog.querySelector("button.btn")!);
+    expect(await screen.findByRole("button", { name: "已是最新版本" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "检查更新" })).toBeNull();
+  });
+
+  it("侧栏状态行：检查失败显示「检查失败」", async () => {
+    window.history.replaceState(null, "", "/?fail=omp_update_check");
+    mockCheck.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("offline"));
+    await installMockBackend();
+    render(<App />);
+    window.history.replaceState(null, "", "/");
+
+    fireEvent.click(await screen.findByRole("button", { name: "检查更新" }));
+    expect(await screen.findByRole("button", { name: "检查失败" })).toBeInTheDocument();
   });
 });

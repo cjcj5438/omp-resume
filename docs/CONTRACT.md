@@ -25,7 +25,10 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
   4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
   4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）、
-  4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）、4.68 应用路径（§25.6）。
+  4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）、4.68 应用路径（§25.6）、
+  4.69 新建模型规格（§21.9）、4.70 新建 agent 定义（§16.9）、4.71 插件检查更新、
+  4.72 通用 Finder 显示（§25.7）、4.73 MCP 握手测试、4.74 记忆库全量备份（§18.8.9）、
+  4.75 聚焦在用会话的 iTerm 标签。
 
 ## 1. 配置解析
 
@@ -241,6 +244,12 @@ assistant 与 toolResult 之间，不跳过它们树会断裂。
 - `SessionSummary` 字段（详见 model.rs）：
   - `title`（§4.2.1）：最新标题 / 首用户消息 60 字 / `(无标题)`。
   - `messageCount`：**active 路径**上的 user + assistant 消息数。
+  - `model`：active leaf 向上最近 assistant 条目的裸模型名（如 `claude-opus-4.6`）；
+    无 assistant → null。行内显示 null 时为 `—`。
+  - `tokens`：主会话 token（全文件 assistant `usage.totalTokens` 求和，
+    `saturating_add`）；无 usage 行 → null。**口径**：仅顶层文件，
+    不含子代理、不做 fork 去重，与概览「本次用量」（`SessionUsage`，
+    含子代理/去重）不同；行内 UI 加 title「主会话 token（不含子代理）」注明。
   - `branchCount`：保留树的叶子数；仅 >1 时 UI 显示「N 个分支」。
   - `occupant`（§3.1）：`null`（非占用 / 未找到 PID）或
     `{pid, app: string|null, appVersion: string|null}`。
@@ -271,21 +280,36 @@ header `.title`、每个 `title_change` 的 `.title`。
  （`targetId:""`）；指定了 `nodeId` → `INVALID_NODE`。
 - 未指定 `nodeId` 时 `targetId = leafId`（leaf 存在时）；
   指定 `nodeId` 时必须命中保留节点，否则 `INVALID_NODE`。
-- `items` 为根 → target 路径上的保留条目，映射：
+- `items` 为根 → target 路径上的保留条目 + 其间 `model_usage` 行，映射：
+  - 全部条目带 `id`（保留条目 id）与 `timestamp`（包络 ISO 字符串；
+    缺失/非字符串 → null，UI 显示 `—`）。
   - user → `{kind:user, text}`（text 块 `\n` 拼接，image 块记 `[图片]`）。
   - assistant → `{kind:assistant, blocks}`，
-    块为 `text | thinking{text} | toolCall{id,name,args}`。
-    `args` 取 toolCall `.arguments`（缺失为 null）；`partialArgs` 忽略。
+    块为 `text | thinking{text} | toolCall{id,name,args,pending}`。
+    `args` 取 toolCall `.arguments`（缺失为 null）；`partialArgs` 忽略；
+    `pending` = 同文件无对应 `toolResult`（调用尚在运行中）。
   - toolResult → `{kind:toolResult, toolCallId, toolName, isError(缺省false),
-    text, truncated}`。text 为 text 块拼接（image 记 `[图片]`），
+    text, truncated, durationMs, diff}`。text 为 text 块拼接（image 记 `[图片]`），
     超 `MAX_TEXT_BYTES` 截断（见 §9）并置 `truncated:true`。
+    `durationMs` = 包络 timestamp − 配对 `tool_execution_start.startedAt`
+    （按 `toolCallId` 配对，取首次；RFC3339 解析失败/负值/无配对 → null）。
+    `diff` 取 `details.diff` 字符串（仅部分工具有；超 `OTHER_TEXT_CHARS`
+    截断加 `…`），缺失 → null。
   - bashExecution → `{kind:bashExecution, command, text(output),
     truncated, exitCode(可null), cancelled(缺省false)}`，同上截断。
   - compaction → `{kind:compaction, summary}`；无 summary 时为空字符串。
   - branch_summary → `{kind:branchSummary, summary}`，同上。
   - 其他 message role（developer 等）→ `{kind:other, role, text}`，
     text 为首 2000 字（见 §9）。
-- 非保留类型不出现在 items 中（`custom_message` 亦不出现）。
+  - `model_usage` 行 → `{kind:usage, id, timestamp, purpose(缺省""), provider,
+    model, input, output, cacheRead, cacheWrite, cost(total, 缺省0)}`：
+    不进树，按其 `parentId` 命中的 kept 条目之后插入（文件顺序稳定）；
+    parent 缺失/未命中路径 → 该路径末尾；位置超出 `nodeId` 目标 → 丢弃。
+    **后端全量返回，零用量（四项全 0 且 cost 为 0）的 usage 项由前端
+    `filterConversation` 在所有筛选中隐藏**（单测锁定）。
+- `branchPointId`：active 路径上第一个有兄弟的节点 id；无分支 → null。
+- 非保留类型不出现在 items 中（`custom_message` 亦不出现；`model_usage`
+  以 usage kind 出现是唯一的例外）。
 
 ### 4.4 `get_tree { path } -> TreeData`
 
@@ -293,7 +317,7 @@ header `.title`、每个 `title_change` 的 `.title`。
 - 保留类型仅 `message/compaction/branch_summary`（§2.7），
   `label` 挂载到 `targetId`（取最后）。
 - `TreeNode { id, parentId, childIds, kind, role, timestamp, preview,
-  label, isCompaction, isBranchSummary }`：
+  label, isCompaction, isBranchSummary, model, tokens, isError, toolName }`:
   - `kind`：message | compaction | branchSummary。
   - `role`：message 节点的 message.role，其余 null。
   - `preview ≤80 字`：user→首 text；assistant→首 text 块，
@@ -304,6 +328,12 @@ header `.title`、每个 `title_change` 的 `.title`。
   - `parentId`：重链接后的 kept 父，无则 null；对应的 `rootIds`。
   - `leafId`：文件末物理条目向上最近的保留节点，无则 null。
   - `activePathIds`：leaf → 根（leaf 在前，环/缺失截断）。
+  - `model`：assistant 节点自身的裸模型名；其余/缺失 → null。
+  - `tokens`：根 → 本节点的 assistant `usage.totalTokens` 累计
+    （`saturating_add`，仅顶层文件；本节点链路累计，不含其他分支/子代理，
+    与 §4.2 的全文件求和口径不同，不可互相比对）；链上无 usage → null。
+  - `isError`：toolResult.isError ‖ bash 非零/取消 ‖ assistant stopReason=error。
+  - `toolName`：toolResult 节点的工具名；其余 → null。
 - 返回扁平 `nodes`（文件顺序）；链折叠由前端做。
 
 ### 4.5 `check_session { path } -> { inUse, probeOk }`
@@ -371,6 +401,18 @@ header `.title`、每个 `title_change` 的 `.title`。
   可注入（`&dyn Fn(&str) -> Result<(), AppError>`；生产传 `ops::iterm::open_tab`），
   测试注入桩以断言精确命令串而不启动 iTerm。
 
+### 4.75 `focus_iterm_tab { path } -> ()`（聚焦在用会话的 iTerm 标签）
+
+- 用途：在用恢复确认框的「切到正在运行的标签页」主按钮。只定位 + 聚焦，
+  绝不 `write text`、绝不发按键（与 §17 托盘聚焦同约束）。
+- 拒绝：`!inUse` → `INVALID_INPUT`（无需聚焦）；`probeOk:false` → `PROBE_FAILED`；
+  occupant 缺失 / 非 iTerm2 / 无 tty → `ITERM_FAILED`（中文原因）；
+  `focus_tty` 失败（未运行/标签已关/-1743 授权/其他）→ `ITERM_FAILED`
+  （`FocusError::message()` 中文，复用托盘文案）。
+- 实现：`ops::commands::focus_iterm_tab_impl(cfg, path, run)`（`run` 可注入，
+  生产用 `menubar::iterm::SystemRunner`）；`api.ts`：`focusItermTab(path)`。
+
+
 ### 4.9 `omp_version() -> { version, path }`
 
 - 按 §1 解析 omp，运行 `--version`（10 秒超时），本地只读、不联网。
@@ -411,8 +453,8 @@ header `.title`、每个 `title_change` 的 `.title`。
   omp 不存在仍报 `OMP_NOT_FOUND`。
 - marketplace 插件 JSON 形如 `{marketplace:[{id, scope, entries:[...]}], npm:[...]}`；
   每个插件仅取 `entries` 中 `scope:"user"` 的条目，无 user 条目则跳过。
-  `PluginSummary {id, name, marketplace, version, enabled, installedAt, lastUpdated, installPath}`；
-  `id` 为 `name@marketplace`，`enabled` 缺省 true；其余缺失元数据为 null。
+  `PluginSummary {id, name, marketplace, version, description, enabled, installedAt, lastUpdated, installPath}`；
+  `id` 为 `name@marketplace`，`enabled` 缺省 true；`description` 为条目描述两级 best-effort 透传（entry/item，无则 null，本机零插件未经实测）；其余缺失元数据为 null。
 - npm 仅只读展示 `{name, version:string|null}`，对未知条目尽力提取，异常条目不拖垮列表。
   **已在 omp 18.11.1 沙箱实测** `omp-enforce-uv@0.3.0`：npm 数组条目含
   `{name, version, path, manifest, enabledFeatures, enabled}`，这里只公开名称与版本。
@@ -489,7 +531,7 @@ header `.title`、每个 `title_change` 的 `.title`。
 
 ### 4.30 MCP 配置范围、类型与安全规则
 
-- 所有 MCP 命令直接读写 JSON，不启动 omp、不联网、不占用 `OmpBusy`。
+- §4.31–§4.35 命令直接读写 JSON，不启动 omp、不联网、不占用 `OmpBusy`（§4.73 握手是例外：spawn 子进程/联网，见该节）。
   阻塞文件 IO 在 `spawn_blocking` 内执行；三个变更命令共用独立的进程级 `Mutex`，
   锁覆盖重新读取、比较 revision、修改和原子写入；只读命令不加锁。
 - `scope: "user" | "project"`。只允许默认 profile 的 `$HOME/.omp/agent/mcp.json`
@@ -518,8 +560,8 @@ header `.title`、每个 `title_change` 的 `.title`。
 
 - `{ files: McpFileInfo[], servers: McpServer[] }`；顺序为 user、project，
   各文件服务器按配置键顺序。未提供 project 时只有用户文件。
-- `McpFileInfo { scope, path, exists, readError: string|null, revision,
-  disabledServers: string[], enabledServers: string[] }`。
+- `McpFileInfo { scope, path, exists, readError: string|null, revision, modifiedAt: string|null,
+  disabledServers: string[], enabledServers: string[] }`。`modifiedAt` 为文件 mtime（ISO 8601 UTC 毫秒；不存在/不可读时为 null）。
   单文件读取/解析失败记中文 `readError`、省略该文件服务器，不让整个命令失败；
   项目文件的两个覆盖列表始终为 `[]`，只读取用户文件的同名覆盖列表。
 - `McpServer { scope, name, transport: "stdio"|"http"|"sse"|"unknown",
@@ -578,6 +620,41 @@ header `.title`、每个 `title_change` 的 `.title`。
 - 已知限制（跨进程竞态）：与 omp 之间没有共享锁协议；在最终 revision 复检与 rename 之间
   （约数十微秒）发生的外部写入会被覆盖且无提示；应用内由 Mutex 串行，
   跨进程只靠 revision 比对降低概率。
+
+### 4.71 `omp_plugin_check_update { id? } -> PluginCheckResult`（只读预检）
+
+- `omp plugin upgrade --dry-run [id] --scope user`（60 秒超时，只读，不占 `OmpBusy`）；
+  id 校验复用 §4.14–§4.20 的 `name@marketplace` 规则，非法直接 `INVALID_INPUT` 不触 omp。
+- `{ upToDate: boolean, changes: PluginUpgradeChange[], output: string }`：
+  `upToDate` 判输出含 `up to date`（忽略大小写，与前端 `upgradeIsUpToDate` 同正则）；
+  `changes` 复用 §4.17 的 `parse_upgrade_changes` 尽力解析；`output` 回原文。
+- 已知限制：dry-run 有更新时的输出形状未经实测（2026-10-31 本机零插件，只见过
+  `[dry-run] All marketplace plugins are up to date` 分支）；UI「可升级」计数只显示解析到的 N，
+  `upToDate=false` 且 `changes` 为空时显示「—」而不是 0。
+
+### 4.72 `reveal_file { path } -> ()`（通用 Finder 显示）
+
+- `open -R <path>`（绝对路径 + 存在 + 是文件 + 无控制字符才执行，否则
+  `INVALID_INPUT`/`NOT_FOUND`）；Runner 可注入，单测断言精确 argv。
+- 与 `reveal_session_file`（§25.4）唯一区别：去会话根目录约束，供 MCP「打开配置文件」等入口用。
+
+### 4.73 `mcp_handshake { scope, project?, name } -> McpHandshakeResult`（握手测试）
+
+- `{ ok: boolean, tools: number|null, ms: number, error: string|null }`。
+  握手失败是答案不是错误：连不上/超时/协议不对都返回 `ok:false + error` 中文原因；
+  只有「配置读不到」（`NOT_FOUND`/`INVALID_INPUT`/读权限 `IO`）才返回 Err。
+- **只在用户点击时执行**：首屏渲染/列表刷新禁止调用（前端单测断言 mock 计数为零）。
+  不占 `McpWriteState` 锁、不占 `OmpBusy`；整体时限 10 秒（配置里的 `timeout` 字段不采用）。
+- stdio：spawn（PATH 查找，不经 shell，env 经进程环境传递）→ 发 initialize +
+  `notifications/initialized` + tools/list（三帧一次写完，按 id 取回）→ 完成即杀子进程并回收。
+  要求 initialize 回 `protocolVersion`、tools/list 回 `tools` 数组，否则 `ok:false`。
+- http：系统 `/usr/bin/curl` POST 两帧 Streamable HTTP（`Accept: application/json, text/event-stream`；
+  响应可能是 SSE，取最后一个 `data:` 帧）。url/headers/body 全经 `--config -` 从 stdin 喂，
+  **不进 argv**（`ps` 不可见）、不进错误串；错误只用固定文案（curl 退出码映射：6 解析失败/7 连接失败/
+  28 超时/TLS 失败/其他 exit code 数字）。curl 缺失为 `ok:false`「系统 curl 不可用」。
+- sse：只验连通（GET + 10 秒内收到首个 `data:` 事件即 `ok:true`），`tools` 恒为 null，
+  不做 endpoint 舞蹈、不计工具数。
+- secret 规则：env/headers/auth 值永不进 argv、日志、错误串；握手不写任何文件、不改配置。
 
 ## 5. 建树算法（`list/get_conversation/get_tree` 共用）
 
@@ -660,13 +737,14 @@ header `.title`、每个 `title_change` 的 `.title`。
 | `OTHER_TEXT_CHARS` | 2000（含尾 `…`） | `other` 条目文本 |
 | `TREE_PREVIEW_CHARS` | 80（含尾 `…`，总长 ≤80） | 树节点 preview |
 | `MARKER_CUSTOM_TYPE` | `omp-resume-branch` | 分支标记 customType |
+| `MODEL_ARG_MAX` | 256（字符数） | `new_session_in_iterm` 模型名上限 |
 | `UNTITLED` | `(无标题)` | 无标题兜底 |
 | `MEMORY_SNIPPET_CHARS` | 240（空白折叠后字符数，字符边界截断，超长尾加 `…`） | 记忆列表 snippet |
 | `MEMORY_CONTENT_CAP_BYTES` | 204800（200KB，UTF-8 字节，字符边界截断） | `memory_detail` 全文上限 |
 | `MEMORY_LIST_LIMIT` | 默认 50，钳制 1..=200 | `memory_list` 分页 |
 | `MEMORY_DETAIL_FACTS_LIMIT` | 50 | `memory_detail` facts 上限 |
 | `MEMORY_DELETE_IDS_MAX` | 500（去重后计数，超 ⇒ `INVALID_INPUT`） | 单次删除 id 上限 |
-| `MEMORY_BACKUP_KEEP` | 5（`before-delete` / `before-restore` 按 bank+kind 留存） | 备份自动修剪 |
+| `MEMORY_BACKUP_KEEP` | 5（`before-delete` / `before-restore` / `manual` 各按 bank+kind 独立留存） | 备份自动修剪 |
 
 ## 10. 打包要求
 
@@ -756,7 +834,7 @@ bashExecution（无 content 数组）与 developer：
 - `get_session_usage { path: string } -> SessionUsage`：沿用 §6 顶层路径校验，
   返回此会话归属的全部历史（非 active 路径），包含 sibling 附件目录内递归的子代理 JSONL。
 - `get_usage_stats { range: UsageRange } -> UsageStats`：`UsageRange` =
-  `"today" | "24h" | "7d" | "30d" | "all"`；UI 花费页默认 `30d`。窗口按**本机时区**：
+  `"today" | "24h" | "7d" | "30d" | "all"`；UI 花费页/看板默认 `7d`。窗口按**本机时区**：
   `today` 本地当天 0 点至今；`24h` 当前本地整点绝对时间 −23 小时起的 24 个整点桶
   （含当前小时；起点由请求时刻的绝对时间直接截断整点，不经本地→UTC 反查）；
   `7d` 今天及前 6 天、`30d` 今天及前 29 天（均自首日 0 点起）；`all` 不限。
@@ -765,7 +843,7 @@ bashExecution（无 content 数组）与 developer：
   固定窗口的起点恒为有界绝对时间（仅 `all` 不限）：午夜落在 DST 缺口时取缺口后
   第一个存在的时刻，重复整点（秋季回拨）按绝对时间取请求时刻所在的一次。
 - `get_usage_health { range } -> UsageHealth`：运行看板（口径见 §12.3），
-  窗口与分桶规则同 `get_usage_stats`；UI 看板默认 `today`。
+  窗口与分桶规则同 `get_usage_stats`；UI 看板默认 `7d`。
 - `UsageTokens { input, output, cacheRead, cacheWrite, total }`：非负整数；
   total 优先使用 usage.totalTokens，缺失则四项相加；reasoningTokens 不重复加到输出或总数。
 - `UsageCost { total, main, background, subagent }`：USD 浮点数，
@@ -781,23 +859,19 @@ bashExecution（无 content 数组）与 developer：
   无样本时为 null。统计含子代理调用（主对话+嵌套）。
 - `SessionUsage { messages: UsageMessages, tokens: UsageTokens, cost: UsageCost, models: UsageModel[] }`。
 - `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[],
-  trend: UsageTrend, sessions, timing: UsageTiming, topSessions: UsageSession[], activity: UsageTrendPoint[] }`；
+  trend: UsageTrend, sessions, timing: UsageTiming, topSessions: UsageSession[],
+  activity: UsageActivityPoint[], requests, hourly: [u64;24], prev: UsagePrevWindow|null }`；
   `UsageProject { cwd, cost, tokens, sessions }`，sessions 为范围内有归属条目的顶层会话数。
   cwd 取顶层 owner 的 header.cwd。项目/模型按花费降序（相同时按名称）。
-- `sessions`：范围内有归属条目的顶层会话数（含只有 user 消息的会话），与各项目 sessions 之和恒等。
-- `UsageTiming { waitMs, genMs, toolMs, toolCalls, calls, tps }`：**仅主对话**（子代理与主对话并行，
-  累加会超过挂钟时间）。waitMs/genMs 为 assistant 自报 duration/ttft 的累加
-  （round 到毫秒；无效值跳过）；calls 为带有效 timing 的主对话调用数（含 error/aborted）；
-  toolCalls 为紧随主对话助手的 toolResult 行数；tps 与模型速度同口径（经 500ms/16 输出过滤，
-  故与简单 calls 不成简单比例）；toolMs = 上一条 `stopReason=="toolUse"` 助手的 completedAt
-  到下一条助手 timestamp 的间隔累加：间隔超过 10 分钟视为闲置不计；中间出现 user 消息
-  则该间隔不计（含人的思考时间）；completedAt 缺失时该次为 0。
-- `UsageSession { id, path, cwd, cost, tokens, calls, lastMs }`：topSessions 为范围内 cost > 0 的
-  顶层会话，按 cost 降序、再 lastMs 降序、再 path 升序，取前 8；cost/tokens/calls/lastMs 均为范围内累加，
-  calls 只计 assistant 条目，path 为顶层会话绝对路径。
-- `activity`：近 182 天（含今天）的日花费点，复用 `UsageTrendPoint`，稠密 182 项升序、
-  缺桶补零，**不受 range 影响且只收带合法时间戳条目**（model_change 不进）。end 为请求时刻 now，
-  故末桶只收 now 之前的数据。
+- `requests`：范围内请求数（assistant 条目 + `model_usage`，与 §12.3 `requests` 同口径）。
+- `hourly`：本地时区 24 小时请求分布（跟随 range，下标为小时）。
+- `prev`：等长上一窗口的 `{ cost, tokens, requests }`（同一次扫描累加；`range=all` 时为 null）。
+- `UsageTiming` 另有 `maxDurationMs: u64|null`：范围内最长单次（仅主对话、有自报 duration
+  的 assistant 样本最大值；无样本为 null）。
+- `activity`：近 364 天（含今天）的日点 `UsageActivityPoint { key, cost, tokens,
+  requests, topProject }`，稠密 364 项升序、缺桶补零，**不受 range 影响且只收带合法
+  时间戳条目**（model_change 不进）。`topProject` 为当日花费最高的顶层 owner
+  header.cwd（零成本日为 null）。end 为请求时刻 now，故末桶只收 now 之前的数据。
 - `UsageTrend { unit: "hour"|"day", points: UsageTrendPoint[] }`；
   `UsageTrendPoint { key, cost, tokens }`：today/24h 为 hour 桶（key 为本地时区
   `"YYYY-MM-DD HH"`），其余为 day 桶（`"YYYY-MM-DD"`；本节桶 key 例外于 §0 的
@@ -844,7 +918,12 @@ bashExecution（无 content 数组）与 developer：
   `message`（单行、按字符截断 200；Bearer / Authorization 凭证、api_key /
   apikey / token / secret / password 类键值、sk- / ghp_ / github_pat_ /
   xox[bpas]- / AKIA / AIza 等密钥前缀、JWT 三段形态、≥32 位无特征长串一律
-  替换为 `[已脱敏]`）。
+  替换为 `[已脱敏]`）/ `retry: string|null`（`retryRecovery` 处置文案：recovered 且
+  attempt>1 →「重试 N 次后恢复」，attempt≤1 →「已重试恢复」；superseded →「被新请求
+  取代」；无 retryRecovery 时为 null）。
+- `latencyMs: { p50, p95 }|null`：范围内 assistant `duration`（毫秒，只要求 duration
+  有效，不要求 ttft；含 error/aborted，fork 去重同 timing 字段）的最近秩法分位
+  （升序后 `ceil(p*n)−1`，最小下标 0）；无样本为 null。
 - **ErrorKind**（7 值）：`quota | rate_limit | auth | timeout | network | server | other`。
   分类为启发式：错误原文小写后**先命中先赢**，顺序 quota → rate_limit → timeout →
   auth → network → server → other：
@@ -882,19 +961,24 @@ bashExecution（无 content 数组）与 developer：
 
 侧栏视图切换条「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
 
-- 「总览」（默认范围 `today`）：范围分段（今天 / 近 24 小时 / 近 7 天 / 近 30 天 /
-  全部，激活态为 `--accent-soft` 底 + `--accent` 描边）+ 刷新；6 张 KPI 卡、
-  花费/Token 可切换趋势柱状图（按 `trend.unit` 画 hour/day 桶；该范围内全为 0 时
-  不画空坐标系，改显示「花费/Token 在该范围内为 0」）、Token 与耗时构成环、
-  活跃度卡片（独占一行：热力图 + 右侧四格汇总「活跃天数 / 合计花费 / 最高单日
-  （同价取最早）/ 连续活跃天数」，图例在卡片头右侧；近 26 周按日花费，不受上方范围影响）、
-  高花费会话榜（独占一行）、「按项目」「按模型」表（花费、token、会话数 /
-  调用次数，行内占比条）。所有 `.health-card` 标题统一 14px（`.card-head > h2` 也吃到）。
-- 「运行看板」（默认范围 `today`；KPI：请求数（含失败与用户中断）、错误数 + 错误率（`errors.total /
-  requests`，另注「另有 N 次用户中断」）、兜底切换次数、缓存命中率（`null` 显示「—」
-  并注明「该上游未返回缓存数据」）；请求趋势（错误/兜底叠加）、缓存命中率趋势、
-  错误类型分布（中文：额度用尽 / 触发限流 / 鉴权失败 / 响应超时 / 网络异常 / 服务端错误 / 其他）、
-  兜底去向（含最近切换）、最近错误、按模型缓存命中。
+- 「用量」（默认范围 `7d`）：页头 = 复制摘要 + 范围分段（今天 / 24 小时 / 7 天 / 30 天 /
+  全部）+ 刷新（保留扩展）；6 张 KPI 卡（成本，含趋势箭头 +「较上一周期」涨跌幅，`prev`
+  为 null 时显示中性横线 / Token / 请求数 / 缓存命中 / 工具耗时 / 最长单次
+  `timing.maxDurationMs`）；按小时请求面板（`hourly` 24 柱 + 峰值高亮 + foot 峰值/总数）；
+  成本/Token 可切换面积趋势图（按 `trend.unit` 画 hour/day 桶；该范围内全为 0 时
+  不画空坐标系，改显示「花费/Token 在该范围内为 0」）+ 项目构成横向条（原按项目/按模型
+  表格降为次级「明细」面板保留）；模型成本 donut（`byModel[].cost`，原 Token/耗时 donut
+  保留为次级行）；成本最高的会话三列表格（行可点）；活动热力图（近 52 周，指标
+  请求/Token/成本，默认请求；顶部 4 盒装 stats「活跃天数 / 当前连续 / 最长连续
+  （前端由 activity 算出）/ 峰值单日」；选中日详情面板含主要项目 `topProject`）。
+- 「运行看板」（默认范围 `7d`；KPI：请求（dot + 范围）/ 错误（值 + small 错误率，
+  另注中断数）/ 回退切换（值 + 来源→去向）/ 缓存命中（值 + `latencyMs` 的 p50/p95）；
+  范围分段 + 刷新在页头；错误类型横向条（count>3 用 danger 色否则 warn 色 + 由真实
+  数据生成的说明 note，为零隐藏）；缓存命中趋势（折线扩展）+ 按模型表（列序
+  模型/命中率/请求）；最近错误日志（时间 HH:MM:SS mono / 模型 mono / 中文 kind badge
+  （超时/服务端/网络/鉴权用 danger，限流/额度/其他用 warn）/ 消息 / 重试列 `retry`，
+  筛选 = 全部 + 后端 7 类动态项，带计数）；请求趋势与兜底去向保留为次级面板。
+  错误类型中文：额度用尽 / 触发限流 / 鉴权失败 / 响应超时 / 网络异常 / 服务端错误 / 其他。
 - 图表悬停（`UsageCharts.tsx` 的 `ChartBucket` 统一包装）：每桶 = 可见图形 + 竖向虚线
   `line.chart-guide`（默认 `opacity: 0`，仅悬停该桶时 0.55）+ 透明全高热区 `rect.chart-hit`
   （承 `data-tip`，`pointer-events: all`；图形本身 `pointer-events: none`，避免细柱/圆点抢命中）。
@@ -925,24 +1009,30 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ## 13. 新开会话与会话概要 / 提示词历史（本次追加）
 
-### 13.0 `new_session_in_iterm { cwd } -> ()` 与 `choose_directory() -> string | null`
+### 13.0 `new_session_in_iterm { cwd, model? } -> ()` 与 `choose_directory() -> string | null`
 
 **硬性不变量**：应用内不做聊天、不调用任何 LLM；新开会话**绝不带 prompt、
-不自动发送任何内容、不带任何参数**，只执行 `omp`。
+不自动发送任何内容；除可选 `model` 外不带任何参数**。
 
-- `new_session_in_iterm { cwd }`：
+- `new_session_in_iterm { cwd, model? }`：
   - `cwd` 必须为**存在的绝对目录**，否则 `CWD_MISSING`
     （不存在 / 是文件 / 相对路径同一错误码，与现有 §4.8 一致）。
   - `cwd` 含控制字符（换行等）→ `INVALID_INPUT`：AppleScript 字符串字面量
     转义会**静默剥离**控制字符（§4.8 的 fail-safe 策略），若不拒绝，
     `cd` 目标会与实际目录不一致。
   - 行为：复用 §4.8 的 iTerm 原语（无窗口开新窗口、未运行先启动、当前窗口开新 tab），
-    在该 tab 执行 `cd '<cwd>' && omp`（POSIX 单引号转义 `'` → `'"'"'`，
-    再经 AppleScript 字符串转义）。命令跑完 shell 保留，用户可继续交互。
+    在该 tab 执行 `cd '<cwd>' && omp [--model '<model>']`（POSIX 单引号转义
+    `'` → `'"'"'`，再经 AppleScript 字符串转义）。命令跑完 shell 保留，
+    用户可继续交互。
+  - `model`：可选（null/空/全空白 = 不指定，裸 `omp`）。指定时须 ≤256 字
+    （§9 `MODEL_ARG_MAX`）、无控制字符、不以 `-` 开头，否则 `INVALID_INPUT`
+    （防 `--model` 后跟出任意 flag）。值原样透传给 `omp --model`
+    （fuzzy match，`provider/id` 精确）；后端不校验模型是否存在，
+    不存在时 omp 自己报错。
   - 失败 → `ITERM_FAILED`（复用 §4.8 的 osascript 错误映射与自动化授权指引）。
-  - 实现：纯逻辑层 `ops::commands::new_session_in_iterm_impl(cwd, opener)`
+  - 实现：纯逻辑层 `ops::commands::new_session_in_iterm_impl(cwd, model, opener)`
     （opener 可注入，生产传 `ops::iterm::open_tab`）；命令构造纯函数
-    `ops::iterm::new_session_command`。
+    `ops::iterm::new_session_command(cwd, model)`。
 - `choose_directory() -> string | null`：
   - `osascript -e 'POSIX path of (choose folder with prompt "选择项目目录")'`
     （不新增依赖、不改 capabilities）。
@@ -954,8 +1044,8 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
   `new_session_in_iterm`；项目分组头「+」按钮（hover/focus 显示，
   与置顶按钮并排，tooltip「在此项目新会话」）直接用该组 `cwd`。目录不存在时禁用。
   成功 / 失败提示沿用「在 iTerm 继续」的 toast 处理。
-  `api.ts`：`newSessionInIterm(cwd)` 与 `chooseDirectory()`。
-  托盘「新建会话 ▸」走同一 iTerm 原语（见 §17.3 ⑥），只执行 `omp`，同样不带任何参数。
+  `api.ts`：`newSessionInIterm(cwd, model?)` 与 `chooseDirectory()`。
+  托盘「新建会话 ▸」走同一 iTerm 原语（见 §17.3 ⑥），传 `model: None`（裸 `omp`）。
 
 ### 13.1 `get_session_recap { sessionId } -> string | null`
 
@@ -971,13 +1061,17 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 ### 13.2 `search_prompt_history { query? } -> PromptHistoryEntry[]`
 
 - `PromptHistoryEntry { id: i64, prompt: string, cwd: string|null,
-  sessionId: string|null, createdAt: string, useCount: i64 }`（JSON camelCase）。
+  sessionId: string|null, createdAt: string, useCount: i64, sessionTitle: string|null }`
+  （JSON camelCase）。
   `cwd` / `sessionId` 为空串或 NULL → `null`；`createdAt` 为 ISO-8601 UTC 毫秒
   （由 `history.created_at` 秒级 epoch 转换，§0 时间约定）。
+  `sessionTitle` 为 `session_titles` 表 LEFT JOIN 结果（缺表/缺行/prepare 失败回落
+  到原 SQL 时为 null，前端降级显示会话短码）。
 - 排序：`created_at DESC, id DESC`。返回上限固定 200（`history.rs` 的
   `DEFAULT_SEARCH_LIMIT`，无 `limit` 参数）。
 - `query`：**大小写不敏感 LIKE 子串**匹配（空白 / 缺省 = 不过滤），
-  转义 `\` `%` `_` 并配 `ESCAPE '\'`。**不使用 `history_fts`**
+  转义 `\` `%` `_` 并配 `ESCAPE '\'`，匹配范围为 prompt + cwd + sessionTitle 三字段
+  （`OR cwd LIKE / title LIKE`）。**不使用 `history_fts`**
   （FTS5 默认分词器不切 CJK；约 425 行规模 LIKE 足够）。
   注意 `LIKE` 的大小写不敏感仅对 ASCII 生效（CJK 本无大小写）。
 - 库不存在 / 表列对不上 / 任何 SQL 错误 → 空列表，**静默**。
@@ -985,11 +1079,14 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 实测（omp 18.11.1，2026-10-16）：`history` 429 行、`session_recaps` 110 行
   覆盖 39 个会话；库为 WAL 模式。只读查询前后 `history.db` 主文件
   大小与 mtime 不变，`-wal` / `-shm` 亦无变化。
-- 前端：侧栏视图切换条「提示词历史」→ `PromptHistoryView.tsx`：搜索框（200ms 防抖）
-  + 列表（prompt 截断 2 行、cwd 末段、相对时间、使用次数），每条三个动作：
-  「复制」（`clipboard.ts`）、「跳到来源会话」（**仅当 sessionId 命中当前已加载
-  会话列表时可用**，否则禁用，选中该会话）、「在该目录新会话」
-  （调用 §13.0 `new_session_in_iterm`；`cwd` 为 null 时禁用；**绝不携带 prompt**）。
+- 前端：侧栏视图切换条「提示词历史」→ `PromptHistoryView.tsx`：搜索框（200ms 防抖，
+  图标版 search-box）+ 项目 Seg（可横向滚动，带计数）+「N 条匹配」+ 列表 panel
+  （行布局：左列 prompt 12.5px 两行 clamp + meta 10px「{项目} → {会话标题}，无标题
+  用短码」；右列绝对时间 10px mono（今天 HH:MM / 昨天 HH:MM / M月d日）+ 项目 badge +
+  箭头；整行可点跳来源会话（来源已加载时），hover 显示复制/新会话快捷按钮）+
+  foot「共 N 条」+ 空态「清除筛选」；页头「N 条记录」badge。
+  「在该目录新会话」调用 §13.0 `new_session_in_iterm`（`cwd` 为 null 时禁用；
+  **绝不携带 prompt**）。
 
 ## 14. 清理候选（只读，`list_cleanup_candidates`）
 
@@ -1039,15 +1136,21 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 ### 14.4 前端
 
 - 侧栏视图切换条「清理」（与「管理」「统计」同条）→ 主区域 `CleanupView`：
-  「超过 N 天 / 体积前 N 名」两个数字输入、排序分段「体积倒序 / 体积正序」
-  （`sortCandidates`，同体积按 path 升序，与后端返回顺序无关；勾选集合按 path，
-  换序不丢选中）、候选表格（标题、cwd 末段、原因标签、
-  体积、修改时间、复选框、「查看」）、顶部「已选 X 个，可释放 Y」、
-  「全选可勾选项」与「删除所选…」。
+  页头 = 重新扫描（ghost + 图标）+ 删除选中（accent，「删除选中（n）」，n=0 禁用）；
+  原因 KPI 四卡（可点击筛选，foot 为真实规则值「0 条有效消息 / cwd 已删除 /
+  体积前 {topN} 且 ≥5MiB / 超过 {days} 天未更新」）；工具条（超过 N 天 / 体积前 N 名
+  数字输入、排序分段「体积倒序 / 体积正序」（`sortCandidates`，同体积按 path 升序，
+  与后端返回顺序无关；勾选集合按 path，换序不丢选中）、「全选可勾选项」、
+  过滤时「已按原因过滤 × 清除」）；表格包 panel（meta「N 项 · 已选 x MB/未选择」，
+  foot 左占用探测说明、右「扫描于 HH:MM」）：sel-box 复选 + 标题 12px（标题行右侧
+  「占用中」徽标）+ cwd 末段 + warn 原因 badge + 体积/时间 mono 右对齐 + 「查看」
+  + 行内删除键（Trash2，guard 行禁用，走同一删除编排）。
 - **视图返回**：`App` 持有视图栈（`sessions` 为根），侧栏切换是「进入」，再点同一按钮或视图内的
   「返回」/`Esc` 是「退回上一级」——不是一律回到会话页。打开对话框或抽屉时 `Esc` 先关它们，
   不触发返回。每个视图头部都有一枚 `返回` 按钮（`PromptHistoryView` 也补了头部）。
-- 「删除所选…」**复用** App 的既有批量删除编排与 DeleteDialog：
+- 「删除选中」**复用** App 的既有批量删除编排与 DeleteDialog（`variant="cleanup"`：
+  kv 区「将删除 N 项 / 释放空间合计 / 占用中已排除 / 撤销不可用」+ 确认「删除 N 项」+
+  warn inline-note；danger 按钮跟随共享描边红字样式）：
   清理视图不新增任何删除路径；删除后刷新会话列表与候选（`refreshToken`）。
 - 「查看」仅在会话出现在当前已加载列表时可点（否则禁用并说明原因——
   例如「无标题且零用户消息」的会话被 §4.2 隐藏）。
@@ -1255,6 +1358,21 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 provider 通配三种；`retry.modelFallback`（默认 true）是兜底总开关，关闭后全部链不生效。
 已移至 DECISIONS.md D6
 
+### 16.9 / 4.70 `create_agent_definition { name, description } -> CreateAgentDefinitionResult`
+
+- 新建用户 agent 定义：`~/.omp/agent/agents/<name>.md`（与 §16.4 用户文件同一路径来源，
+  仅 user scope；缺目录自动建 0700），写入 `---` / `name` / `description` / `---` + 空正文，
+  同目录临时文件（0600）+ fsync + rename 原子落盘（0600），返回 `{ name, path }`（path 为绝对路径）。
+- 校验（出错一律 `INVALID_INPUT`，且动盘之前全部完成）：`name` 为 1–64 个
+  `[a-z0-9-_]`（字符集本身排除路径穿越）；`description` trim 后 1–500 字符、不含控制字符；
+  写入时 name / description 一律双引号转义（只转义 `\` 与 `"`，保证 `parse_frontmatter` 原样读回）；
+  只看用户目录 `~/.omp/agent/agents/<name>.md` 是否存在（大小写不同视为不同文件）；
+  已存在 → `INVALID_INPUT`「agent 定义已存在：…」，且不触碰旧文件。
+  内置同名（如 scout）不阻止新建：落盘后按 §16.4 覆盖（同源合并为一行，`source` 仍为 `builtin`）。
+- 与其它管理写共用 `OmpBusy` 单写门禁（多余请求报 `BUSY`）；建目录/写文件失败 → `IO`（点名步骤）。
+- 与 §23.6 的关系：`list_agent_details` / `get_model_config` 仍是纯读（绝不因本命令获得写能力），
+  新建后前端重拉上述只读命令即可看到新行（全新名 → `source: "user"`；覆盖内置同名 → 该行 `source` 仍为 `builtin`）。
+
 ## 17. macOS 菜单栏：运行中 omp 会话（本次追加）
 
 > 在菜单栏查看并管理**当前正在运行**的 omp 会话（只读检测 + 聚焦 + 新开标签页）。
@@ -1289,10 +1407,10 @@ classify:
   elif last 是 assistant 且 stop → (距今 < ATTENTION_IDLE ? 等待输入 : 空闲)
   elif last 是 assistant 且非 stop（回合未结束）→ 工作中
   else 空闲
-  工作中 且 无运行子代理 且 距最后有意义记录 > STUCK 且 有未配对 toolCall → 疑似卡住
+  工作中 且 无运行子代理 且 距最后有意义记录 > STUCK 且 有未配对 toolCall → 可能卡住
 ```
 
-状态用词：工作中 / 等待输入 / 空闲 / 疑似卡住。阈值是推断值，集中定义于
+状态用词：工作中 / 等待输入 / 空闲 / 可能卡住。阈值是推断值，集中定义于
 `classify.rs` 常量，注释「待校准」。补充语义（单测锁定）：
 
 - `user` 视同 `toolResult`：用户刚发消息必然是模型在生成；
@@ -1309,7 +1427,7 @@ classify:
 1. 卡住覆盖要求**无运行中的子代理**。父会话等子代理时，进展写在子代理自己的
    文件里，父文件「有意义记录」长期不更新是正常的（任务工具的未配对调用要等
    子代理返回）；实测曾把正在工作的父会话（iTerm 标题为旋转符、子代理就是
-   本 worker）误判「疑似卡住」。子代理活动即此类会话的活性信号。
+   本 worker）误判「可能卡住」。子代理活动即此类会话的活性信号。
 2. jsonl 尾部种子读取为**首次见到该会话时全文件单遍**（此后仍增量），
    而非固定 64KB 尾窗：cache-warm 心跳与大 toolResult 会把
    `vibe-session-lifecycle` 配对行挤出尾窗，实测导致子代理漏检。
@@ -1336,9 +1454,12 @@ classify:
   每轮一次 osascript **批量**取回全部 `tty → 标题`（单脚本遍历全部
   window→tab→session，绝不逐会话一次）。AppleScript 里不能直接用 `tab` 常量
   （会被解析为 iTerm 的 tab 类），用 `character id 9` 作分隔（实测验证）。
-- 最近会话 / 项目目录 / 今日花费由后台线程每 60 秒重算一次（用量统计口径，
+- 最近会话 / 项目目录 / 今日花费与请求数由后台线程每 60 秒重算一次（用量统计口径，
   首次统计完成前花费行不显示）；花费变化就地更新行文字，
   最近会话与项目目录列表变化则重建菜单（见 §17.3）。
+  `Extras` 同时存裸值 `cost_usd`（美元）与 `request_count`（assistant 条目 +
+  model_usage，与 health.requests 同口径），供面板头部用，前端格式化；
+  `same_structure` 对裸值只比 presence（沿 `cost_text.is_some()` 模式）。
 
 ### 17.3 菜单结构与图标标题（`menubar::menu`，纯函数 + 单测）
 
@@ -1351,14 +1472,14 @@ classify:
 
 | 样式 | 字样 |
 |---|---|
-| `count`（计数，默认） | `<工作中+疑似卡住>·<等待输入>`，如 `2·1`；有疑似卡住追加 `!`，如 `1·0!` |
-| `dot`（圆点） | 有等待输入/疑似卡住时为 `●`，否则为 `○` |
+| `count`（计数，默认） | `<工作中+可能卡住>·<等待输入>`，如 `2·1`；有卡住追加 `!`，如 `1·0!` |
+| `dot`（圆点） | 有等待输入/可能卡住时为 `●`，否则为 `○` |
 | `icon`（仅图标） | 恒为空（只显示图标） |
 
 下拉菜单自上而下：①头部（禁用项）`omp 会话 · 占用 N · 工作中 X · 等待输入 Y`
-（含疑似卡住时追加 `· 疑似卡住 Z`；无占用：`没有运行中的 omp 会话`）；
+（含卡住时追加 `· 可能卡住 Z`；无占用：`没有运行中的 omp 会话`）；
 ②今日花费行（禁用项）`今日花费 $X.XX`（用量统计的当日花费，见 §17.2；
-首次统计完成前不显示本行；设置 `showCost` 为关时不显示）；③分隔线；④会话行按 疑似卡住 → 等待输入 →
+首次统计完成前不显示本行；设置 `showCost` 为关时不显示）；③分隔线；④会话行按 可能卡住 → 等待输入 →
 工作中 → 空闲 排序，每行 `<原生状态圆点> <标题去 π 前缀与 (omp) 后缀，`
 按设置 `titleWidth` 截断（`compact` 20 / `standard` 32 / `wide` 48 字）>[ · 项目名（`showProject` 开时追加）] · <应用名，iTerm2 时省略> · <状态> · <距上次活动>`
 （距上次活动自最后一条有意义记录起，`刚刚/X分/X小时Y分/X天`），
@@ -1366,7 +1487,7 @@ classify:
 设置 `compactRows` 为开时每行只保留 `标题[ · 项目名] · 距上次活动`（状态由原生圆点表示）；
 最多 8 行，超出进「更多…」子菜单；
 状态圆点为 macOS 原生 NSImage 状态图标（IconMenuItem）：工作中绿、等待输入黄、
-疑似卡住红、空闲灰（取代旧文本字形 ▶ ⏸ ○ ⚠）；
+可能卡住红、空闲灰（取代旧文本字形 ▶ ⏸ ○ ⚠）；
 点击行 = 聚焦该会话所在 iTerm 标签（`activate` + 按 tty `select`）；
 非 iTerm 占用者行置灰不可点，行内注明原因（`仅 iTerm 可聚焦` /
 `未找到占用进程` / `未找到终端`）；⑤分隔线（仅有会话行时出现）；
@@ -1375,7 +1496,7 @@ classify:
 ⑦「最近会话 ▸」（最近 ≤5 个非运行中会话 `标题 · 项目名`，无则「没有最近会话」，
 点选即在新 iTerm 标签跑 `omp --resume '<path>'`，§4.8 同一语义）；
 ⑧「模式：<name> ▸」（不变，见 §24）；⑨分隔线；⑩「打开主窗口」；
-⑪「设置 ▸」（✓「等待输入时通知」（默认开）、✓「疑似卡住时通知」（默认开，旧文件继承等待开关）、
+⑪「设置 ▸」（✓「等待输入时通知」（默认开）、✓「可能卡住时通知」（默认开，旧文件继承等待开关）、
 ✓「会话结束时通知」（默认关）、✓「在 Dock 显示图标」（默认关）、
 分隔线、「更多菜单栏设置…」（拉起主窗口并发出 `open-tray-settings` 事件切到菜单栏页）、
 「检查更新…」，点后拉起主窗口并发出 `check-app-update` 事件走手动检查：
@@ -1383,8 +1504,9 @@ classify:
 失败 toast「检查更新失败：<msg>」；侧栏底部 `omp-resume <version>` 行的
 「检查应用更新」按钮走同一流程，版本经 `@tauri-apps/api/app` `getVersion` 读取，
 启动时静默检查不变）；⑫分隔线；⑬「退出 omp-resume」。
-点击托盘图标的行为由设置 `clickAction` 控制：`menu`（默认）左键弹菜单；
-`window` 左键打开主窗口（右键仍弹菜单）。
+点击托盘图标的行为由设置 `clickAction` 控制：`panel`（默认）左键打开面板窗口（见 §17.11）；
+`window` 左键打开主窗口。左键永不自动弹原生菜单（`set_show_menu_on_left_click(false)` 恒定），
+右键直通原生菜单。
 菜单刷新（`menu::refresh_decision`，纯函数 + 单测）：模型一致不动；
 **仅行内文字（距上次活动 / 今日花费）变化**时用已装配菜单项的 `set_text`
 **就地更新**（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
@@ -1401,7 +1523,7 @@ classify:
 ```json
 {"version": 1, "notifyOnWaiting": true, "notifyOnStuck": true, "notifyOnFinish": false,
  "badgeStyle": "count", "titleWidth": "standard", "showCost": true, "showProject": false,
- "showIdle": true, "compactRows": false, "clickAction": "menu", "showDockIcon": false}
+ "showIdle": true, "compactRows": false, "clickAction": "panel", "showSearch": true, "showDockIcon": false}
 ```
 
 原子写入（同目录临时文件 → sync → rename），新文件 0600，已有文件保留原权限位。
@@ -1412,15 +1534,20 @@ classify:
 向后兼容：`version` 仍为 1，新字段靠 `#[serde(default…)]` 兼容旧文件
 （只有 `version/notifyOnWaiting/showDockIcon`）。其中 `notifyOnStuck` 缺省时
 继承 `notifyOnWaiting`（卡住通知过去由等待输入总开关控制，继承后行为不变）；
+旧 `clickAction: "menu"` 经 `#[serde(alias = "menu")]` 反序列化为 `panel`
+（序列化写 `panel`，单测锁定）；`showSearch` 缺省开。
 其余缺省字段取上表示例的默认值。
+`titleWidth` 一设两用：原生菜单按标题截断 20/32/48 字，面板按逻辑宽 316/356/396px。
 
 ### 17.5 通知（`menubar::notify` + `tray` 接线）
 
 - 三个开关各自门控一类通知：`notifyOnWaiting`（等待输入）、`notifyOnStuck`
-  （疑似卡住）、`notifyOnFinish`（会话结束）。
+  （可能卡住）、`notifyOnFinish`（会话结束）。**取舍**：完成/失败通知不做——
+  `assistant.stopReason="error"` 是瞬态重试语义（同轮多连 error 后会话继续），
+  `toolResult.isError` 是常规控制流，`session_exit` 与结束检测重叠，按尾部判定失败会频繁误报。
 - 仅「工作中 → 等待输入」转换通知，且该会话此前工作中（Working/Stuck）
   持续 ≥ 30 秒；同会话 30 秒防抖；同一轮询周期 > 3 个会话转换 → 合并成一条汇总
-  （「N 个会话在等你」）；「疑似卡住」首次出现通知一次（离开卡住态后重新计数，
+  （「N 个会话在等你」）；「可能卡住」首次出现通知一次（离开卡住态后重新计数，
   即按 episode 一次；记账始终执行，开关关时不发、中途开启不为进行中的 episode 补发）。
   正文只含会话标题（截断 60 字）与状态，**不含对话内容**。
 - 结束检测：会话连续 2 轮（约 6 秒）不再出现在占用集才算结束；失败轮不动确认计数；
@@ -1457,7 +1584,8 @@ classify:
 
 ### 17.6 驻留与窗口行为
 
-- 关闭主窗口 = 拦截 `CloseRequested` → `hide()`，应用继续驻留菜单栏；
+- 关闭主窗口 = 拦截 `CloseRequested` → `hide()`（仅 `label == "main"` 的窗口拦截，
+  面板窗口走 §17.11 分支），应用继续驻留菜单栏；
   红钮与 ⌘W 等效（macOS 默认应用菜单自带 `Close Window` ⌘W，走同一拦截）；
   隐藏时若「在 Dock 显示图标」为关 → `ActivationPolicy::Accessory`（Dock 图标隐藏）；
   「打开主窗口」/ 点 Dock 图标 → 切回 `Regular` + `unminimize` + `show` + `set_focus`
@@ -1473,7 +1601,8 @@ classify:
 `poller`（T0–T3 组装，`OccupantSource` 可注入；含结束确认）、`menu`（菜单模型，含 Dock 角标计数）、
 `settings`（settings.json 读写 + `SettingsPatch`）、`notify`（通知判定 + osascript 回退）、
 `tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程，含角标应用与 Dock 跳动；
-另提供 `get_tray_settings` / `set_tray_settings` / `get_tray_preview` 三个前端命令，见 §17.10）、
+另提供 `get_tray_settings` / `set_tray_settings` / `get_tray_preview` 三个前端命令，见 §17.10，
+以及 §17.11 的五个面板命令）、`panel`（面板窗口定位 + toggle/blur 守卫，见 §17.11）、
 `dock`（仅 macOS：Dock 右键菜单，运行时注入 `applicationDockMenu:`）。
 探针 `cargo test --test menubar_probe -- --ignored --nocapture`（只读）。
 
@@ -1487,7 +1616,7 @@ classify:
   `RunEvent::Reopen { .. }` → `tray::show_main`（与「打开主窗口」同路径：
   `Regular` + `unminimize` + `show` + `set_focus`）。此前 `Builder::run` 丢弃
   run 事件，点击 Dock 图标无反应。
-- 角标 = 需要用户处理的会话数（等待输入 + 疑似卡住），0 时清除。
+- 角标 = 需要用户处理的会话数（等待输入 + 可能卡住），0 时清除。
   计数由纯 `menu::build_model` 算出（`MenuModel.badge_count`，参与
   `same_structure`，单测锁定：0 → 无、等待+卡住求和、工作/空闲不计），
   经主窗口 `set_badge_count` 应用（macOS → 应用级 NSDockTile badge）。
@@ -1521,21 +1650,51 @@ classify:
 
 ### 17.10 菜单栏设置命令（`menubar::tray`）
 
-前端菜单栏页经下面三个命令读写设置、取预览（类型见 `model.rs` / `types.ts` 的
-`TraySettings` / `TraySettingsPatch` / `TrayPreview`）：
+前端菜单栏页与面板经下面命令读写设置、取预览（类型见 `model.rs` / `types.ts` 的
+`TraySettings` / `TraySettingsPatch` / `TrayPreview` / `BuildInfo`）：
 
 - `get_tray_settings() -> TraySettings`：读当前内存设置（只读）。
 - `set_tray_settings { patch } -> TraySettings`：按补丁改设置。`patch` 缺席字段
   不触碰；未知键反序列化失败（前端报 `INVALID_INPUT` 类错误）。成功后返回完整
   设置，并依次：落盘（失败返回 `Io` 且内存设置不变）、应用 Dock 激活策略、
-  `set_show_menu_on_left_click`、用上轮行快照重建托盘菜单、发出
+  用上轮行快照重建托盘菜单、面板可见时跟随宽度、发出
   `tray-settings-changed` 事件（payload 为完整设置）。
-- `get_tray_preview() -> TrayPreview`：菜单的只读预览，由托盘缓存模型映射；
-  尚未完成首轮检测时 `ready=false`、行为空。`costText` 仅 `showCost` 为真时有值；
-  `modes` 为 null 表示尚未读到模式列表。前端只渲染、不重算文案。
+- `get_tray_preview() -> TrayPreview`：面板/菜单栏页的只读预览，由托盘缓存模型
+  按 `session_id` join `last_rows` 映射（`RowModel` 不动，避免 `same_shape` 每轮重建）；
+  尚未完成首轮检测时 `ready=false`、行为空。`cost_usd` / `request_count` 仅 `showCost`
+  为真且已统计时有值；`modes` 为 null 表示尚未读到模式列表。
+  头部计数/分组/「全部 N 个」前端由 `rows + overflow` 派生。
 - 事件：`tray-settings-changed`（设置变更，payload 为完整设置；原生菜单勾选与
   `set_tray_settings` 都会发）；`open-tray-settings`（原生菜单「更多菜单栏设置…」
   发出，无 payload，前端收到后切到菜单栏页）。
+
+### 17.11 面板窗口（`menubar::panel` + `tray` 命令）
+
+- 窗口 `tray-panel`（`tauri.conf.json`，不动 `main` 任何键）：无边框 / 透明底 /
+  阴影 / 不可调尺寸 / 初始不可见 / 不进任务栏；初值 356×620，内容区内部滚动。
+  `capabilities/default.json`：`windows += "tray-panel"`，`permissions += "core:window:allow-hide"`
+  （Esc 走前端 `hide()`；其余 IPC 靠 `core:default`）。
+- 左键点击托盘图标（`TrayIconEvent::Click` 的 `Left + Up`，取事件 `rect`）→
+  `clickAction == panel` 时 `toggle_panel`，`window` 时 `show_main`；右键直通原生菜单。
+- 定位（`panel_position` 纯函数 + 单测，全 physical 运算，不碰 `scale_factor`）：
+  逻辑宽按 `titleWidth → {316, 356, 396}`，图标居中 + 当前屏幕钳制（含副屏偏移原点）。
+- 失焦隐藏：`lib.rs on_window_event` 的 `tray-panel` 分支 `Focused(false) → hide + 记时间戳`；
+  `CloseRequested → prevent + hide`。toggle/blur 竞态守卫 250ms：blur 隐藏后 250ms 内的
+  show 请求视为同一次点击回弹而忽略（Esc/主动 toggle 的隐藏不记时间戳）。
+  主窗口原有隐藏逻辑加 `label == "main"` 守卫。
+- 前端入口：`main.tsx` 按 `getCurrentWindow().label === "tray-panel"` 分支挂轻量
+  `TrayPanelApp`（自带外观 + 轮询 + toast），不挂 `App`（避免双份轮询）；
+  `?panel` 供 vite 预览（`?mock&panel`）。Esc 关闭；⌘N 新建会话（经 `open_main_window`）、
+  ⌘1 主窗口、⌘, 设置（跳菜单栏页）。
+- 命令：
+  - `tray_focus_session { session_id }`：面板点会话行 = 聚焦 iTerm 标签
+    （`try_focus_session -> Result` 核心与原生菜单路径共享；失败返回 `Io` 前端 toast）。
+  - `tray_resume_recent { session_id }`：后端由 extras 解析 path，与原生菜单同一路径；iTerm 新 tab。
+  - `open_main_window { page? }`：`show_main` + page 非空时发 `open-main-route` 事件，
+    payload `{ route: Route } | { action: "new-session" }`（route 跳转由 App 订阅执行，
+    `new-session` 由新建会话对话框订阅执行）。面板「新建会话」CTA 走此命令，不在面板内做项目展开/目录选择。
+  - `quit_app`：quitting 置位 + `app.exit(0)`（与原生「退出」同路径）。
+  - `get_build_info -> { os, arch }`：`std::env::consts`（设置页关于卡拼 `macOS arm64 · Tauri 2`）。
 
 ## 18. 记忆库（§4.39–§4.50，Mnemopi 维护：只读 + 写操作 + 关系图）
 
@@ -1690,8 +1849,9 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
   （`{ bank, kind, createdAt, cwd, working, episodic, sourceBankDirName }`），目录 `0700`、文件 `0600`。
 - `bank-removed`：先写 manifest，再 move 整个 bank 目录 → `…/<ts>-bank-removed/bank/`（rename；跨设备
   copy + 字节校验 + 删源）；任一步失败 ⇒ 清掉该 ts 目录后报错，原库不动。
-- 留存：仅成功提交/恢复后修剪同 bank 同 kind ∈ {`before-delete`,`before-restore`}，留最新 5；
-  `bank-removed` 永不剪；失败/被拒的操作绝不修剪。有效备份 = 目录名严格匹配**且** manifest 可解析；
+- 留存：仅成功提交/恢复后修剪同 bank 同 kind ∈ {`before-delete`,`before-restore`,`manual`}，各留最新 5；
+  `bank-removed` 永不剪；失败/被拒的操作绝不修剪。kind 词表：`before-delete`（删行前）/`before-restore`（恢复覆盖前）/
+  `bank-removed`（整库移入）/`manual`（用户手动「立即备份」，§4.74）。manual 独立分组，绝不挤占 before-delete。
   无 manifest 的残留不列出、不占名额、不被自动删（恢复它 ⇒ `IO`，原库不动）。备份失败 ⇒ 操作中止
   （`IO`，不加错误码）。
 
@@ -1721,6 +1881,19 @@ memory_delete_backup(args: { backupId: string }): null              // §4.49
   （快照/manifest/留存/`backupId`）、`delete.rs`（preview/删行/删库/恢复/备份管理）；测试见
   `tests/memory*.rs`（超集 schema 在 `tests/common`，各含 1 个 `#[ignore]` 真实数据用例）。
 
+#### 18.8.9 / 4.74 `memory_backup_all() -> MemoryBackupAllResult`（全库快照）
+
+```ts
+memory_backup_all(): { backups: MemoryBackup[]; errors: { bank: string; reason: string }[] }
+```
+
+- 行为：枚举全部 bank（与 overview 同源），逐库 `VACUUM INTO` 快照 + 写 manifest；逐库独立成败，
+  成功进 `backups`（bank 名升序），失败进 `errors`（中文非敏感 `reason`，不含记忆正文）。
+  唯一整体失败：bank 枚举本身失败 ⇒ `IO`（根目录不存在/不可读）。
+- kind = `manual`（手动快照独立分组；与 before-delete 互不挤占，见 §18.8.4）。
+- 跳过 lsof 门禁：`VACUUM INTO` 快照只读源库（只读连接 + busy 等待），不改原库任何字节。
+- 留存：每库成功后按同 bank 同 kind 修剪，复用 §18.8.4 的 `BACKUP_KEEP=5` 语义
+  （该库第 6 个起的最旧 `manual` 备份被删；`before-delete` 快照数不受影响；`bank-removed` 永不剪）。
 
 ### 18.9 前端（记忆库标签页）
 
@@ -1805,7 +1978,7 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 ## 20. 模型测试器（§4.51–§4.53、§4.56，管理视图「模型」标签页的「测试」区）
 
 > 测速度、测稳定性，结果可写回 `modelRoles`。测速走 omp 自带的 `omp bench`（直连模型，
-> 不带 agent 前缀），是本应用唯一会调用 LLM 的路径。写配置仍然只走 §16.5
+> 不带 agent 前缀），是本应用唯一会调用 LLM 的路径（§4.73 MCP 握手只做协议连通性探测，不调 LLM）。写配置仍然只走 §16.5
 > `update_model_config`；本章唯一的写盘命令是 §20.4（删除 `model-bench.jsonl` 里的记录）。
 > 实现：`src-tauri/src/model_bench.rs`、
 > `src/modelBench.ts`、`src/components/ModelTesterPanel.tsx`（及 `BenchToolbar` /
@@ -2031,9 +2204,36 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 
 （已删除：以代码为准；类型引用保留）
 - `src/types.ts` 镜像 §21.2–§21.3 类型；`src/api.ts` 封装 `getModelSpecs()` /
-  `updateModelSpec(req)`（参数透传 `provider/id/patch/expectedRevision`）。
+  `updateModelSpec(req)` / `createModelSpec(req)`（参数透传
+  `provider/id/patch/expectedRevision`）。
 - 模型库「隐藏」是纯前端状态（见 §16.3），不经本章命令、不改 models.yml，
   无删除入口。
+
+### 21.9 / 4.69 `create_model_spec { provider, id, patch, expectedRevision } -> ModelSpecUpdateResult`
+
+- 在已存在 provider 的 `models:` 列表末尾追加一个新条目；类型复用 §21.3
+  的 `ModelSpecPatchRequest` / `ModelSpecUpdateResult`（`types.ts` 零新增）。
+- 只用补丁的 `name` / `contextWindow` / `maxTokens` 三个字段（缺席字段不写行；
+  `name` 缺席时写 `name: "<id>"`；`reasoning` / `input` / `cost` 忽略，
+  但仍按 §21.3 口径校验，非法值一样 `INVALID_INPUT`）。
+- 校验（`INVALID_INPUT`）：`provider` / `id` 非空、≤200 字符、无换行、不含 `/`
+  （§21.3 同口径）；`name` 非空 ≤200 字符无换行无控制字符；
+  窗口/输出 > 0 且 ≤ 2^53-1；provider 不存在 → 「未找到指定的 provider」
+  （不新建 provider 块）；同 provider 下 `id` 已存在 →
+  「模型 {provider}/{id} 已存在，请换个 id 或直接修改它」。
+- 行级插入：条目横线缩进与字段缩进跟随该列表现有条目；空 `models:`
+  按 `models:` 缩进 + 2 推导横线、再 + 2 推导字段；新条目形为
+  `- id:` 首行 + `name/contextWindow/maxTokens` 续行（name 双引号转义，
+  数字不加引号）；provider 键引号兼容、models 判重/流式条目/纯别名跳过
+  均与 §21.4 同口径；注释/凭据/CRLF/其他条目逐字节不动。
+- 流程与错误码同 §21.3（整体持有 `OmpBusy` → `BUSY`；`expectedRevision`
+  比对 + 沙箱后复检 → `CONFLICT`；沙箱未通过 → `INVALID_INPUT` 固定文案；
+  校验超时 → `TIMEOUT`；omp 缺失 → `OMP_NOT_FOUND` 拒绝写入；
+  符号链接/只读/写盘失败 → `IO`）：
+  沙箱比对只校验实际写入的三字段（name 按缺省后比对）；
+  写后重读返回新 revision 与新规格 + 备份路径。
+- 与 §21.3 的关系：§21.3 改已有条目的字段值，本命令追加新条目；
+  追加后即纳入 §21.2 快照与 §21.3 可改范围。
 
 ## 22. 管理视图信息架构（`ManageView` 六个标签页）
 
@@ -2074,7 +2274,7 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 ### 23.3 状态判定（`stage/derive.rs`，纯函数，按序短路）
 
 `Main`：`!parentInUse` → `done`「已结束」；否则 `working`→`running`、
-`waiting`→`idle`「等待输入」、`idle`→`idle`「空闲」、`stuck`→`failed`「疑似卡住」、
+`waiting`→`idle`「等待输入」、`idle`→`idle`「空闲」、`stuck`→`failed`「可能卡住」、
 未知（轮询器还没见到）→`running`。
 
 `Worker`（按 `child_file` 命中把父会话 lifecycle 的动作传进来；子代理/advisor 恒无动作）：
@@ -2109,6 +2309,11 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
 
 `parentInUse = probe.inUse || (!probe.probeOk && 轮询器快照存在)`；header 无 id 时
 `parentInUse = 轮询器快照存在`。
+
+`provenance: string|null`：命中分支的标签（零成本，判定处已知），如
+`"tray: waiting" / "tray: idle" / "tray: stuck"`（主会话走菜单栏快照分支）、
+`"spawn" / "lifecycle:turn-started" / "lifecycle:turn-settled" / "session_exit" /
+`"tail"` 等；运行中默认分支（无特征动作）为 null。前端 aside「状态来源」行展示。
 
 ### 23.4 / 4.57 `get_agent_stage { path } -> AgentStage`
 
@@ -2146,9 +2351,25 @@ tail 里的 `spawn_info`（不在主会话里）。派发说明 `brief` 取值�
 
 - 轮询：`useStagePoll` 单链（同一时刻至多一个请求；隐藏时不排期、恢复可见立即拉一次）；
   `inUse=false` 的会话 10s 一轮（`ENDED_INTERVAL_MS`），回到在用自动恢复 1.5s。
+- 页头：Agent 库（ghost）+ 查看会话（ghost）+ 轮询 badge（`updatedAt` 换算「N 秒前轮询」）。
+- 筛选条在画布上方：全部 / 运行中（=running）/ 等待（=idle+queued）/ 完成 / 失败
+  （=failed+lost，lost 计入失败），带计数；右侧 meta「轮询 1.5s · 最多滞后约 2s」；
+  筛选对所有角色一视同仁（main 无例外），空结果显示 scene-empty 空态。
+- 场景：scene-top（live 点 +「N 个角色运行中」+ 右侧声明）；画布（标签碰撞错位，
+  多角色时异常/运行中优先显示；墙面铭牌 + 主会话已运行时长时钟，`startedAt` 为
+  null 隐藏）；角色卡片行（state-pill + `tok` 后缀）。
+- 选中角色时右侧出现 aside：摘要（头像 + 名 + `role · model` + pill）+
+  detail-list（Token/成本/状态来源 `provenance`/开始时间/工具）+ 活动流 head +
+  feed（HH:MM + 亮色多行文本 + 反引号 code pill）+「查看原始节点」按钮。
+- 「查看原始节点」对话框：5 行 kv（角色/状态/模型/Token/成本，全真实）+
+  footer [关闭 ghost][查看会话 primary]。
+- 时间线 Panel：head（含 meta「全程 · 按会话时钟」）+ foot（bash/队列声明 + 真实时长）；
+  活动流 Panel 恒为全部角色（选中角色的活动只在 aside 内看，避免两处重复）。
+- 状态词：运行中/空闲/排队中/完成/失败/失联；`stuck` 主会话人话状态为「可能卡住」。
 - 形象：按 agent 固定（`DEFAULT_AGENT_CHARS`），用户可在「Agent 库」里逐个覆盖；
   偏好只存 `localStorage`（`omp-resume:stage:v2`，另清掉语义已变的 v1），不写 omp。
-- 配置展示：「选中详情」与「Agent 库」共用 `AgentConfigPanel`，全部只读，没有保存入口。
+- 配置展示：「选中详情」与「Agent 库」共用 `AgentConfigPanel`，全部只读，没有保存入口；
+  Agent 库 footer 有「管理 Agent」primary（→ agents 路由）。
 - 在舞台视图里点侧栏会话只切换舞台目标，不离开舞台（看详情走头部「查看会话」）。
 
 ## 24. 模型模式（§4.60–§4.63）
@@ -2219,7 +2440,7 @@ current: ModelPresetSnapshot, rawPresets: unknown }`。
 - 托盘「模式」子菜单由 `spawn_modes_refresher`（30 秒）与三个写命令的
   `tray::publish_modes` 驱动；`MenuModel.modes = None` 表示尚未读到（不显示子菜单）。
 
-## 25. 会话右键菜单的辅助命令（§4.64–§4.67）与应用路径（§4.68）
+## 25. 会话右键菜单的辅助命令（§4.64–§4.67）、应用路径（§4.68）与通用 Finder 显示（§4.72）
 
 > 右键菜单用原生菜单（`src/nativeMenu.ts`），动作分两类：纯前端（复制、置顶、折叠）
 > 与需要后端的一条命令。这里只记后端新增的四个。
@@ -2268,3 +2489,10 @@ AppPaths = { sessionsDir: string; ownersDir: string; historyDb: string; memoryDi
   `$HOME/.omp/agent/memories/mnemopi/banks`）。
 - `dataDir`：`meta::data_dir()`（失败时 null）。
 - `ompBin`：`omp_cli::resolve_omp()`（找不到时 null）。
+
+### 25.7 / 4.72 `reveal_file { path } -> ()`（通用 Finder 显示）
+
+`/usr/bin/open -R <path>`（Finder 里选中该文件）。与 §25.4 唯一区别：去会话根目录
+约束，供 MCP「打开配置文件」等非会话文件入口用。校验：非绝对路径/不存在/不是文件 →
+`INVALID_INPUT`/`NOT_FOUND`；含控制字符 → `INVALID_INPUT`（都不调用 Runner）；
+Runner 失败 → `IO`。Runner 可注入，单测断言精确 argv。
