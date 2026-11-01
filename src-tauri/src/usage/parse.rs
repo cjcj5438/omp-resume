@@ -51,6 +51,21 @@ pub(super) struct Entry {
     pub(super) is_fallback: bool,
     /// assistant 自报耗时（duration/ttft 均有效时）。
     pub(super) timing: Option<Timing>,
+    /// assistant 自报 duration（毫秒，只要求 duration 本身有效；fork 复制整行一致，不影响去重）。
+    pub(super) duration_ms: Option<u64>,
+    /// assistant：message.retryRecovery（缺省无；行内字段，参与相等比较）。
+    pub(super) retry: Option<Retry>,
+}
+
+/// assistant 的重试恢复记录（`message.retryRecovery` 行内字段）。
+#[derive(Clone, PartialEq)]
+pub(super) struct Retry {
+    /// auto-retry（实测恒为此值；解析时保留原文）。
+    pub(super) kind: String,
+    /// recovered / superseded（其他值保留原文）。
+    pub(super) status: String,
+    /// 重试次数（缺省 0）。
+    pub(super) attempt: u64,
 }
 
 /// 工具间隔超过 10 分钟视为会话闲置，不计工具耗时。
@@ -79,6 +94,19 @@ pub(super) fn timing_of(duration: Option<f64>, ttft: Option<f64>) -> Option<Timi
         wait_ms: ttft.round() as u64,
         gen_ms: (duration - ttft).round() as u64,
     })
+}
+/// 单 duration 有效性：有限非负即存（round 到毫秒），不要求 ttft。
+pub(super) fn duration_ms_of(duration: Option<f64>) -> Option<u64> {
+    let duration = duration?;
+    (duration.is_finite() && duration >= 0.0).then(|| duration.round() as u64)
+}
+/// `message.retryRecovery` 最小字段形状（多余键直接跳过）。
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub(super) struct RawRetry {
+    pub(super) kind: String,
+    pub(super) status: String,
+    pub(super) attempt: u64,
 }
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -112,6 +140,7 @@ pub(super) struct Message {
     pub(super) duration: Option<f64>,
     pub(super) ttft: Option<f64>,
     pub(super) completed_at: Option<f64>,
+    pub(super) retry_recovery: Option<RawRetry>,
 }
 
 #[derive(Deserialize)]
@@ -198,7 +227,16 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
             .as_ref()
             .filter(|m| m.role == "assistant")
             .map(|m| (m.duration, m.ttft, m.completed_at));
-        // kind、provider、model、usage、内层时间、stop、错误原文、切换角色、兜底标记。
+        let retry_src = raw
+            .message
+            .as_ref()
+            .filter(|m| m.role == "assistant")
+            .and_then(|m| m.retry_recovery.as_ref())
+            .map(|r| Retry {
+                kind: r.kind.clone(),
+                status: r.status.clone(),
+                attempt: r.attempt,
+            });
         let parsed_entry = match (raw.kind.as_str(), raw.message) {
             ("model_usage", _) => (
                 Kind::Background,
@@ -304,6 +342,8 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
             change_role,
             is_fallback,
             timing: timing_src.and_then(|(d, t, _)| timing_of(d, t)),
+            duration_ms: timing_src.and_then(|(d, _, _)| duration_ms_of(d)),
+            retry: retry_src,
         };
         let ts = entry.timestamp;
         let stop_reason_tool_use = kind == Kind::Assistant && entry.stop_reason == "toolUse";

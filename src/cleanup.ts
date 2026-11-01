@@ -39,10 +39,14 @@ export function toggleAllSelectable(
   return allChecked ? new Set() : new Set(selectable);
 }
 
-/** 选中项转为删除对话框目标（清理候选无消息数，显示为 null）。 */
+/**
+ * 选中项转为删除对话框目标（清理候选无消息数，显示为 null；source 标 cleanup 供 App 切对话框变体）。
+ * `excluded` 为发起时不可勾选的被排除条数（同一批 targets 共用），供 cleanup 变体 kv 展示。
+ */
 export function toDeleteTargets(
   candidates: CleanupCandidate[],
   checked: Set<string>,
+  excluded = 0,
 ): DeleteTarget[] {
   return candidates
     .filter((c) => checked.has(c.path) && isSelectable(c))
@@ -54,6 +58,8 @@ export function toDeleteTargets(
       sizeBytes: c.bytes,
       messageCount: null,
       inUse: c.inUse,
+      source: "cleanup" as const,
+      excluded,
     }));
 }
 

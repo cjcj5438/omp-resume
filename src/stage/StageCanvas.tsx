@@ -25,8 +25,9 @@ const WHEEL_THROTTLE_MS = 120;
 const MAX_VIEWPORT_SHARE = 0.62;
 /** 自动适配的最大整数倍（再高就靠手动缩放）。 */
 const MAX_FIT = 4;
-/** 名字标签最多显示到这么多角色，超过只显示选中/悬停项（否则标签互相压）。 */
-const LABEL_ALL_LIMIT = 12;
+/** 名字标签避让 lane 数与步进（stage-P1-12：5 lane × 14px，实测宽碰撞）。 */
+const LABEL_LANES = 5;
+const LABEL_LANE_STEP = 14;
 /** 名字标签相对脚底的 y 偏移（逻辑像素）：气泡顶在 -26，标签再高 3px。 */
 const LABEL_OFFSET_Y = 29;
 
@@ -36,7 +37,6 @@ export interface StageCanvasProps {
   filter: ReadonlySet<StageActorState> | null;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onOpenLibrary: () => void;
   /** 主题（`document.documentElement.dataset.theme`），变化时重取调色板。 */
   theme: string | undefined;
 }
@@ -53,18 +53,20 @@ export function StageCanvas({
   filter,
   selectedId,
   onSelect,
-  onOpenLibrary,
   theme,
 }: StageCanvasProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelRefs = useRef(new Map<string, HTMLDivElement>());
+  const moreRef = useRef<HTMLDivElement>(null);
+  const moreTipRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene | null>(null);
   const sceneKey = useRef<string>("");
   const panRef = useRef({ x: 0, y: 0 });
   const [zoomIdx, setZoomIdx] = useState(0);
   const [cssW, setCssW] = useState(0);
   const [hover, setHover] = useState<Hover | null>(null);
+  const [moreHover, setMoreHover] = useState(false);
   const reduced = useRef(false);
 
   const zoom = ZOOMS[zoomIdx];
@@ -138,6 +140,7 @@ export function StageCanvas({
     filter,
     prefs,
     selectedId,
+    hoverId: null as string | null,
     palette: paletteFor(theme),
     dark: theme === "dark",
     accent: readAccent(),
@@ -151,6 +154,7 @@ export function StageCanvas({
       filter,
       prefs,
       selectedId,
+      hoverId: hover?.id ?? null,
       palette: paletteFor(theme),
       dark: theme === "dark",
       accent: readAccent(),
@@ -160,7 +164,7 @@ export function StageCanvas({
       sceneKey.current = key;
       dirtyRef.current = true;
     }
-  }, [stage, filter, prefs, selectedId, theme]);
+  }, [stage, filter, prefs, selectedId, hover, theme]);
 
   // 主循环：reconcile + step + draw。
   useEffect(() => {
@@ -193,6 +197,7 @@ export function StageCanvas({
         filter: filterIn,
         prefs: prefsIn,
         selectedId: selectedIn,
+        hoverId,
         palette,
         dark,
         accent,
@@ -209,6 +214,9 @@ export function StageCanvas({
       ctx.save();
       ctx.scale(effective * dpr, effective * dpr);
       ctx.translate(panRef.current.x / effective, panRef.current.y / effective);
+      // 墙面时钟：主会话（actors[0]）已运行时长；startedAt 缺失/非法时隐藏。
+      const mainStarted = stageIn.actors[0]?.startedAt ?? null;
+      const mainMs = mainStarted === null ? Number.NaN : Date.parse(mainStarted);
       drawScene(
         ctx,
         next,
@@ -219,23 +227,85 @@ export function StageCanvas({
           reducedMotion: reduced.current,
           selectedId: selectedIn,
           scale: effective,
+          sessionElapsed: Number.isFinite(mainMs) ? Math.max(0, now - mainMs) : null,
         },
         accent,
       );
       ctx.restore();
 
       // 名字标签：ref 直写 transform，不触发 React 重渲染。
+      // 按优先级占 5 lane（layoutLabels 纯函数），实测宽碰撞；溢出收进 +N。
+      const byId = new Map(stageIn.actors.map((a) => [a.id, a]));
+      const anchors = new Map<string, { px: number; py: number }>();
+      const candidates: LabelCandidate[] = [];
       for (const [id, el] of labelRefs.current) {
         const actor = next.actors.get(id);
-        if (!actor) {
+        const src = byId.get(id);
+        if (!actor || !src) {
           el.style.opacity = "0";
           continue;
         }
         // 标签贴在气泡上方 3px（气泡占 foot y-26..y-17），不盖住角色的头。
         const px = actor.pos.x * effective + panRef.current.x;
         const py = (actor.pos.y - LABEL_OFFSET_Y) * effective + panRef.current.y;
+        anchors.set(id, { px, py });
+        const pinned = id === selectedIn || id === hoverId;
+        const rank =
+          (src.state === "running" ? 500 : src.state === "failed" ? 400 : src.state === "lost" ? 300 : 0) +
+          (id === selectedIn ? 200 : 0) +
+          (id === hoverId ? 100 : 0);
+        // 实测宽高（含选中描边）：隐藏态 offsetWidth 为 0 时用 96/14 兜底。
+        const halfW = Math.max(8, (el.offsetWidth || 96) / 2 + 2);
+        candidates.push({ id, px, py, halfW, h: el.offsetHeight || 14, rank, pinned });
+      }
+      const { placements, overflow } = layoutLabels(candidates);
+      const laneOf = new Map(placements.map((p) => [p.id, p.lane]));
+      const overflowSet = new Set(overflow);
+      for (const [id, el] of labelRefs.current) {
+        const a = anchors.get(id);
+        const lane = laneOf.get(id);
+        if (!a || lane === undefined || overflowSet.has(id)) {
+          el.style.opacity = "0";
+          continue;
+        }
         el.style.opacity = "1";
-        el.style.transform = `translate(${px}px, ${py}px) translateX(-50%)`;
+        el.style.transform = `translate(${a.px}px, ${a.py - lane * LABEL_LANE_STEP}px) translateX(-50%)`;
+      }
+      // +N 标记：放在溢出簇的形心上方；名单进 title（hover 显示被收起者）。
+      const more = moreRef.current;
+      const moreTip = moreTipRef.current;
+      if (more) {
+        if (overflow.length === 0) {
+          more.style.opacity = "0";
+          more.style.pointerEvents = "none";
+        } else {
+          let sx = 0;
+          let sy = 0;
+          let n = 0;
+          for (const id of overflow) {
+            const a = anchors.get(id);
+            if (!a) continue;
+            sx += a.px;
+            sy += a.py;
+            n += 1;
+          }
+          const cx = n > 0 ? sx / n : 0;
+          const cy = n > 0 ? sy / n : 0;
+          more.style.opacity = "1";
+          more.style.pointerEvents = "auto";
+          // 夹在 frame 内：上方越界会被工具条/画布外元素挡住 hover。
+          const my = Math.max(20, Math.min(H * effective - 20, cy - LABEL_LANES * LABEL_LANE_STEP));
+          more.style.transform = `translate(${cx}px, ${my}px) translateX(-50%)`;
+          const names = overflow.map((id) => byId.get(id)?.name ?? id).join("、");
+          // 首个文本节点是计数（tip span 不能被 textContent  wipe 掉）。
+          const first = more.firstChild;
+          const label = `+${overflow.length}`;
+          if (first && first.nodeType === 3) first.textContent = label;
+          else more.insertBefore(document.createTextNode(label), more.firstChild);
+          more.setAttribute("title", names);
+          more.setAttribute("aria-label", `还有 ${overflow.length} 个角色：${names}`);
+          if (moreTip) moreTip.textContent = names;
+        }
       }
     };
     raf = requestAnimationFrame(frame);
@@ -306,7 +376,6 @@ export function StageCanvas({
         <button type="button" className="btn btn-small" onClick={zoomIn} aria-label="放大"><Ico icon={Plus} size={12} /></button>
         <button type="button" className="btn btn-small" onClick={zoomOut} aria-label="缩小"><Ico icon={Minus} size={12} /></button>
         <button type="button" className="btn btn-small" onClick={resetZoom}>复位</button>
-        <button type="button" className="btn btn-small" onClick={onOpenLibrary}>Agent 库</button>
       </div>
       <div
         className="stage-canvas-box"
@@ -367,22 +436,27 @@ export function StageCanvas({
             }}
           />
           <div className="stage-labels" aria-hidden="true">
-            {actors.map((a) => {
-              const shown =
-                actors.length <= LABEL_ALL_LIMIT || a.id === selectedId || a.id === hover?.id;
-              return (
-                <div
-                  key={a.id}
-                  className={a.id === selectedId ? "stage-label stage-label-selected" : "stage-label"}
-                  ref={(el) => {
-                    if (el !== null && shown) labelRefs.current.set(a.id, el);
-                    else labelRefs.current.delete(a.id);
-                  }}
-                >
-                  {shown ? a.name : ""}
-                </div>
-              );
-            })}
+            {actors.map((a) => (
+              <div
+                key={a.id}
+                className={a.id === selectedId ? "stage-label stage-label-selected" : "stage-label"}
+                ref={(el) => {
+                  if (el !== null) labelRefs.current.set(a.id, el);
+                  else labelRefs.current.delete(a.id);
+                }}
+              >
+                {a.name}
+              </div>
+            ))}
+            <div
+              className={moreHover ? "stage-label-more is-on" : "stage-label-more"}
+              ref={moreRef}
+              role="status"
+              onPointerEnter={() => setMoreHover(true)}
+              onPointerLeave={() => setMoreHover(false)}
+            >
+              <span className="stage-label-more-tip" ref={moreTipRef} />
+            </div>
           </div>
         </div>
         {hover !== null ? (
@@ -401,6 +475,83 @@ function stageKeyOf(stage: AgentStage, filter: ReadonlySet<StageActorState> | nu
     .join("|");
   return `${stage.inUse}|${filterKey}|${JSON.stringify(prefs.chars)}|${actors}`;
 }
+/** 标签避让输入（一帧内所有候选标签的锚点与实测半宽）。 */
+export interface LabelCandidate {
+  id: string;
+  px: number;
+  py: number;
+  halfW: number;
+  /** 标签盒高（实测 offsetHeight；兜底 14）。 */
+  h: number;
+  /** 优先级（越大越先占 lane）：运行中 > 失败 > 失联 > 选中 > 悬停 > 其余。 */
+  rank: number;
+  /** 选中/悬停永不收起。 */
+  pinned: boolean;
+}
+
+export interface LabelPlacement {
+  id: string;
+  lane: number;
+}
+
+/**
+ * 纯函数标签排布（stage-P1-12，供单测与主循环共用）。
+ * 按优先级逐个占 lane：lane 位移后的矩形与已占矩形相交则换下一 lane；
+ * 5 lane 用尽仍相交 → 非 pinned 收进 overflow（pinned 挤占 lane 0 并踢走相交的非 pinned）。
+ * 返回 placements（保证两两不重叠）与 overflow（按 rank 倒序，供 +N 名单）。
+ */
+export function layoutLabels(candidates: LabelCandidate[]): { placements: LabelPlacement[]; overflow: string[] } {
+  const boxes: { id: string; left: number; right: number; top: number; bottom: number; lane: number }[] = [];
+  const placements: LabelPlacement[] = [];
+  const overflow: { id: string; rank: number }[] = [];
+  const ordered = [...candidates].sort((a, b) => b.rank - a.rank || a.px - b.px);
+  for (const c of ordered) {
+    let lane = -1;
+    for (let i = 0; i < LABEL_LANES; i += 1) {
+      const top = c.py - i * LABEL_LANE_STEP - c.h;
+      const bottom = top + c.h;
+      const left = c.px - c.halfW;
+      const right = c.px + c.halfW;
+      const collides = boxes.some((o) => left < o.right && o.left < right && top < o.bottom && o.top < bottom);
+      if (!collides) {
+        lane = i;
+        break;
+      }
+    }
+    if (lane < 0) {
+      if (c.pinned) {
+        // pinned 无 lane 可用：挤 lane 0（把与其相交的非 pinned 踢进 overflow）。
+        const top = c.py - c.h;
+        const bottom = top + c.h;
+        const left = c.px - c.halfW;
+        const right = c.px + c.halfW;
+        const evicted = boxes.filter(
+          (o) =>
+            left < o.right && o.left < right && top < o.bottom && o.top < bottom &&
+            ordered.find((x) => x.id === o.id)?.pinned !== true,
+        );
+        for (const v of evicted) {
+          const bi = boxes.findIndex((b) => b.id === v.id);
+          if (bi >= 0) boxes.splice(bi, 1);
+          const pi = placements.findIndex((p) => p.id === v.id);
+          if (pi >= 0) placements.splice(pi, 1);
+          const victim = ordered.find((x) => x.id === v.id);
+          overflow.push({ id: v.id, rank: victim?.rank ?? 0 });
+        }
+        lane = 0;
+      } else {
+        overflow.push({ id: c.id, rank: c.rank });
+        continue;
+      }
+    }
+    const top = c.py - lane * LABEL_LANE_STEP - c.h;
+    boxes.push({ id: c.id, left: c.px - c.halfW, right: c.px + c.halfW, top, bottom: top + c.h, lane });
+    placements.push({ id: c.id, lane });
+  }
+  overflow.sort((a, b) => a.rank - b.rank);
+  return { placements, overflow: overflow.map((o) => o.id) };
+}
+
 
 function HoverTip({ actor, x, y }: { actor: StageActor | undefined; x: number; y: number }) {
   if (actor === undefined) return null;

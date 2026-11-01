@@ -91,6 +91,8 @@ export interface PaintOptions {
   selectedId: string | null;
   /** 有效缩放倍率（仅用于选择底座等细节的取整）。 */
   scale: number;
+  /** 主会话已运行时长（ms）；null 时墙面时钟隐藏。 */
+  sessionElapsed: number | null;
 }
 
 /** 由 `t` 决定的显示器亮度（敲键盘时 400ms 闪一次）。 */
@@ -105,8 +107,8 @@ function fill(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h:
   ctx.fillRect(x, y, w, h);
 }
 
-/** 地板 + 墙 + 窗外景。 */
-function paintGround(ctx: CanvasRenderingContext2D, rows: number, p: Palette): void {
+/** 地板 + 墙 + 窗外景 + 铭牌 + 会话时钟（真实已运行时长，非设计稿假时间）。 */
+function paintGround(ctx: CanvasRenderingContext2D, rows: number, p: Palette, o: PaintOptions): void {
   const h = sceneHeight(rows);
   fill(ctx, 0, 0, W, h, p.floor);
   // 16px 棋盘地板。
@@ -125,6 +127,20 @@ function paintGround(ctx: CanvasRenderingContext2D, rows: number, p: Palette): v
   fill(ctx, 266, 11, 14, 3, p.floor);
   fill(ctx, 268, 6, 1, 14, p.desk);
   fill(ctx, 250, 12, 38, 1, p.desk);
+  // 铭牌：omp · stage（墙带左上，7px mono）。
+  ctx.save();
+  ctx.font = "7px ui-monospace, monospace";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = o.dark ? "#8e8e93" : "#636366";
+  ctx.fillText("omp · stage", 8, 5);
+  // 会话时钟：主会话已运行时长（mm:ss），startedAt 缺失时隐藏。
+  if (o.sessionElapsed !== null) {
+    const s = Math.max(0, Math.floor(o.sessionElapsed / 1000));
+    const label = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    ctx.fillStyle = o.dark ? "#e8e8ee" : "#1c1c1e";
+    ctx.fillText(label, 8, 14);
+  }
+  ctx.restore();
   // 门。
   fill(ctx, DOOR.x - 8, CORRIDOR_Y - 28, 16, 28, p.wall);
   fill(ctx, DOOR.x - 6, CORRIDOR_Y - 26, 12, 26, p.monitorOff);
@@ -279,7 +295,7 @@ export function drawScene(
 ): void {
   ctx.imageSmoothingEnabled = false;
   const rows = scene.rows;
-  paintGround(ctx, rows, o.palette);
+  paintGround(ctx, rows, o.palette, o);
   paintBackdrop(ctx, scene, o.palette);
 
   const ordered = [...scene.actors.values()].sort((a, b) => a.sortY - b.sortY);

@@ -38,3 +38,21 @@ export function filterHistoryByProject(
   if (value === HISTORY_NO_PROJECT) return entries.filter((e) => e.cwd === null);
   return entries.filter((e) => e.cwd === value);
 }
+
+/**
+ * 绝对时间（设计稿口径）：今天 HH:MM / 昨天 HH:MM / M月d日。
+ * 无效时间返回空串（调用方渲染「—」）。
+ */
+export function formatHistoryTime(iso: string, nowMs = Date.now()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad2 = (n: number): string => String(n).padStart(2, "0");
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const now = new Date(nowMs);
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, now)) return hm;
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (sameDay(d, yesterday)) return `昨天 ${hm}`;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}

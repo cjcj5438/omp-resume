@@ -68,6 +68,7 @@ function stageActor(over: Partial<StageActor> = {}): StageActor {
     model: "p/m",
     contextTokens: 0,
     cost: 0,
+    provenance: "session_exit:normal",
     toolCalls: 0,
     current: null,
     recent: [],

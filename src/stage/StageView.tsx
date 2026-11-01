@@ -8,10 +8,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, formatUsd } from "../format";
 import type { StageActor, StageActorState } from "../types";
 import { ActivityFeed } from "./ActivityFeed";
+import { ActorAside } from "./ActorAside";
 import { ActorCards } from "./ActorCards";
 import { AgentConfigPanel } from "./AgentConfigPanel";
 import { AgentLibrary } from "./AgentLibrary";
 import { StageCanvas } from "./StageCanvas";
+import { StageDetailDialog } from "./StageDetailDialog";
 import { TimelineChart } from "./TimelineChart";
 import { useAgentCatalog } from "./agentCatalog";
 import { buildTimeline } from "./timeline";
@@ -19,8 +21,8 @@ import { agentKeyOf, loadStagePrefs, type StagePrefs } from "./prefs";
 import { STATE_WORD } from "./stateWords";
 import { useRunningSessions, useStagePoll } from "./useStageData";
 import { EmptyState } from "../components/ui";
-import { PageHeader, Seg } from "../components/page";
-import { Theater } from "lucide-react";
+import { PageHeader, Panel, Seg } from "../components/page";
+import { Activity, Bot, MessageSquare, Terminal, Theater } from "lucide-react";
 import "./Stage.css";
 
 export interface StageViewProps {
@@ -29,6 +31,8 @@ export interface StageViewProps {
   stageTarget: { path: string; seq: number } | null;
   selectedTitle: string | null;
   onOpenSession: (path: string) => void;
+  /** Agent 库「管理 Agent」→ agents 路由（App 传入 navigate）。 */
+  onManageAgents: () => void;
 }
 
 /** 筛选档位：`null` = 全部。 */
@@ -40,10 +44,10 @@ interface FilterDef {
 
 const FILTERS: FilterDef[] = [
   { key: "all", label: "全部", states: null },
-  { key: "running", label: "运行中", states: ["running", "queued"] },
-  { key: "idle", label: "待命", states: ["idle"] },
+  { key: "running", label: "运行中", states: ["running"] },
+  { key: "waiting", label: "等待", states: ["idle", "queued"] },
   { key: "done", label: "完成", states: ["done"] },
-  { key: "bad", label: "异常", states: ["failed", "lost"] },
+  { key: "failed", label: "失败", states: ["failed", "lost"] },
 ];
 
 function mmss(totalSecs: number): string {
@@ -52,13 +56,14 @@ function mmss(totalSecs: number): string {
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSession }: StageViewProps) {
+export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSession, onManageAgents }: StageViewProps) {
   const running = useRunningSessions();
   const [stagePath, setStagePath] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<StagePrefs>(() => loadStagePrefs());
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [theme, setTheme] = useState<string | undefined>(() =>
     typeof document === "undefined" ? undefined : document.documentElement.dataset.theme,
   );
@@ -114,7 +119,7 @@ export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSess
   const visible = useMemo(() => {
     if (stage === null) return [];
     if (filter === null) return stage.actors;
-    return stage.actors.filter((a) => a.kind === "main" || filter.has(a.state));
+    return stage.actors.filter((a) => filter.has(a.state));
   }, [stage, filter]);
 
   const timeline = useMemo(
@@ -123,13 +128,13 @@ export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSess
   );
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: 0, running: 0, idle: 0, done: 0, bad: 0 };
+    const c: Record<string, number> = { all: 0, running: 0, waiting: 0, done: 0, failed: 0 };
     for (const a of stage?.actors ?? []) {
       c.all += 1;
-      if (a.state === "running" || a.state === "queued") c.running += 1;
-      else if (a.state === "idle") c.idle += 1;
+      if (a.state === "running") c.running += 1;
+      else if (a.state === "idle" || a.state === "queued") c.waiting += 1;
       else if (a.state === "done") c.done += 1;
-      else c.bad += 1;
+      else c.failed += 1;
     }
     return c;
   }, [stage]);
@@ -211,11 +216,24 @@ export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSess
   const totalCost = (stage?.actors ?? []).reduce((sum, a) => sum + a.cost, 0);
   const totalTools = (stage?.actors ?? []).reduce((sum, a) => sum + a.toolCalls, 0);
 
-  const headActions = stage !== null ? (
-    <button type="button" className="btn" onClick={() => onOpenSession(stage.path)}>
-      查看会话
-    </button>
-  ) : undefined;
+  const pollSecs = stage === null ? null : Math.max(0, Math.round(Date.now() / 1000 - Date.parse(stage.updatedAt) / 1000));
+  const headActions = (
+    <>
+      <button type="button" className="btn btn-ghost" onClick={() => setLibraryOpen(true)}>
+        <Bot size={14} aria-hidden="true" />
+        Agent 库
+      </button>
+      {stage !== null ? (
+        <button type="button" className="btn btn-ghost" onClick={() => onOpenSession(stage.path)}>
+          <MessageSquare size={14} aria-hidden="true" />
+          查看会话
+        </button>
+      ) : null}
+      {pollSecs !== null && Number.isFinite(pollSecs) ? (
+        <span className="badge badge-tag"><span className="dot live" aria-hidden="true" />{pollSecs} 秒前轮询</span>
+      ) : null}
+    </>
+  );
   return (
     <div className="view stage-view">
       <PageHeader
@@ -301,53 +319,76 @@ export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSess
             <p className="pane-note">加载舞台…</p>
           ) : (
             <>
-              <StageCanvas
-                stage={stage}
-                prefs={prefs}
-                filter={filter}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onOpenLibrary={() => setLibraryOpen(true)}
-                theme={theme}
-              />
-              {stage.actors.length === 1 ? (
-                <p className="stage-empty-note">该会话没有子代理。</p>
-              ) : null}
-              <div className="stage-filters">
+              <div className="stage-filterbar">
                 <Seg
                   label="按状态筛选"
                   value={filterKey}
                   onChange={setFilterKey}
                   options={FILTERS.map((f) => ({ value: f.key, label: f.label, count: counts[f.key] ?? 0 }))}
                 />
+                <span className="spacer" />
+                <span className="meta">轮询 1.5s · 最多滞后约 2s</span>
               </div>
-              <ActorCards
-                actors={visible}
-                prefs={prefs}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                onMove={moveSelection}
-              />
-              <div className="stage-lower">
-                <div className="stage-panel">
-                  <h2 className="stage-panel-head">时间线</h2>
-                  <TimelineChart timeline={timeline} selectedId={selectedId} onSelect={setSelectedId} />
+              <div className="stage-layout">
+                <div className="section-stack">
+                  <div className="scene">
+                    <div className="scene-top">
+                      <span className="live"><span className="dot live" aria-hidden="true" />{counts.running} 个角色运行中</span>
+                      <span className="scene-note">只画 JSONL 里真实发生的角色与状态</span>
+                    </div>
+                    <StageCanvas
+                      stage={stage}
+                      prefs={prefs}
+                      filter={filter}
+                      selectedId={selectedId}
+                      onSelect={setSelectedId}
+                      theme={theme}
+                    />
+                  </div>
+                  {visible.length === 0 ? (
+                    <div className="scene-empty">
+                      <span>这个状态下暂无角色。切换筛选查看其他状态。</span>
+                    </div>
+                  ) : (
+                    <ActorCards
+                      actors={visible}
+                      prefs={prefs}
+                      selectedId={selectedId}
+                      onSelect={setSelectedId}
+                      onMove={moveSelection}
+                    />
+                  )}
+                  <Panel
+                    title="时间线"
+                    icon={Activity}
+                    meta="全程 · 按会话时钟"
+                    foot={
+                      <>
+                        <span>后台 bash 任务与 omp 内部队列不在会话文件中，舞台无法展示。</span>
+                        <span className="mono">{mmss(Math.max(0, (timeline.endMs - timeline.startMs) / 1000))}</span>
+                      </>
+                    }
+                  >
+                    <TimelineChart timeline={timeline} selectedId={selectedId} onSelect={setSelectedId} />
+                  </Panel>
                 </div>
-                <div className="stage-panel">
-                  <h2 className="stage-panel-head">活动流</h2>
-                  {selectedActor !== null ? (
-                    <details className="stage-agent-config" open>
-                      <summary>Agent 配置 · {agentKeyOf(selectedActor)}</summary>
-                      <AgentConfigPanel
-                        entryKey={agentKeyOf(selectedActor)}
-                        actor={selectedActor}
-                        catalog={catalog}
-                      />
-                    </details>
-                  ) : null}
-                  <ActivityFeed actors={stage.actors} selectedId={selectedId} onSelect={setSelectedId} />
-                </div>
+                {selectedActor !== null ? (
+                  <ActorAside actor={selectedActor} prefs={prefs} onDetail={() => setDetailOpen(true)} />
+                ) : null}
               </div>
+              <Panel title="活动流" icon={Terminal} meta={`全部角色 · ${stage.actors.length} 个`}>
+                {selectedActor !== null ? (
+                  <details className="stage-agent-config" open>
+                    <summary>Agent 配置 · {agentKeyOf(selectedActor)}</summary>
+                    <AgentConfigPanel
+                      entryKey={agentKeyOf(selectedActor)}
+                      actor={selectedActor}
+                      catalog={catalog}
+                    />
+                  </details>
+                ) : null}
+                <ActivityFeed actors={stage.actors} selectedId={null} onSelect={setSelectedId} />
+              </Panel>
             </>
           )}
           <p className="sr-only" aria-live="polite">{announce}</p>
@@ -360,6 +401,17 @@ export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSess
           onClose={() => setLibraryOpen(false)}
           catalog={catalog}
           stageAgents={stageAgents}
+          onManageAgents={onManageAgents}
+        />
+      ) : null}
+      {detailOpen && selectedActor !== null && stage !== null ? (
+        <StageDetailDialog
+          actor={selectedActor}
+          onClose={() => setDetailOpen(false)}
+          onOpenSession={() => {
+            setDetailOpen(false);
+            onOpenSession(stage.path);
+          }}
         />
       ) : null}
     </div>

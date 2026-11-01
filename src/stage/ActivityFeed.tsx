@@ -1,10 +1,8 @@
 /**
  * 活动流：所有角色的 `recent` 合并按时间降序取前 100；
- * 选中角色时只看它。顶部显示选中角色的详情条。
+ * 选中角色时只看它（详情见一旁的角色 aside）。
  */
-import { formatUsd } from "../format";
-import { compactNumber } from "../components/usageFormat";
-import { STATE_WORD } from "./stateWords";
+import type { ReactNode } from "react";
 import type { StageActor } from "../types";
 
 /** 活动流最多展示条数。 */
@@ -41,11 +39,31 @@ export function buildFeed(actors: StageActor[], selectedId: string | null): Feed
 
 function clock(iso: string): string {
   const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return "--:--:--";
+  if (!Number.isFinite(t)) return "--:--";
   const d = new Date(t);
-  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+  return [d.getHours(), d.getMinutes()]
     .map((n) => String(n).padStart(2, "0"))
     .join(":");
+}
+
+/**
+ * 行内 code pill：反引号片段转 code 元素（手写分词，禁止 dangerouslySetInnerHTML）。
+ * 未闭合的反引号按普通文本处理。
+ */
+export function feedTextNodes(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  const parts = text.split("`");
+  const closed = parts.length % 2 === 1;
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i % 2 === 1 && (closed || i < parts.length - 1)) {
+      out.push(<code key={i} className="stage-feed-code">{parts[i]}</code>);
+    } else if (i === parts.length - 1 && !closed) {
+      out.push(`\`${parts[i]}`);
+    } else if (parts[i] !== "") {
+      out.push(parts[i]);
+    }
+  }
+  return out;
 }
 
 export interface ActivityFeedProps {
@@ -56,23 +74,13 @@ export interface ActivityFeedProps {
 
 export function ActivityFeed({ actors, selectedId, onSelect }: ActivityFeedProps) {
   const rows = buildFeed(actors, selectedId);
-  const selected = selectedId === null ? null : actors.find((a) => a.id === selectedId) ?? null;
   return (
     <div className="stage-feed">
-      {selected !== null ? (
-        <div className="stage-feed-detail">
-          <strong>{selected.name}</strong>
-          <span>{STATE_WORD[selected.state]}</span>
-          <span className="stage-mono">{selected.model ?? "无模型信息"}</span>
-          <span className="stage-mono">上下文 {compactNumber(selected.contextTokens)}</span>
-          <span className="stage-mono">花费 {formatUsd(selected.cost)}</span>
-          <span className="stage-mono">工具 {selected.toolCalls}</span>
-        </div>
-      ) : (
+      {selectedId === null ? (
         <div className="stage-feed-detail">
           <span>全部角色 · {rows.length} 条活动</span>
         </div>
-      )}
+      ) : null}
       {rows.length === 0 ? (
         <p className="stage-empty-note">还没有活动记录。</p>
       ) : (
@@ -84,7 +92,7 @@ export function ActivityFeed({ actors, selectedId, onSelect }: ActivityFeedProps
                 <span className="stage-feed-name">{row.name}</span>
                 <span className="stage-feed-text">
                   {row.tool !== null ? <span className="stage-chip">{row.tool}</span> : null}
-                  {row.text}
+                  <span>{feedTextNodes(row.text)}</span>
                 </span>
               </button>
             </li>

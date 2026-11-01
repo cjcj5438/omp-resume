@@ -68,13 +68,23 @@ fn query_entries(
     pattern: Option<String>,
     limit: u32,
 ) -> rusqlite::Result<Vec<PromptHistoryEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, COALESCE(prompt, ''), cwd, session_id, created_at, COALESCE(use_count, 0) \
-         FROM history \
-         WHERE ?1 IS NULL OR prompt LIKE ?1 ESCAPE '\\' \
-         ORDER BY created_at DESC, id DESC \
-         LIMIT ?2",
-    )?;
+    // 首选：LEFT JOIN 会话标题 + cwd/title 搜索。老库缺 session_titles 表时 prepare
+    // 失败，回落到原 SQL（session_title 全 None，前端降级 session 短码）。
+    let join_sql = "SELECT h.id, COALESCE(h.prompt, ''), h.cwd, h.session_id, h.created_at, \
+        COALESCE(h.use_count, 0), t.title \
+        FROM history h LEFT JOIN session_titles t ON h.session_id = t.session_id \
+        WHERE ?1 IS NULL OR h.prompt LIKE ?1 ESCAPE '\\' OR h.cwd LIKE ?1 ESCAPE '\\' \
+        OR t.title LIKE ?1 ESCAPE '\\' \
+        ORDER BY h.created_at DESC, h.id DESC \
+        LIMIT ?2";
+    let plain_sql = "SELECT id, COALESCE(prompt, ''), cwd, session_id, created_at, \
+        COALESCE(use_count, 0) \
+        FROM history \
+        WHERE ?1 IS NULL OR prompt LIKE ?1 ESCAPE '\\' OR cwd LIKE ?1 ESCAPE '\\' \
+        ORDER BY created_at DESC, id DESC \
+        LIMIT ?2";
+    let use_join = conn.prepare(join_sql).is_ok();
+    let mut stmt = conn.prepare(if use_join { join_sql } else { plain_sql })?;
     let rows = stmt.query_map(params![pattern, limit], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -83,11 +93,13 @@ fn query_entries(
             row.get::<_, Option<String>>(3)?,
             row.get::<_, Option<i64>>(4)?,
             row.get::<_, i64>(5)?,
+            // JOIN 版第 7 列为标题；回落版无该列（get 失败 → None，与缺标题同义）。
+            row.get::<_, Option<String>>(6).unwrap_or(None),
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, prompt, cwd, session_id, created, use_count) = row?;
+        let (id, prompt, cwd, session_id, created, use_count, title) = row?;
         // 时间戳缺失或越界的行直接跳过（不影响其他行）。
         let Some(created_at) = created.and_then(iso_millis_utc) else {
             continue;
@@ -99,6 +111,7 @@ fn query_entries(
             session_id: non_empty(session_id),
             created_at,
             use_count,
+            session_title: non_empty(title),
         });
     }
     Ok(out)

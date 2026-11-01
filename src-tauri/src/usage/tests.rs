@@ -1596,9 +1596,9 @@ fn top_sessions_rank_by_cost_and_activity_is_dense_and_independent_of_range() {
     close(stats.top_sessions[1].cost, 1.0);
     assert_eq!(stats.top_sessions[0].cwd, "/my/project");
     assert!(stats.top_sessions[0].path.ends_with("f1.jsonl"));
-    assert_eq!(stats.activity.len(), 182);
-    assert_eq!(stats.activity[0].key, "2026-04-18");
-    assert_eq!(stats.activity[181].key, "2026-10-16");
+    assert_eq!(stats.activity.len(), 364);
+    assert_eq!(stats.activity[0].key, "2025-10-18");
+    assert_eq!(stats.activity[363].key, "2026-10-16");
     let old = stats
         .activity
         .iter()
@@ -1607,4 +1607,198 @@ fn top_sessions_rank_by_cost_and_activity_is_dense_and_independent_of_range() {
     close(old.cost, 5.0);
     let sum: f64 = stats.activity.iter().map(|p| p.cost).sum();
     close(sum, 9.0);
+}
+
+fn assistant_full(id: &str, cost: f64, ts_ms: i64, extra: serde_json::Value) -> serde_json::Value {
+    let mut v = assistant_at(id, cost, ts_ms);
+    for (k, val) in extra.as_object().unwrap() {
+        v["message"][k] = val.clone();
+    }
+    v
+}
+
+#[test]
+fn stats_reports_requests_hourly_prev_and_max_duration() {
+    let (tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    let f = dir.join("f.jsonl");
+    // 东八区：10-16 08:00Z = 本地 16:00；10-15 全天为 prev（today 窗口）。
+    file(
+        &f,
+        "f",
+        None,
+        &[
+            assistant_full(
+                "a",
+                1.0,
+                ms("2026-10-16T08:10:00Z"),
+                json!({"duration": 5000.0, "ttft": 1000.0}),
+            ),
+            assistant_full(
+                "b",
+                2.0,
+                ms("2026-10-16T08:20:00Z"),
+                json!({"duration": 9000.0}),
+            ),
+            assistant_at("prev-a", 4.0, ms("2026-10-15T08:00:00Z")),
+            background("bg-today", 1.0),
+        ],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::Today,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    assert_eq!(stats.requests, 3);
+    assert_eq!(stats.hourly.iter().sum::<u64>(), 3);
+    assert_eq!(stats.hourly[16], 2);
+    assert_eq!(stats.hourly[8], 1);
+    assert_eq!(stats.timing.max_duration_ms, Some(9000));
+    let prev = stats.prev.expect("today 应有上一窗口");
+    close(prev.cost, 4.0);
+    assert_eq!(prev.requests, 1);
+    // all 无上一周期。
+    let all = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::All,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    assert!(all.prev.is_none());
+    let _ = tmp;
+}
+
+#[test]
+fn activity_reports_requests_and_top_project() {
+    let (tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    // 同一 owner cwd 下两文件：各自 cost 不同，top 归属应为该 cwd（单项目场景）。
+    file(
+        &dir.join("a.jsonl"),
+        "a",
+        None,
+        &[assistant_at("a1", 3.0, ms("2026-10-16T01:00:00Z"))],
+    );
+    file(
+        &dir.join("b.jsonl"),
+        "b",
+        None,
+        &[assistant_at("b1", 0.0, ms("2026-10-16T02:00:00Z"))],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let stats = stats_at(
+        &cfg,
+        &cache,
+        UsageRange::Today,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    let today = stats
+        .activity
+        .iter()
+        .find(|p| p.key == "2026-10-16")
+        .unwrap();
+    assert_eq!(today.requests, 2);
+    assert_eq!(today.top_project.as_deref(), Some("/my/project"));
+    let zero = stats
+        .activity
+        .iter()
+        .find(|p| p.key == "2026-10-14")
+        .unwrap();
+    assert_eq!(zero.requests, 0);
+    assert_eq!(zero.top_project, None);
+    let _ = tmp;
+}
+
+#[test]
+fn health_reports_retry_text_and_latency_percentiles() {
+    use super::health::retry_text;
+    use super::parse::Retry;
+    assert_eq!(
+        retry_text(Some(&Retry {
+            kind: "auto-retry".into(),
+            status: "recovered".into(),
+            attempt: 1
+        }))
+        .as_deref(),
+        Some("已重试恢复")
+    );
+    assert_eq!(
+        retry_text(Some(&Retry {
+            kind: "auto-retry".into(),
+            status: "recovered".into(),
+            attempt: 3
+        }))
+        .as_deref(),
+        Some("重试 3 次后恢复")
+    );
+    assert_eq!(
+        retry_text(Some(&Retry {
+            kind: "auto-retry".into(),
+            status: "superseded".into(),
+            attempt: 1
+        }))
+        .as_deref(),
+        Some("被新请求取代")
+    );
+    assert_eq!(retry_text(None), None);
+
+    let (tmp, cfg, cache) = setup();
+    let dir = cfg.sessions_dir.join("project");
+    let f = dir.join("f.jsonl");
+    file(
+        &f,
+        "f",
+        None,
+        &[
+            assistant_err("e1", ms("2026-10-16T01:00:00Z"), "error", "timed out"),
+            assistant_full(
+                "e2",
+                0.0,
+                ms("2026-10-16T02:00:00Z"),
+                json!({"stopReason":"error","errorMessage":"boom","duration": 4000.0,
+                    "retryRecovery":{"kind":"auto-retry","status":"recovered","attempt":2}}),
+            ),
+            assistant_full(
+                "ok",
+                0.0,
+                ms("2026-10-16T03:00:00Z"),
+                json!({"duration": 1000.0}),
+            ),
+        ],
+    );
+    let east = FixedOffset::east_opt(8 * 3600).unwrap();
+    let health = health_at(
+        &cfg,
+        &cache,
+        UsageRange::Today,
+        now("2026-10-16T12:00:00Z"),
+        &east,
+    )
+    .unwrap();
+    assert_eq!(health.errors.total, 2);
+    let e2 = health
+        .errors
+        .recent
+        .iter()
+        .find(|e| e.time == ms("2026-10-16T02:00:00Z"))
+        .unwrap();
+    assert_eq!(e2.retry.as_deref(), Some("重试 2 次后恢复"));
+    let e1 = health
+        .errors
+        .recent
+        .iter()
+        .find(|e| e.time == ms("2026-10-16T01:00:00Z"))
+        .unwrap();
+    assert_eq!(e1.retry, None);
+    let lat = health.latency_ms.expect("应有延迟样本");
+    assert_eq!((lat.p50, lat.p95), (1000, 4000));
+    let _ = tmp;
 }

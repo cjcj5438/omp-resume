@@ -272,7 +272,7 @@ pub fn build_stage(
 
     // ---- 主会话角色 ----
     let main_status = running.map(|r| r.status.clone());
-    let (main_state, main_text) = derive_state(&DeriveInput {
+    let (main_state, main_text, main_prov) = derive_state(&DeriveInput {
         kind: StageActorKind::Main,
         file_exists: true,
         parent_in_use,
@@ -294,6 +294,7 @@ pub fn build_stage(
         model: main_tail.model.clone(),
         context_tokens: main_tail.context_tokens,
         cost: main_tail.cost,
+        provenance: main_prov,
         tool_calls: main_tail.tool_calls,
         current: current_of(&main_tail, main_state, main_state != StageActorState::Done),
         recent: recent_of(&main_tail),
@@ -315,7 +316,7 @@ pub fn build_stage(
         if discovered.iter().any(|d| d.id == file || d.id == *name) {
             continue;
         }
-        let (state, text) = derive_state(&DeriveInput {
+        let (state, text, prov) = derive_state(&DeriveInput {
             kind: StageActorKind::Worker,
             file_exists: false,
             parent_in_use,
@@ -339,6 +340,7 @@ pub fn build_stage(
             model: None,
             context_tokens: 0,
             cost: 0.0,
+            provenance: prov,
             tool_calls: 0,
             current: None,
             recent: Vec::new(),
@@ -421,7 +423,7 @@ fn build_actor(
     let parent_id = (d.depth >= 1)
         .then(|| d.id.rsplit_once('/').map(|(p, _)| p.to_string()))
         .flatten();
-    let (state, text) = derive_state(&DeriveInput {
+    let (state, text, prov) = derive_state(&DeriveInput {
         kind,
         file_exists: true,
         parent_in_use,
@@ -460,6 +462,7 @@ fn build_actor(
         model: tail.model.clone(),
         context_tokens: tail.context_tokens,
         cost: tail.cost,
+        provenance: prov,
         tool_calls: tail.tool_calls,
         current: current_of(
             tail,

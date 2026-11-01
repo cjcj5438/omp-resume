@@ -156,6 +156,61 @@ where
     }
 }
 
+/// 等长上一窗口（CONTRACT §12.1，与 `window_at` 同一次 now 语义）：
+/// today→昨天（本地自然日）；24h→前 24 整点桶；7d/30d→前 7/30 个自然日；all→None。
+/// 闭区间 [prev_start, window.start − 1ms]：上界取当前窗口起点减 1 毫秒，
+/// 保证边界条目不双计（当前窗口起点为 [起点, now] 闭区间的下界）。
+pub(super) fn prev_window_at<Tz: TimeZone>(
+    range: UsageRange,
+    window: &Window,
+    now: DateTime<Utc>,
+    timezone: &Tz,
+) -> Option<Window>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let start = window.start_ms?;
+    match range {
+        UsageRange::Today => {
+            let local = now.with_timezone(timezone);
+            let yesterday = local
+                .date_naive()
+                .checked_sub_signed(Duration::days(1))
+                .expect("日期回退恒合法");
+            let midnight = yesterday.and_hms_opt(0, 0, 0).expect("午夜恒合法");
+            Some(Window {
+                start_ms: Some(resolve_start_ms(
+                    timezone,
+                    &midnight,
+                    start - Duration::days(1).num_milliseconds(),
+                )),
+                end_ms: Some(start - 1),
+                unit: TrendUnit::Hour,
+                keys: Vec::new(),
+            })
+        }
+        UsageRange::Last24Hours => Some(Window {
+            start_ms: Some(start - Duration::hours(24).num_milliseconds()),
+            end_ms: Some(start - 1),
+            unit: TrendUnit::Hour,
+            keys: Vec::new(),
+        }),
+        UsageRange::Last7Days => Some(Window {
+            start_ms: Some(start - Duration::days(7).num_milliseconds()),
+            end_ms: Some(start - 1),
+            unit: TrendUnit::Day,
+            keys: Vec::new(),
+        }),
+        UsageRange::Last30Days => Some(Window {
+            start_ms: Some(start - Duration::days(30).num_milliseconds()),
+            end_ms: Some(start - 1),
+            unit: TrendUnit::Day,
+            keys: Vec::new(),
+        }),
+        UsageRange::All => None,
+    }
+}
+
 /// 窗口过滤：无时间戳条目只进入 all（带窗口统计无法安置它们）；
 /// 固定窗口上下界为 [起点, now]（起点恒为 Some，见 resolve_start_ms，此处 None 分支只服务 All），
 /// 未来时间戳不计入（保证分桶合计恒等于总计）。

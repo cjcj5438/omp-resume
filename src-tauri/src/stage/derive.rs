@@ -34,19 +34,37 @@ pub struct DeriveInput {
 }
 
 /// `Kind` 的便捷构造：main 角色的默认输入。
-/// 判定状态 + 人话说明。
-pub fn derive_state(i: &DeriveInput) -> (StageActorState, Option<String>) {
+/// 判定状态 + 人话说明 + 状态来源分支标签（CONTRACT §23.3）。
+/// provenance 语义：判定命中的依据分支；运行中默认分支为 None
+/// （调用方落 `StageActor.provenance`，None 表尾部扫描未见终态）。
+pub fn derive_state(i: &DeriveInput) -> (StageActorState, Option<String>, Option<String>) {
     // 1) 主会话：状态直接来自轮询器（菜单栏同一口径）。
     if i.kind == StageActorKind::Main {
         if !i.parent_in_use {
-            return (StageActorState::Done, Some("已结束".to_string()));
+            return (
+                StageActorState::Done,
+                Some("已结束".to_string()),
+                Some("tray: not in use".to_string()),
+            );
         }
         return match i.main_status.as_deref() {
-            Some("waiting") => (StageActorState::Idle, Some("等待输入".to_string())),
-            Some("idle") => (StageActorState::Idle, Some("空闲".to_string())),
-            Some("stuck") => (StageActorState::Failed, Some("疑似卡住".to_string())),
+            Some("waiting") => (
+                StageActorState::Idle,
+                Some("等待输入".to_string()),
+                Some("tray: waiting".to_string()),
+            ),
+            Some("idle") => (
+                StageActorState::Idle,
+                Some("空闲".to_string()),
+                Some("tray: idle".to_string()),
+            ),
+            Some("stuck") => (
+                StageActorState::Failed,
+                Some("可能卡住".to_string()),
+                Some("tray: stuck".to_string()),
+            ),
             // working 或轮询器尚未见到：按运行中处理（stage 数据比菜单栏新）。
-            _ => (StageActorState::Running, None),
+            _ => (StageActorState::Running, None, None),
         };
     }
 
@@ -61,38 +79,67 @@ pub fn derive_state(i: &DeriveInput) -> (StageActorState, Option<String>) {
                         .clone()
                         .unwrap_or_else(|| "异常退出".to_string()),
                 ),
+                Some(format!(
+                    "session_exit:{} + lifecycle:{action}",
+                    i.exit_kind.as_deref().unwrap_or("?")
+                )),
             );
         }
         // 文件里已经写过正常退出：worker 会话进程已终结，就是完成
         // （lifecycle 的 turn-settled 可能还没落盘）。
         if i.exit_kind.as_deref() == Some("normal") {
-            return (StageActorState::Done, Some("已结束".to_string()));
+            return (
+                StageActorState::Done,
+                Some("已结束".to_string()),
+                Some(format!("session_exit:normal + lifecycle:{action}")),
+            );
         }
         return match action {
-            "spawn" => (StageActorState::Queued, None),
+            "spawn" => (
+                StageActorState::Queued,
+                None,
+                Some("spawn + lifecycle".to_string()),
+            ),
             "turn-started" => {
                 if i.parent_in_use {
-                    (StageActorState::Running, None)
+                    (StageActorState::Running, None, None)
                 } else {
-                    (StageActorState::Lost, Some("会话已退出".to_string()))
+                    (
+                        StageActorState::Lost,
+                        Some("会话已退出".to_string()),
+                        Some("lifecycle:turn-started, parent gone".to_string()),
+                    )
                 }
             }
-            "turn-settled" => (StageActorState::Idle, Some("待命".to_string())),
-            _ => (StageActorState::Running, None),
+            "turn-settled" => (
+                StageActorState::Idle,
+                Some("待命".to_string()),
+                Some("lifecycle:turn-settled".to_string()),
+            ),
+            _ => (StageActorState::Running, None, None),
         };
     }
 
     // 3) 子代理 / advisor：文件 + 退出记录 + 父会话是否还在。
     if !i.file_exists {
-        return (StageActorState::Queued, None);
+        return (
+            StageActorState::Queued,
+            None,
+            Some("spawn, file missing".to_string()),
+        );
     }
     if let Some(kind) = i.exit_kind.as_deref() {
         if kind == "normal" {
-            return (StageActorState::Done, Some("已结束".to_string()));
+            return (
+                StageActorState::Done,
+                Some("已结束".to_string()),
+                Some("session_exit:normal".to_string()),
+            );
         }
         return (
             StageActorState::Failed,
             Some(i.exit_reason.clone().unwrap_or_else(|| kind.to_string())),
+            Some(format!("session_exit:{kind}")),
         );
     }
     // 父会话不在用，且子代理自己已经干净收尾（无未配对工具、最后一条 assistant 已
@@ -103,17 +150,33 @@ pub fn derive_state(i: &DeriveInput) -> (StageActorState, Option<String>) {
     // 例外：advisor 被重置（`aborted`）是正常机制，按完成处理。
     if i.pending_tools == 0 && matches!(stop, Some("error") | Some("aborted")) {
         if i.kind == StageActorKind::Advisor && stop == Some("aborted") {
-            return (StageActorState::Done, Some("已结束".to_string()));
+            return (
+                StageActorState::Done,
+                Some("已结束".to_string()),
+                Some("tail: advisor aborted".to_string()),
+            );
         }
-        return (StageActorState::Failed, i.last_assistant_stop.clone());
+        return (
+            StageActorState::Failed,
+            i.last_assistant_stop.clone(),
+            Some(format!("tail: last assistant {}", stop.unwrap_or("?"))),
+        );
     }
     if !i.parent_in_use {
         let clean =
             i.pending_tools == 0 && matches!(i.last_assistant_stop.as_deref(), None | Some("stop"));
         if clean {
-            return (StageActorState::Done, Some("已结束".to_string()));
+            return (
+                StageActorState::Done,
+                Some("已结束".to_string()),
+                Some("parent gone, clean tail".to_string()),
+            );
         }
-        return (StageActorState::Lost, Some("会话已退出".to_string()));
+        return (
+            StageActorState::Lost,
+            Some("会话已退出".to_string()),
+            Some("parent gone, dirty tail".to_string()),
+        );
     }
     // 无 exit 但最后一条 assistant 已收尾且无未配对工具：静默足够久即视为完成。
     if i.pending_tools == 0
@@ -121,9 +184,13 @@ pub fn derive_state(i: &DeriveInput) -> (StageActorState, Option<String>) {
         && i.last_at_secs
             .is_some_and(|last| i.now_secs.saturating_sub(last) > ORPHAN_DONE_SECS)
     {
-        return (StageActorState::Done, Some("已结束".to_string()));
+        return (
+            StageActorState::Done,
+            Some("已结束".to_string()),
+            Some("tail: quiet past threshold".to_string()),
+        );
     }
-    (StageActorState::Running, None)
+    (StageActorState::Running, None, None)
 }
 
 impl Default for DeriveInput {

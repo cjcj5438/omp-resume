@@ -368,18 +368,16 @@ fn derive_main_states() {
         ("working", StageActorState::Running, None),
         ("waiting", StageActorState::Idle, Some("等待输入")),
         ("idle", StageActorState::Idle, Some("空闲")),
-        ("stuck", StageActorState::Failed, Some("疑似卡住")),
+        ("stuck", StageActorState::Failed, Some("可能卡住")),
     ] {
         i.main_status = Some(status.to_string());
-        let (state, note) = derive_state(&i);
+        let (state, note, _) = derive_state(&i);
         assert_eq!(state, expect, "status={status}");
         assert_eq!(note.as_deref(), text, "status={status}");
     }
     i.parent_in_use = false;
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Done, Some("已结束".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Done, Some("已结束".into())));
 }
 
 #[test]
@@ -390,23 +388,17 @@ fn derive_worker_lifecycle_states() {
     i.lifecycle_action = Some("turn-started".into());
     assert_eq!(derive_state(&i).0, StageActorState::Running);
     i.parent_in_use = false;
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Lost, Some("会话已退出".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Lost, Some("会话已退出".into())));
     i.parent_in_use = true;
     i.lifecycle_action = Some("turn-settled".into());
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Idle, Some("待命".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Idle, Some("待命".into())));
     // 异常退出优先于 lifecycle。
     i.exit_kind = Some("signal".into());
     i.exit_reason = Some("sighup".into());
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Failed, Some("sighup".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Failed, Some("sighup".into())));
 }
 
 #[test]
@@ -418,33 +410,25 @@ fn derive_subagent_states() {
     assert_eq!(derive_state(&i).0, StageActorState::Running);
 
     i.exit_kind = Some("normal".into());
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Done, Some("已结束".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Done, Some("已结束".into())));
     i.exit_kind = Some("crash".into());
     i.exit_reason = Some("panic".into());
-    assert_eq!(
-        derive_state(&i),
-        (StageActorState::Failed, Some("panic".into()))
-    );
+    let (st, nt, _) = derive_state(&i);
+    assert_eq!((st, nt), (StageActorState::Failed, Some("panic".into())));
 
     // 无 exit + 父会话已退出：未收尾（有未配对工具）→ Lost。
     let mut j = base(StageActorKind::Subagent);
     j.parent_in_use = false;
     j.pending_tools = 1;
-    assert_eq!(
-        derive_state(&j),
-        (StageActorState::Lost, Some("会话已退出".into()))
-    );
+    let (st, nt, _) = derive_state(&j);
+    assert_eq!((st, nt), (StageActorState::Lost, Some("会话已退出".into())));
     // 已干净收尾（无未配对工具、最后 stop）→ Done（真实 advisor 常缺 session_exit）。
     let mut clean = base(StageActorKind::Subagent);
     clean.parent_in_use = false;
     clean.last_assistant_stop = Some("stop".into());
-    assert_eq!(
-        derive_state(&clean),
-        (StageActorState::Done, Some("已结束".into()))
-    );
+    let (st, nt, _) = derive_state(&clean);
+    assert_eq!((st, nt), (StageActorState::Done, Some("已结束".into())));
 
     // 无 exit，已收尾且静默超阈值 → Done。
     let mut k = base(StageActorKind::Subagent);
@@ -458,36 +442,26 @@ fn derive_subagent_states() {
     // 无 exit，最后一条 assistant 报错且无未配对工具 → Failed。
     let mut m = base(StageActorKind::Subagent);
     m.last_assistant_stop = Some("error".into());
-    assert_eq!(
-        derive_state(&m),
-        (StageActorState::Failed, Some("error".into()))
-    );
+    let (st, nt, _) = derive_state(&m);
+    assert_eq!((st, nt), (StageActorState::Failed, Some("error".into())));
     // 父会话不在用也照样是失败（终态不随父会话变化）。
     m.parent_in_use = false;
-    assert_eq!(
-        derive_state(&m),
-        (StageActorState::Failed, Some("error".into()))
-    );
+    let (st, nt, _) = derive_state(&m);
+    assert_eq!((st, nt), (StageActorState::Failed, Some("error".into())));
     // 子代理被中止：失败。
     let mut aborted = base(StageActorKind::Subagent);
     aborted.parent_in_use = false;
     aborted.last_assistant_stop = Some("aborted".into());
-    assert_eq!(
-        derive_state(&aborted),
-        (StageActorState::Failed, Some("aborted".into()))
-    );
+    let (st, nt, _) = derive_state(&aborted);
+    assert_eq!((st, nt), (StageActorState::Failed, Some("aborted".into())));
     // advisor 被重置（aborted）是正常机制：无论父会话在不在用都算完成。
     let mut advisor = base(StageActorKind::Advisor);
     advisor.last_assistant_stop = Some("aborted".into());
-    assert_eq!(
-        derive_state(&advisor),
-        (StageActorState::Done, Some("已结束".into()))
-    );
+    let (st, nt, _) = derive_state(&advisor);
+    assert_eq!((st, nt), (StageActorState::Done, Some("已结束".into())));
     advisor.parent_in_use = false;
-    assert_eq!(
-        derive_state(&advisor),
-        (StageActorState::Done, Some("已结束".into()))
-    );
+    let (st, nt, _) = derive_state(&advisor);
+    assert_eq!((st, nt), (StageActorState::Done, Some("已结束".into())));
     m.pending_tools = 1;
     m.parent_in_use = true;
     assert_eq!(derive_state(&m).0, StageActorState::Running);

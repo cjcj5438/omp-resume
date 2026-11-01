@@ -28,8 +28,12 @@ export function TimelineChart({ timeline, selectedId, onSelect }: TimelineProps)
       viewBox={`0 0 ${width} ${height}`}
       role="img"
       aria-label="角色时间线"
-      preserveAspectRatio="xMinYMin meet"
     >
+      <defs>
+        <clipPath id="stage-tl-name-clip">
+          <rect x={0} y={0} width={NAME_W - 6} height={height} />
+        </clipPath>
+      </defs>
       {timeline.ticks.map((tick, i) => (
         <g key={tick.ms}>
           <line
@@ -63,7 +67,8 @@ export function TimelineChart({ timeline, selectedId, onSelect }: TimelineProps)
             aria-label={`${row.name} 时间线`}
           >
             <rect x={0} y={y} width={width} height={ROW_H} className="stage-tl-hover" />
-            <text x={row.depth === 0 ? 2 : 12} y={y + 11} className="stage-tl-name">
+            <text x={row.depth === 0 ? 2 : 12} y={y + 11} className="stage-tl-name" clipPath="url(#stage-tl-name-clip)">
+              <title>{row.name}</title>
               {row.name}
             </text>
             {row.bars.map((bar, bi) => {

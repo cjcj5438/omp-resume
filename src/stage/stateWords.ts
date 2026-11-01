@@ -4,8 +4,8 @@ import type { StageActorState } from "../types";
 export const STATE_WORD: Record<StageActorState, string> = {
   queued: "排队中",
   running: "运行中",
-  idle: "待命",
-  done: "已完成",
+  idle: "空闲",
+  done: "完成",
   failed: "失败",
   lost: "失联",
 };

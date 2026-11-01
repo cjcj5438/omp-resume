@@ -1,0 +1,144 @@
+/* 提示词历史（设计稿 hist-row，还原 views-insight.js:482-496 + styles.css:785-789）。 */
+
+.ph-view {
+  min-height: 0;
+}
+
+.ph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.ph-seg-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.ph-seg-scroll .seg {
+  width: max-content;
+  max-width: 100%;
+}
+
+.ph-match {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ph-body {
+  min-height: 0;
+}
+
+.ph-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hist-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 78px 22px;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* 窄屏（设计稿 styles.css:1474-1475）：时间/项目列收起，只留内容 + 前进键。 */
+@media (max-width: 1120px) {
+  .hist-row { grid-template-columns: minmax(0, 1fr) 22px; }
+  .hist-row .hist-when, .hist-row .hist-proj { display: none; }
+}
+
+.hist-row:last-child {
+  border-bottom: 0;
+}
+
+.hist-row:hover {
+  background: var(--bg-inset);
+}
+
+.hist-row.is-click {
+  cursor: pointer;
+}
+
+.hist-main {
+  min-width: 0;
+}
+
+.hist-prompt {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.hist-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 3px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hist-when {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hist-proj {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hist-proj .badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hist-fwd {
+  color: var(--text-faint);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* hover 快捷动作：平时隐藏，行 hover/聚焦时浮在右端（不占 grid 列）。 */
+.hist-hover {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.hist-row:hover .hist-hover,
+.hist-row:focus-within .hist-hover {
+  display: inline-flex;
+}
+
+.hist-icon {
+  padding: 4px;
+  min-width: 0;
+}

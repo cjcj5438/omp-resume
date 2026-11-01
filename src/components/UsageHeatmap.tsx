@@ -1,90 +1,136 @@
-import { Fragment } from "react";
-import type { CSSProperties } from "react";
-import type { UsageTrendPoint } from "../types";
+import type { UsageActivityPoint } from "../types";
 import { usageMoney, usageNumber } from "../format";
-import { heatGrid, heatLevels, type HeatMetric } from "./usageFormat";
+import { compactNumber, type HeatMetric } from "./usageFormat";
+import "./Usage.css";
 
-/** 格子边长上限 18px：行宽富余时整组居中，网格与汇总作为整体左右均分空间。 */
-const HEAT_CELL_MAX = 18;
-/** 与 .heat-grid 的 gap / 标签列宽保持同步（wrap 的 max-width 由此算出）。 */
-const HEAT_GAP = 3;
-const HEAT_LABEL_COL = 18;
+const WEEKDAY_LABELS = ["一", "", "三", "", "五", "", "日"] as const;
 
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"] as const;
+interface HeatCellDay {
+  key: string;
+  month: number;
+  isoDow: number;
+  requests: number;
+  tokens: number;
+  cost: number;
+}
 
-interface UsageHeatmapProps {
-  days: UsageTrendPoint[];
+function parseDay(key: string): { month: number; isoDow: number } {
+  const [y, m, day] = key.slice(0, 10).split("-").map(Number);
+  const d = new Date(y, m - 1, day);
+  return { month: d.getMonth() + 1, isoDow: (d.getDay() + 6) % 7 };
+}
+
+const heatValue = (d: HeatCellDay, metric: HeatMetric): number =>
+  metric === "tokens" ? d.tokens : metric === "cost" ? d.cost : d.requests;
+
+export function heatTextOf(day: { requests: number; tokens: number; cost: number }, metric: HeatMetric): string {
+  if (metric === "tokens") return compactNumber(day.tokens);
+  if (metric === "cost") return usageMoney(day.cost);
+  return day.requests.toLocaleString("zh-CN");
+}
+
+/**
+ * 活动热力图（设计稿形态）：13px 格 / 5 级 color-mix 实色 / 52 周横向滚动 /
+ * 月份 8.5px mono / 星期隔行 / 选中 inset 环 / 底部 scale。
+ * 列按周一切分：activity 是连续日序列，第一天所在列的前缀空格 + 未来日虚线。
+ */
+export function UsageHeatmap({
+  days,
+  metric,
+  selectedKey,
+  onSelect,
+}: {
+  days: UsageActivityPoint[];
   metric: HeatMetric;
   selectedKey: string | null;
   onSelect: (key: string) => void;
-}
-
-export function UsageHeatmap({ days, metric, selectedKey, onSelect }: UsageHeatmapProps) {
-  const values = days.map((d) => (metric === "cost" ? d.cost : d.tokens.total));
-  const levels = heatLevels(values);
-  const cols = heatGrid(days.map((d, i) => ({ key: d.key, cost: d.cost, tokens: d.tokens.total, level: levels[i] })));
-  const active = days.filter((d) => d.cost > 0).length;
-  const monthOf = cols.map((col) => {
-    const first = col.find((c) => c !== null);
-    return first ? Number(first.key.slice(5, 7)) : 0;
+}) {
+  const cells: HeatCellDay[] = days.map((d) => {
+    const { month, isoDow } = parseDay(d.key);
+    return { key: d.key, month, isoDow, requests: d.requests, tokens: d.tokens.total, cost: d.cost };
   });
-  // 月标签落在该月首列；若相邻两列同为月首只留前者，避免标签重叠。
-  const rawShow = monthOf.map((m, ci) => m !== 0 && (ci === 0 || m !== monthOf[ci - 1]));
-  const showMonth = rawShow.map((s, ci) => s && (ci === 0 || !rawShow[ci - 1]));
-  // 月标签 / 星期 / 格子共用同一套 grid 轨道：标签即普通格子项，按列对齐，缩放永不漂移。
-  const gridStyle: CSSProperties = {
-    gridTemplateColumns: `${HEAT_LABEL_COL}px repeat(${cols.length}, minmax(10px, 1fr))`,
-  };
-  const wrapStyle: CSSProperties = {
-    maxWidth: HEAT_LABEL_COL + HEAT_GAP + cols.length * HEAT_CELL_MAX + Math.max(0, cols.length - 1) * HEAT_GAP,
-  };
+  // 今天：取序列最后一天（后端保证 activity 末键为今天）。
+  const lastKey = cells.length > 0 ? cells[cells.length - 1].key : "";
+  const max = Math.max(1, ...cells.map((d) => heatValue(d, metric)));
+  const levelOf = (d: HeatCellDay): number =>
+    d.requests > 0 ? 1 + Math.min(3, Math.floor((heatValue(d, metric) / max) * 4)) : 0;
+  // 周列：第一列前面补空格（周一为行 0）。
+  const lead = cells.length > 0 ? cells[0].isoDow : 0;
+  const slots: (HeatCellDay | null)[] = [...Array<null>(lead).fill(null), ...cells];
+  while (slots.length % 7 !== 0) slots.push(null);
+  const cols: (HeatCellDay | null)[][] = [];
+  for (let c = 0; c < slots.length; c += 7) cols.push(slots.slice(c, c + 7));
+  const monthAt = cols.map((col) => {
+    const first = col.find((c) => c !== null);
+    return first ? first.month : 0;
+  });
+  // 月标签：该月首列展示，后续同月列合并 span。
+  const monthLabels: { col: number; label: string; span: number }[] = [];
+  monthAt.forEach((m, i) => {
+    if (m === 0) return;
+    const last = monthLabels[monthLabels.length - 1];
+    if (last && monthAt[last.col] === m && last.col + last.span === i) last.span += 1;
+    else monthLabels.push({ col: i, label: `${m} 月`, span: 1 });
+  });
+  const active = cells.filter((d) => d.requests > 0).length;
+  const metricName = metric === "tokens" ? "Token" : metric === "cost" ? "成本" : "请求";
   return (
-    <div className="heat-wrap" style={wrapStyle}>
-      <div className="heat-grid" style={gridStyle} role="group" aria-label={`活跃度热力图：近 26 周，${active} 天有用量`}>
-        <span className="heat-corner" aria-hidden="true" />
-        {cols.map((_, ci) => (
-          <span key={`m-${ci}`} className="heat-month" aria-hidden="true">{showMonth[ci] ? `${monthOf[ci]}月` : null}</span>
-        ))}
-        {WEEKDAYS.map((label, ri) => (
-          <Fragment key={`w-${ri}`}>
-            <span className="heat-weekday" aria-hidden="true">{label}</span>
-            {cols.map((col, ci) => {
-              const cell = col[ri];
-              if (cell === null) {
-                return <span key={`${ci}-${ri}`} className="heat-empty" aria-hidden="true" />;
-              }
-              const valueText = metric === "cost" ? `花费 ${usageMoney(cell.cost)}` : `Token ${usageNumber(cell.tokens)}`;
-              return (
-                <button
-                  key={`${ci}-${ri}`}
-                  type="button"
-                  className="heat-cell"
-                  data-level={cell.level}
-                  aria-pressed={cell.key === selectedKey}
-                  aria-label={`${cell.key} ${cell.level === 0 ? "无用量" : valueText}`}
-                  data-tip={cell.level === 0 ? `${cell.key}\n无用量` : `${cell.key}\n花费 ${usageMoney(cell.cost)} · Token ${usageNumber(cell.tokens)}`}
-                  onClick={() => onSelect(cell.key)}
-                />
-              );
-            })}
-          </Fragment>
-        ))}
-      </div>
-      <div className="heat-foot">
-        <HeatLegend />
+    <div className="heat-scroll">
+      <div className="heat-inner" style={{ ["--weeks" as string]: cols.length }}>
+        <div className="heat-months" aria-hidden="true">
+          {monthLabels.map((m) => (
+            <span key={m.col} className="heat-month" style={{ gridColumn: `${m.col + 1} / span ${m.span}` }}>
+              {m.label}
+            </span>
+          ))}
+        </div>
+        <div className="heat-body">
+          <div className="heat-days" aria-hidden="true">
+            {WEEKDAY_LABELS.map((d, i) => (
+              <span key={i}>{d}</span>
+            ))}
+          </div>
+          <div className="heat-grid" role="group" aria-label={`活跃度热力图：近 52 周，${active} 天有请求，按${metricName}着色`}>
+            {cols.map((col, ci) =>
+              col.map((cell, ri) => {
+                if (cell === null) {
+                  return <span key={`${ci}-${ri}`} className="heat-empty" aria-hidden="true" />;
+                }
+                const future = cell.key > lastKey;
+                const lv = levelOf(cell);
+                const label = `${cell.month} 月 ${Number(cell.key.slice(8, 10))} 日 · ${cell.requests} 次请求 · ${compactNumber(cell.tokens)} token · ${usageMoney(cell.cost)}`;
+                return (
+                  <button
+                    key={`${ci}-${ri}`}
+                    type="button"
+                    className={`heat-cell${lv > 0 ? ` l${lv}` : ""}${future ? " is-future" : ""}${cell.key === selectedKey ? " is-on" : ""}`}
+                    disabled={future}
+                    aria-pressed={cell.key === selectedKey}
+                    aria-label={`${cell.key} ${lv === 0 ? "无请求" : label}`}
+                    data-tip={lv === 0 && !future ? `${cell.key}\n无请求` : `${cell.key}\n请求 ${usageNumber(cell.requests)} 次 · Token ${usageNumber(cell.tokens)} · 花费 ${usageMoney(cell.cost)}`}
+                    tabIndex={cell.key === selectedKey && !future ? 0 : -1}
+                    onClick={() => onSelect(cell.key)}
+                  />
+                );
+              }),
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/** 热力等级图例（0–4）：置于热力图下方，与网格右对齐（GitHub 式）。 */
-export function HeatLegend() {
+/** 热力等级 scale（少 → 多），放 heat-foot 右侧。 */
+export function HeatScale() {
   return (
-    <span className="heat-legend" aria-hidden="true">
+    <span className="heat-scale" aria-hidden="true">
       <span>少</span>
-      {[0, 1, 2, 3, 4].map((l) => (
-        <span key={l} className="heat-cell heat-swatch" data-level={l} />
-      ))}
+      <i />
+      <i className="l1" />
+      <i className="l2" />
+      <i className="l3" />
+      <i className="l4" />
       <span>多</span>
     </span>
   );

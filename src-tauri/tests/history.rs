@@ -14,6 +14,11 @@ CREATE TABLE history (
     session_id TEXT,
     use_count INTEGER
 );
+CREATE TABLE session_titles (
+    session_id TEXT PRIMARY KEY,
+    title TEXT,
+    updated_at INTEGER
+);
 CREATE TABLE session_recaps (
     id INTEGER PRIMARY KEY,
     session_id TEXT,
@@ -177,6 +182,50 @@ fn entry_fields_are_mapped() {
     assert_eq!(got[1].session_id.as_deref(), Some("sess-1"));
     assert_eq!(got[1].created_at, "2023-11-14T22:13:20.000Z");
     assert_eq!(got[1].use_count, 1);
+}
+
+fn add_title(db: &Path, sid: &str, title: &str) {
+    let conn = Connection::open(db).unwrap();
+    conn.execute(
+        "INSERT INTO session_titles (session_id, title, updated_at) VALUES (?1, ?2, 1)",
+        params![sid, title],
+    )
+    .unwrap();
+}
+
+#[test]
+fn join_returns_title_and_search_matches_cwd_and_title() {
+    let t = tempfile::tempdir().unwrap();
+    let db = make_db(t.path());
+    add_prompt(&db, 1, "fix bug", 100, Some("/my/proj"), Some("s1"));
+    add_prompt(&db, 2, "other", 200, Some("/else"), Some("s2"));
+    add_title(&db, "s1", "登录页重构");
+    let got = search_prompts(&db, None, 10);
+    assert_eq!(got[0].session_title, None);
+    assert_eq!(got[1].session_title.as_deref(), Some("登录页重构"));
+    // 搜 cwd 子串 / 标题子串都能命中。
+    assert_eq!(prompts(&db, Some("/my/")), ["fix bug"]);
+    assert_eq!(prompts(&db, Some("登录页")), ["fix bug"]);
+}
+
+#[test]
+fn missing_titles_table_falls_back_to_rows_without_title() {
+    let t = tempfile::tempdir().unwrap();
+    let db = t.path().join("history.db");
+    Connection::open(&db)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE history (id INTEGER PRIMARY KEY, prompt TEXT UNIQUE, \
+             created_at INTEGER, cwd TEXT, session_id TEXT, use_count INTEGER);",
+        )
+        .unwrap();
+    add_prompt(&db, 1, "plain", 100, Some("/p"), Some("sx"));
+    let got = search_prompts(&db, None, 10);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].prompt, "plain");
+    assert_eq!(got[0].session_title, None);
+    // 回落版同样支持 cwd 搜索。
+    assert_eq!(prompts(&db, Some("/p")), ["plain"]);
 }
 
 /// 只读铁律：查询前后主库字节与 mtime 不变（WAL 模式库经正常关闭后做 fixture）。

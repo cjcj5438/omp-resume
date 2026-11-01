@@ -27,6 +27,17 @@ it("切换会话后，旧请求的迟到结果和新请求失败均不会展示�
   expect(screen.queryByLabelText("会话用量与花费")).toBeNull();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+it("UsageSummary 渲染设计稿 4 行 detail-list（输入/输出/缓存命中/成本）", async () => {
+  mockIPC(() => mockSessionUsage);
+  render(<UsageSummary path="/s" supported revision="1" />);
+  const list = await screen.findByLabelText("会话用量与花费");
+  expect(list.tagName).toBe("DL");
+  expect(list).toHaveTextContent("输入");
+  expect(list).toHaveTextContent("输出");
+  expect(list).toHaveTextContent("缓存命中");
+  expect(list).toHaveTextContent("成本");
+  expect(list).toHaveTextContent(`$${mockSessionUsage.cost.total.toFixed(2)}`);
+});
 
 it("花费页范围切换的迟到结果不覆盖当前统计；刷新失败可重试并转为空数据", async () => {
   const recent = Promise.withResolvers<UsageStats>();
@@ -42,12 +53,12 @@ it("花费页范围切换的迟到结果不覆盖当前统计；刷新失败可�
     return mockEmptyUsageStats(range);
   });
   render(<StatsView {...links} />);
-  await waitFor(() => expect(calls).toEqual(["today"]));
+  await waitFor(() => expect(calls).toEqual(["7d"]));
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
-  await waitFor(() => expect(calls).toEqual(["today", "all"]));
+  await waitFor(() => expect(calls).toEqual(["7d", "all"]));
   await act(async () => { all.resolve(mockUsageStats("all")); });
   expect(within(screen.getByLabelText("用量总计")).getByText("$192.60")).toBeTruthy();
-  await act(async () => { recent.resolve(mockUsageStats("today")); });
+  await act(async () => { recent.resolve(mockUsageStats("7d")); });
   expect(within(screen.getByLabelText("用量总计")).getByText("$192.60")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "刷新统计" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("扫描失败");
@@ -57,8 +68,8 @@ it("花费页范围切换的迟到结果不覆盖当前统计；刷新失败可�
 });
 
 it("范围切走又快速切回：缓存命中不重复请求，迟到结果不覆盖且刷新可用", async () => {
-  const today = mockUsageStats("today");
-  const expected = `$${today.total.cost.total.toFixed(2)}`;
+  const week = mockUsageStats("7d");
+  const expected = `$${week.total.cost.total.toFixed(2)}`;
   const initial = Promise.withResolvers<UsageStats>();
   const pending = Promise.withResolvers<UsageStats>();
   const calls: UsageRange[] = [];
@@ -73,22 +84,22 @@ it("范围切走又快速切回：缓存命中不重复请求，迟到结果不�
     return mockUsageStats(range);
   });
   render(<StatsView {...links} />);
-  await waitFor(() => expect(calls).toEqual(["today"]));
-  await act(async () => { initial.resolve(today); });
+  await waitFor(() => expect(calls).toEqual(["7d"]));
+  await act(async () => { initial.resolve(week); });
   expect(within(screen.getByLabelText("用量总计")).getByText(expected)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
-  await waitFor(() => expect(calls).toEqual(["today", "all"]));
-  // all 尚未返回就切回今天：缓存命中，不应再发请求。
-  fireEvent.click(screen.getByRole("button", { name: "今天" }));
-  expect(calls).toEqual(["today", "all"]);
+  await waitFor(() => expect(calls).toEqual(["7d", "all"]));
+  // all 尚未返回就切回 7 天：缓存命中，不应再发请求。
+  fireEvent.click(screen.getByRole("button", { name: "7 天" }));
+  expect(calls).toEqual(["7d", "all"]);
   await act(async () => { pending.resolve(mockUsageStats("all")); });
-  // 迟到的 all 结果不覆盖今天的数据。
+  // 迟到的 all 结果不覆盖 7 天的数据。
   expect(within(screen.getByLabelText("用量总计")).getByText(expected)).toBeTruthy();
   // 缓存命中必须复位 loading，否则刷新按钮永久禁用。
   const refresh = screen.getByRole("button", { name: "刷新统计" });
   expect(refresh).toBeEnabled();
   fireEvent.click(refresh);
-  await waitFor(() => expect(calls).toEqual(["today", "all", "today"]));
+  await waitFor(() => expect(calls).toEqual(["7d", "all", "7d"]));
 });
 
 it("切换范围立刻清掉旧范围数据并显示加载文案", async () => {
@@ -102,16 +113,16 @@ it("切换范围立刻清掉旧范围数据并显示加载文案", async () => {
     return calls.length === 1 ? first.promise : second.promise;
   });
   render(<StatsView {...links} />);
-  await waitFor(() => expect(calls).toEqual(["today"]));
-  await act(async () => { first.resolve(mockUsageStats("today")); });
-  const todayCost = mockUsageStats("today").total.cost.total.toFixed(2);
-  expect(screen.getByLabelText("用量总计").textContent).toContain(`$${todayCost}`);
+  await waitFor(() => expect(calls).toEqual(["7d"]));
+  await act(async () => { first.resolve(mockUsageStats("7d")); });
+  const weekCost = mockUsageStats("7d").total.cost.total.toFixed(2);
+  expect(screen.getByLabelText("用量总计").textContent).toContain(`$${weekCost}`);
   // 切到没加载过的范围：旧 KPI 立刻消失，换成加载文案。
-  fireEvent.click(screen.getByRole("button", { name: "近 7 天" }));
-  await waitFor(() => expect(calls).toEqual(["today", "7d"]));
+  fireEvent.click(screen.getByRole("button", { name: "30 天" }));
+  await waitFor(() => expect(calls).toEqual(["7d", "30d"]));
   expect(screen.queryByLabelText("用量总计")).toBeNull();
   expect(screen.getByRole("status").textContent).toContain("正在扫描用量");
-  await act(async () => { second.resolve(mockUsageStats("7d")); });
+  await act(async () => { second.resolve(mockUsageStats("30d")); });
   expect(await screen.findByLabelText("用量总计")).toBeTruthy();
 });
 
@@ -135,28 +146,43 @@ it("花费趋势按范围切换小时/天分桶，all 不补零", async () => {
     return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
   });
   render(<StatsView {...links} />);
-  // 默认「今天」⇒ 小时桶。
+  // 默认「7 天」⇒ 天桶。
   const chart = await screen.findByRole("img", { name: /花费趋势/ });
-  expect(chart.getAttribute("aria-label")).toContain("24 小时");
-  expect(chart.querySelectorAll("rect.chart-bar").length).toBe(24);
-  expect(chart.querySelectorAll("rect.chart-hit").length).toBe(24);
-  expect(chart.querySelector("rect.chart-hit")?.getAttribute("data-tip")).toContain("花费");
-  expect(chart.querySelector("rect.chart-bar title")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "近 7 天" }));
+  expect(chart.getAttribute("aria-label")).toContain("7 天");
+  expect(chart.querySelectorAll("circle").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: "今天" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /花费趋势/ });
-    expect(next.getAttribute("aria-label")).toContain("7 天");
-    expect(next.querySelectorAll("rect.chart-bar").length).toBe(7);
-    expect(next.querySelectorAll("rect.chart-hit").length).toBe(7);
+    expect(next.getAttribute("aria-label")).toContain("24 小时");
   });
   fireEvent.click(screen.getByRole("button", { name: "全部" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /花费趋势/ });
-    expect(next.querySelectorAll("rect.chart-bar").length).toBe(7);
+    expect(next.getAttribute("aria-label")).toContain("7 天");
   });
 });
 
-it("看板默认今天；KPI 展示中断注记与缓存未上报；切换标签页各自记住范围且不重复请求", async () => {
+it("成本趋势 panel 头有图例「每X成本/Token」，与指标 Seg 同行", async () => {
+  mockIPC((cmd, args) => {
+    const range = (args as { range: UsageRange }).range;
+    return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
+  });
+  render(<StatsView {...links} />);
+  await screen.findByRole("img", { name: /花费趋势/ });
+  const legend = document.querySelector(".trend-head-tools .chart-legend");
+  expect(legend?.textContent).toBe("每日成本");
+  expect(legend?.querySelector(".legend-swatch.legend-trend")).not.toBeNull();
+  // 与指标 Seg 在同一行容器内。
+  expect(document.querySelector(".trend-head-tools [role='group'][aria-label='趋势指标']")).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "今天" }));
+  await waitFor(() => expect(document.querySelector(".trend-head-tools .chart-legend")?.textContent).toBe("每小时成本"));
+  fireEvent.click(screen.getByRole("button", { name: "全部" }));
+  await waitFor(() => expect(document.querySelector(".trend-head-tools .chart-legend")?.textContent).toBe("每段成本"));
+  fireEvent.click(within(screen.getByRole("group", { name: "趋势指标" })).getByRole("button", { name: "Token" }));
+  await waitFor(() => expect(document.querySelector(".trend-head-tools .chart-legend")?.textContent).toBe("每段Token"));
+});
+
+it("看板默认 7 天；KPI 展示中断注记与缓存未上报；切换标签页各自记住范围且不重复请求", async () => {
   const calls: string[] = [];
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
@@ -165,45 +191,80 @@ it("看板默认今天；KPI 展示中断注记与缓存未上报；切换标签
   });
   const view = render(<StatsView {...links} />);
   await screen.findByLabelText("用量总计");
-  expect(calls).toEqual(["get_usage_stats:today"]);
+  expect(calls).toEqual(["get_usage_stats:7d"]);
   view.rerender(<StatsView {...links} tab="health" />);
   expect(await screen.findByLabelText("关键指标")).toBeTruthy();
-  expect(calls).toEqual(["get_usage_stats:today", "get_usage_health:today"]);
+  expect(calls).toEqual(["get_usage_stats:7d", "get_usage_health:7d"]);
   const kpis = screen.getByLabelText("关键指标");
-  expect(within(kpis).getByText("132")).toBeTruthy();
-  expect(within(kpis).getByText("另有 2 次用户中断")).toBeTruthy();
-  expect(within(kpis).getByText("62.0%")).toBeTruthy();
-  expect(within(screen.getByLabelText("按模型缓存命中")).getByText("—")).toBeTruthy();
-  const healthPanel = screen.getByRole("tabpanel", { name: "运行健康" });
-  fireEvent.click(within(healthPanel).getByRole("button", { name: "近 7 天" }));
-  await waitFor(() => expect(calls).toContain("get_usage_health:7d"));
+  expect(within(kpis).getByText("940")).toBeTruthy();
+  expect(within(kpis).getByText("另有 11 次用户中断")).toBeTruthy();
+  expect(within(kpis).getByText("66.0%")).toBeTruthy();
+  expect(within(kpis).getByText("p50 1.9s · p95 6.4s")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "30 天" }));
+  await waitFor(() => expect(calls).toContain("get_usage_health:30d"));
   view.rerender(<StatsView {...links} tab="usage" />);
   view.rerender(<StatsView {...links} tab="health" />);
-  expect(calls.filter((c) => c === "get_usage_health:7d")).toHaveLength(1);
-  expect(within(screen.getByLabelText("关键指标")).getByText("940")).toBeTruthy();
+  expect(calls.filter((c) => c === "get_usage_health:30d")).toHaveLength(1);
+  expect(within(screen.getByLabelText("关键指标")).getByText("3,820")).toBeTruthy();
 });
 
-it("活跃度卡片：热力图铺开 + 紧贴汇总（活跃天数 / 合计 / 最高单日 / 连续）", async () => {
+it("健康页头按钮叫「刷新」；手动刷新成功后 toast 带范围，失败不 toast", async () => {
+  const onToast = vi.fn();
+  let failNext = false;
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    const range = (args as { range: UsageRange }).range;
+    if (cmd === "get_usage_health") {
+      calls.push(range);
+      if (failNext) {
+        failNext = false;
+        throw { code: "IO", message: "刷新失败" };
+      }
+      return mockUsageHealth(range);
+    }
+    return mockUsageStats(range);
+  });
+  const view = render(<StatsView {...links} tab="health" onToast={onToast} />);
+  await screen.findByLabelText("关键指标");
+  expect(onToast).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "刷新看板" })).toBeNull();
+  // 切范围不 toast。
+  fireEvent.click(screen.getByRole("button", { name: "30 天" }));
+  await waitFor(() => expect(calls).toEqual(["7d", "30d"]));
+  // 等 30 天数据落定（3,820 请求）且刷新键可用再点刷新：否则刷新与切范围请求竞速。
+  await screen.findByText("3,820");
+  await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
+  expect(onToast).not.toHaveBeenCalled();
+  // 手动刷新成功 → toast 带范围标签。
+  fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+  await waitFor(() => expect(onToast).toHaveBeenCalledWith("健康数据已刷新 · 30 天", "info"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
+  // 手动刷新失败 → 不 toast（错误走 banner）。
+  failNext = true;
+  fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+  await screen.findByRole("alert");
+  expect(onToast).toHaveBeenCalledTimes(1);
+  view.unmount();
+});
+
+it("活跃度热力图：52 周可滚动 + 4 盒装 stats（活跃 / 当前连续 / 最长连续 / 峰值单日）", async () => {
   const stats = mockUsageStats("30d");
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
     return cmd === "get_usage_stats" ? stats : mockUsageHealth(range);
   });
   render(<StatsView {...links} />);
-  const card = await screen.findByLabelText("活跃度");
-  // 卡片独占一行（不在 health-grid 里），图例随网格走（右下对齐）。
-  expect(card.closest(".health-grid")).toBeNull();
-  const heat = within(card).getByRole("group", { name: /活跃度热力图/ });
-  expect(heat.querySelectorAll(".heat-cell").length).toBe(182);
-  expect(within(card).getByText("活跃天数")).toBeTruthy();
-  expect(within(card).getByText("合计花费")).toBeTruthy();
-  expect(within(card).getByText("连续活跃天数")).toBeTruthy();
-  expect(card.textContent).toContain("最高单日");
-  // 图例不在卡片头：与网格同组，位于网格下方右对齐。
-  expect(within(card).getByText("少").closest(".card-head")).toBeNull();
-  const wrap = heat.parentElement;
-  expect(wrap?.className).toContain("heat-wrap");
-  expect(wrap?.querySelector(".heat-foot .heat-legend")).toBeTruthy();
+  const heat = await screen.findByRole("group", { name: /活跃度热力图/ });
+  const card = heat.closest(".panel");
+  expect(card).not.toBeNull();
+  expect(heat.querySelectorAll("button.heat-cell").length).toBe(364);
+  expect(heat.closest(".heat-scroll")).not.toBeNull();
+  expect(card?.textContent).toContain("活跃天数");
+  expect(card?.textContent).toContain("当前连续");
+  expect(card?.textContent).toContain("最长连续");
+  expect(card?.textContent).toContain("峰值单日");
+  expect(card?.querySelector(".heat-foot .heat-scale")).not.toBeNull();
 });
 
 it("看板空数据给出克制空态，命中率显示“—”而非 0%", async () => {
@@ -213,21 +274,19 @@ it("看板空数据给出克制空态，命中率显示“—”而非 0%", asyn
   });
   render(<StatsView {...links} tab="health" />);
   expect((await screen.findAllByText("此范围内暂无请求")).length).toBeGreaterThanOrEqual(2);
-  expect(screen.getAllByText("此范围内还没有错误").length).toBeGreaterThanOrEqual(2);
-  const cache = screen.getByLabelText("按模型缓存命中");
-  expect(within(cache).getByText("此范围内暂无模型缓存数据")).toBeTruthy();
+  expect((await screen.findAllByText("此范围内还没有错误")).length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("此范围内暂无模型缓存数据")).toBeTruthy();
   const kpis = screen.getByLabelText("关键指标");
-  expect(within(kpis).getByText("—")).toBeTruthy();
+  expect(within(kpis).getAllByText("—").length).toBeGreaterThanOrEqual(1);
 });
 
-it("上游不报缓存时 KPI 显示“—”并说明原因，而不是 0%", async () => {
+it("上游不报缓存时 KPI 显示“—”，而不是 0%", async () => {
   const health: UsageHealth = mockUsageHealth("today");
   health.cache.hitRate = null;
   mockIPC((cmd) => cmd === "get_usage_stats" ? mockUsageStats("30d") : health);
   render(<StatsView {...links} tab="health" />);
   const kpis = await screen.findByLabelText("关键指标");
   expect(within(kpis).getByText("—")).toBeTruthy();
-  expect(within(kpis).getByText("该上游未返回缓存数据")).toBeTruthy();
   expect(within(kpis).queryByText("0.0%")).toBeNull();
 });
 
@@ -235,14 +294,18 @@ it("错误类型与兜底去向按契约中文映射展示", async () => {
   const health: UsageHealth = mockUsageHealth("30d");
   mockIPC((cmd) => cmd === "get_usage_stats" ? mockUsageStats("30d") : health);
   render(<StatsView {...links} tab="health" />);
-  const kinds = await screen.findByLabelText("错误类型分布");
+  const kindsTitle = await screen.findByText("错误类型");
+  const kinds = kindsTitle.closest(".panel") as HTMLElement;
   expect(within(kinds).getByText("触发限流")).toBeTruthy();
   expect(within(kinds).getByText("响应超时")).toBeTruthy();
-  const fallbacks = screen.getByLabelText("兜底去向");
+  const fbTitle = screen.getByText("兜底去向");
+  const fallbacks = fbTitle.closest(".panel") as HTMLElement;
   expect(within(fallbacks).getByText("anthropic / claude-haiku-4-5")).toBeTruthy();
   expect(fallbacks.textContent).toContain("未知来源 →");
   expect(fallbacks.textContent).toContain("anthropic / claude-sonnet-4-5 →");
-  expect(within(screen.getByLabelText("最近错误")).getAllByText("触发限流").length).toBeGreaterThan(0);
+  const logTitle = screen.getByText("最近错误");
+  const logs = logTitle.closest(".panel") as HTMLElement;
+  expect(within(logs).getAllByText("触发限流").length).toBeGreaterThan(0);
 });
 
 it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲突警告", () => {
@@ -253,8 +316,8 @@ it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲�
       ...base.errors,
       total: 2,
       recent: [
-        { time: 1789824000000, provider: "p1", model: "m1", kind: "quota", message: "额度用尽" },
-        { time: 1789824000000, provider: "p1", model: "m1", kind: "quota", message: "额度用尽" },
+        { time: 1789824000000, provider: "p1", model: "m1", kind: "quota", message: "额度用尽", retry: "已重试恢复" },
+        { time: 1789824000000, provider: "p1", model: "m1", kind: "quota", message: "额度用尽", retry: null },
       ],
     },
     fallbacks: {
@@ -271,8 +334,8 @@ it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲�
     logged.push(args.map(String).join(" "));
   });
   try {
-    render(<HealthBoard data={health} />);
-    expect(screen.getByLabelText("最近错误").querySelectorAll("li")).toHaveLength(2);
+    render(<HealthBoard data={health} rangeLabel="今天" />);
+    expect(screen.getByLabelText("错误日志").querySelectorAll(".log-row")).toHaveLength(2);
     expect(screen.getByLabelText("最近兜底切换").querySelectorAll("li")).toHaveLength(2);
     expect(logged.join("\n")).not.toContain("same key");
   } finally {
@@ -280,7 +343,7 @@ it("最近错误/兜底出现同毫秒重复条目时全部渲染且无 key 冲�
   }
 });
 
-it("总览仪表盘：6 KPI / 双环形 / 模型速度 / 热力图 182 格", async () => {
+it("总览仪表盘：6 KPI / 模型 donut / 小时分布 / 双环形扩展 / 明细表 / 热力图 364 格", async () => {
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
     return cmd === "get_usage_stats" ? mockUsageStats("30d") : mockUsageHealth(range);
@@ -288,7 +351,12 @@ it("总览仪表盘：6 KPI / 双环形 / 模型速度 / 热力图 182 格", asy
   render(<StatsView {...links} />);
   const grid = await screen.findByLabelText("用量总计");
   const labels = [...grid.querySelectorAll(".kpi-label")].map((el) => el.textContent);
-  expect(labels).toEqual(["会话", "累计 Token", "费用", "缓存命中", "工具调用", "活跃时长"]);
+  expect(labels).toEqual(["成本", "Token", "请求数", "缓存命中", "工具耗时", "最长单次"]);
+  expect(grid.textContent).toContain("较上一周期");
+  const hourly = screen.getByRole("img", { name: /按小时请求分布/ });
+  expect(hourly.querySelectorAll(".hb").length).toBe(24);
+  const modelDonut = screen.getByRole("img", { name: /模型构成/ });
+  expect(modelDonut.getAttribute("aria-label")).toContain("claude-sonnet-4-5");
   const tokenDonut = screen.getByLabelText("Token 构成").querySelector("svg");
   expect(tokenDonut?.getAttribute("aria-label")).toContain("输入");
   const timeDonut = screen.getByLabelText("耗时构成");
@@ -298,28 +366,28 @@ it("总览仪表盘：6 KPI / 双环形 / 模型速度 / 热力图 182 格", asy
   expect(models.textContent).toContain("速度");
   expect(models.textContent).toContain("首字延迟");
   expect(models.textContent).toContain("118.4 tok/s");
-  expect(models.textContent).toContain("7.4s");
+  expect(models.textContent).toContain("7.4 s");
   const heat = screen.getByRole("group", { name: /活跃度热力图/ });
-  expect(heat.querySelectorAll(".heat-cell").length).toBe(182);
+  expect(heat.querySelectorAll("button.heat-cell").length).toBe(364);
 });
 
-it("指标切换：Token / 花费切换趋势图且柱数不变", async () => {
+it("指标切换：Token / 花费切换趋势图且点数不变", async () => {
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
     return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
   });
   render(<StatsView {...links} />);
   const chart = await screen.findByRole("img", { name: /花费趋势/ });
-  const bars = chart.querySelectorAll("rect.chart-bar").length;
+  const dots = chart.querySelectorAll("circle").length;
   fireEvent.click(within(screen.getByRole("group", { name: "趋势指标" })).getByRole("button", { name: "Token" }));
   await waitFor(() => {
     const next = screen.getByRole("img", { name: /Token 趋势/ });
     expect(next.getAttribute("aria-label")).toMatch(/^Token 趋势/);
-    expect(next.querySelectorAll("rect.chart-bar").length).toBe(bars);
+    expect(next.querySelectorAll("circle").length).toBe(dots);
   });
   fireEvent.click(within(screen.getByRole("group", { name: "趋势指标" })).getByRole("button", { name: "花费" }));
   await waitFor(() => {
-    expect(screen.getByRole("img", { name: /花费趋势/ }).querySelectorAll("rect.chart-bar").length).toBe(bars);
+    expect(screen.getByRole("img", { name: /花费趋势/ }).querySelectorAll("circle").length).toBe(dots);
   });
 });
 
@@ -329,57 +397,61 @@ it("高花费会话：有标题行可点击打开，其余行为纯展示", asyn
   const onOpenSession = vi.fn();
   mockIPC(() => stats);
   render(<StatsView tab="usage" sessionTitle={(p) => (p === firstPath ? "会话甲" : null)} onOpenSession={onOpenSession} onToast={() => {}} />);
-  const section = await screen.findByLabelText("高花费会话");
-  expect(section.querySelectorAll("button.top-row").length).toBe(1);
+  const section = await screen.findByText("成本最高的会话");
+  const panel = section.closest(".panel");
+  expect(panel?.querySelectorAll("tr.is-click").length).toBe(1);
   fireEvent.click(screen.getByRole("button", { name: /会话甲/ }));
   expect(onOpenSession).toHaveBeenCalledTimes(1);
   expect(onOpenSession).toHaveBeenCalledWith(firstPath);
 });
 
-it("空统计：暂无用量数据且不渲染活跃度", async () => {
+it("空统计：暂无用量数据且不渲染热力图", async () => {
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
     return cmd === "get_usage_stats" ? mockEmptyUsageStats(range) : mockEmptyUsageHealth(range);
   });
   render(<StatsView {...links} />);
   expect(await screen.findByText("此范围内暂无用量数据")).toBeTruthy();
-  expect(screen.queryByLabelText("活跃度")).toBeNull();
+  expect(screen.queryByRole("group", { name: /活跃度热力图/ })).toBeNull();
 });
 
 it("Donut 零和降级：显示暂无数据", () => {
-  render(<Donut label="x" slices={[]} center="0" centerSub="y" />);
+  render(<Donut label="x" slices={[]} />);
   expect(screen.getByText("暂无数据")).toBeTruthy();
 });
 
-it("热力指标切换 Token 后格子等级按 Token 重算；点击格子显示选中日与涨跌", async () => {
+it("热力默认请求指标；切 Token 后格子文案跟随；点击格子显示选中日详情与涨跌", async () => {
   mockIPC((cmd, args) => {
     const range = (args as { range: UsageRange }).range;
     return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
   });
   render(<StatsView {...links} />);
-  const card = await screen.findByLabelText("活跃度");
-  const heat = within(card).getByRole("group", { name: /活跃度热力图/ });
+  const heat = await screen.findByRole("group", { name: /活跃度热力图/ });
+  const card = heat.closest(".panel");
+  expect(card).not.toBeNull();
+  expect(heat.getAttribute("aria-label")).toContain("按请求着色");
   const cells = Array.from(heat.querySelectorAll("button.heat-cell"));
-  expect(cells.length).toBe(182);
-  const withUsage = cells.find((c) => (c.getAttribute("aria-label") ?? "").includes("花费"));
+  expect(cells.length).toBe(364);
+  const withUsage = cells.find((c) => (c.getAttribute("aria-label") ?? "").includes("次请求"));
   expect(withUsage).not.toBeUndefined();
-  const heatSeg = within(card).getByRole("group", { name: "热力指标" });
+  const heatSeg = within(card as HTMLElement).getByRole("group", { name: "热力指标" });
   fireEvent.click(within(heatSeg).getByRole("button", { name: "Token" }));
+  await waitFor(() => expect(heat.getAttribute("aria-label")).toContain("按Token着色"));
   const cellsAfter = Array.from(heat.querySelectorAll("button.heat-cell"));
-  expect(cellsAfter.length).toBe(182);
-  // 同一格子的取值文案从花费切到 Token。
+  expect(cellsAfter.length).toBe(364);
+  // 同一格子的取值文案从请求切到 Token。
   const key0 = withUsage!.getAttribute("aria-label")?.split(" ")[0];
   const same = cellsAfter.find((c) => c.getAttribute("aria-label")?.startsWith(key0 ?? "???"));
-  expect(same?.getAttribute("aria-label")).toContain("Token");
-  expect(card.textContent).toContain("按日Token");
+  expect(same?.getAttribute("aria-label")).toContain("token");
 
-  // 点击一个格子：选中日块显示该日期与涨跌。
+  // 点击一个格子：选中日详情显示该日期与涨跌。
   const target = cells[cells.length - 1];
   const key = target.getAttribute("aria-label")?.split(" ")[0] ?? "";
   fireEvent.click(target);
   const day = await screen.findByLabelText("选中日");
-  expect(day.textContent).toContain(key);
+  expect(day.textContent).toContain(`${Number(key.slice(5, 7))} 月 ${Number(key.slice(8, 10))} 日`);
   expect(day.textContent).toContain("较前 7 天日均");
+  expect(day.textContent).toContain("主要项目");
   expect(target.getAttribute("aria-pressed")).toBe("true");
 });
 
@@ -402,7 +474,8 @@ it("健康页错误类型筛选：选一类后标题显示 N/M 条，无此类�
     return cmd === "get_usage_stats" ? mockUsageStats(range) : mockUsageHealth(range);
   });
   render(<StatsView {...links} tab="health" />);
-  const card = await screen.findByLabelText("最近错误");
+  const title = await screen.findByText("最近错误");
+  const card = title.closest(".panel") as HTMLElement;
   const seg = within(card).getByRole("group", { name: "错误类型筛选" });
   const kinds = within(seg).getAllByRole("button").map((b) => b.textContent);
   expect(kinds[0]).toContain("全部");

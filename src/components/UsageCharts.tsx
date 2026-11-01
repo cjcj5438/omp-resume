@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import type { UsageHealthTimelinePoint, UsageTrendPoint, UsageTrendUnit } from "../types";
+import type { UsageHealthTimelinePoint, UsageTrendUnit } from "../types";
 import type { BenchBucket } from "../modelBench";
-import { formatRate, formatTps, formatUsd, usageMoney, usageNumber } from "../format";
-import { barHeights, cacheHitSeries, compactNumber, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
+import { formatRate, formatTps, formatUsd, usageNumber } from "../format";
+import { barHeights, cacheHitSeries, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
 import "./Usage.css";
 const W = 600;
 const H = 200;
@@ -48,69 +48,6 @@ function ChartBucket({ i, count, tip, children }: { i: number; count: number; ti
       <line className="chart-guide" x1={PLOT_X + i * step + step / 2} y1={PLOT_TOP} x2={PLOT_X + i * step + step / 2} y2={PLOT_TOP + PLOT_H} />
       <rect className="chart-hit" data-tip={tip} x={PLOT_X + i * step} y={PLOT_TOP} width={step} height={PLOT_H} />
     </g>
-  );
-}
-
-export type TrendMetric = "cost" | "tokens";
-
-/** 趋势柱状图（hour/day 自适应，指标花费/Token 可切换）。 */
-export function TrendChart({ unit, points, metric }: { unit: UsageTrendUnit; points: UsageTrendPoint[]; metric: TrendMetric }) {
-  const values = points.map((p) => (metric === "cost" ? p.cost : p.tokens.total));
-  const heights = barHeights(values, PLOT_H);
-  const { x, w, centers } = barStep(points.length);
-  const totalCost = points.reduce((a, p) => a + p.cost, 0);
-  const totalTokens = points.reduce((a, p) => a + p.tokens.total, 0);
-  const max = Math.max(0, ...values);
-  const peak = values.reduce<number>((best, v, i) => (v > values[best] ? i : best), 0);
-  const label = metric === "cost"
-    ? `花费趋势：${points.length} ${unit === "hour" ? "小时" : "天"}，总计 ${usageMoney(totalCost)}${max > 0 ? `，最高 ${usageMoney(max)}（${points[peak]?.key ?? ""}）` : ""}`
-    : `Token 趋势：${points.length} ${unit === "hour" ? "小时" : "天"}，总计 ${compactNumber(totalTokens)}${max > 0 ? `，最高 ${compactNumber(max)}（${points[peak]?.key ?? ""}）` : ""}`;
-  // 全零不画空图（一根柱子都没有的空坐标系只会让人以为渲染坏了）。
-  if (max <= 0) {
-    return <div className="pane-note">{`${metric === "cost" ? "花费" : "Token"}在该范围内为 0`}</div>;
-  }
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={label}>
-      <line x1={PLOT_X} y1={BASE_Y} x2={PLOT_X + PLOT_W} y2={BASE_Y} className="chart-grid" />
-      {points.map((p, i) => (
-        <ChartBucket
-          key={p.key}
-          i={i}
-          count={points.length}
-          tip={metric === "cost"
-            ? `${p.key}\n花费 ${usageMoney(p.cost)}（占 ${totalCost > 0 ? `${((p.cost / totalCost) * 100).toFixed(1)}%` : "—"}）\nToken ${compactNumber(p.tokens.total)}`
-            : `${p.key}\nToken ${compactNumber(p.tokens.total)}（占 ${totalTokens > 0 ? `${((p.tokens.total / totalTokens) * 100).toFixed(1)}%` : "—"}）\n花费 ${usageMoney(p.cost)}`}
-        >
-          <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar" />
-        </ChartBucket>
-      ))}
-      {max > 0 ? (
-        <g className="chart-ref" aria-hidden="true">
-          <line x1={PLOT_X} y1={BASE_Y - PLOT_H} x2={PLOT_X + PLOT_W} y2={BASE_Y - PLOT_H} className="chart-grid" />
-          <text
-            className="chart-tick chart-ref-label"
-            x={PLOT_X - 6}
-            y={BASE_Y - PLOT_H + 4}
-            textAnchor="end"
-          >
-            {metric === "cost" ? usageMoney(max) : compactNumber(max)}
-          </text>
-          <line x1={PLOT_X} y1={BASE_Y - PLOT_H / 2} x2={PLOT_X + PLOT_W} y2={BASE_Y - PLOT_H / 2} className="chart-grid" />
-          <text
-            className="chart-tick chart-ref-label"
-            x={PLOT_X - 6}
-            y={BASE_Y - PLOT_H / 2 + 4}
-            textAnchor="end"
-          >
-            {metric === "cost" ? usageMoney(max / 2) : compactNumber(max / 2)}
-          </text>
-          <text className="chart-tick chart-ref-label" x={PLOT_X - 6} y={BASE_Y + 4} textAnchor="end">
-            0
-          </text>
-        </g>
-      ) : null}
-      <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
-    </svg>
   );
 }
 

@@ -167,6 +167,18 @@ pub(super) fn hit_rate(read: u64, input: u64, write: u64) -> Option<f64> {
     Some(read as f64 / denom)
 }
 
+/// 重试处置文案（CONTRACT §12.3）：recovered 且 attempt>1 →「重试 N 次后恢复」；
+/// recovered 且 attempt≤1 →「已重试恢复」；superseded →「被新请求取代」；无记录 → None。
+pub(super) fn retry_text(retry: Option<&super::parse::Retry>) -> Option<String> {
+    let retry = retry?;
+    match retry.status.as_str() {
+        "recovered" if retry.attempt > 1 => Some(format!("重试 {} 次后恢复", retry.attempt)),
+        "recovered" => Some("已重试恢复".to_string()),
+        "superseded" => Some("被新请求取代".to_string()),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub(super) struct TimelineAcc {
     requests: u64,
@@ -226,6 +238,7 @@ where
     // (provider, model) → (requests, input, read, write)。
     let mut cache_models: HashMap<(String, String), (u64, u64, u64, u64)> = HashMap::new();
     let mut timeline: BTreeMap<String, TimelineAcc> = BTreeMap::new();
+    let mut durations: Vec<u64> = Vec::new();
     for (i, file) in library.files.iter().enumerate() {
         if file.data.version != Some(3) || library.files[file.owner].data.version != Some(3) {
             continue;
@@ -263,7 +276,14 @@ where
                         model: entry.model.clone(),
                         kind,
                         message: sanitize_message(&entry.error_message),
+                        retry: retry_text(entry.retry.as_ref()),
                     });
+                }
+            }
+            // 延迟样本：assistant 自报 duration（含 error/aborted，不要求 ttft）。
+            if entry.kind == Kind::Assistant {
+                if let Some(d) = entry.duration_ms {
+                    durations.push(d);
                 }
             }
             if entry.kind == Kind::Assistant && entry.stop_reason == "aborted" {
@@ -422,5 +442,14 @@ where
                 .collect()
         },
     };
+    // 延迟分位：升序后按最近秩法取 p50/p95（ceil(p*n)−1，最小下标 0）。
+    if !durations.is_empty() {
+        durations.sort_unstable();
+        let at = |p: f64| durations[((p * durations.len() as f64).ceil() as usize).max(1) - 1];
+        health.latency_ms = Some(crate::model::UsageLatency {
+            p50: at(0.5),
+            p95: at(0.95),
+        });
+    }
     Ok(health)
 }

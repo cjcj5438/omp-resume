@@ -48,7 +48,13 @@ describe("toDeleteTargets", () => {
   it("只输出选中且可删除的目标，体积取总字节，消息数为 null", () => {
     const targets = toDeleteTargets(LIST, new Set(["/a", "/busy"]));
     expect(targets).toHaveLength(1);
-    expect(targets[0]).toMatchObject({ path: "/a", sizeBytes: 1000, messageCount: null });
+    expect(targets[0]).toMatchObject({ path: "/a", sizeBytes: 1000, messageCount: null, source: "cleanup", excluded: 0 });
+  });
+
+  it("excluded 原样透传给同一批 targets（供 cleanup 对话框 kv 用）", () => {
+    const targets = toDeleteTargets(LIST, new Set(["/a", "/b"]), 2);
+    expect(targets).toHaveLength(2);
+    expect(targets.every((t) => t.excluded === 2)).toBe(true);
   });
 });
 

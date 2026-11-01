@@ -72,6 +72,8 @@ export interface AgentLibraryProps {
   catalog: AgentCatalog;
   /** 本次舞台出现的 agent 键（可能含自定义 agent）。 */
   stageAgents: string[];
+  /** 「管理 Agent」→ agents 路由。 */
+  onManageAgents: () => void;
 }
 
 export function AgentLibrary({
@@ -80,6 +82,7 @@ export function AgentLibrary({
   onClose,
   catalog,
   stageAgents,
+  onManageAgents,
 }: AgentLibraryProps) {
   const [frame, setFrame] = useState(0);
   const keys = libraryKeys(catalog.details, catalog.config, stageAgents);
@@ -111,9 +114,21 @@ export function AgentLibrary({
       wide
       onClose={onClose}
       footer={
-        <button type="button" className="btn" onClick={onClose}>
-          关闭
-        </button>
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            关闭
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              onClose();
+              onManageAgents();
+            }}
+          >
+            管理 Agent
+          </button>
+        </>
       }
     >
       <div className="stage-lib">

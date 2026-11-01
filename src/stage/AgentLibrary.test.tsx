@@ -23,6 +23,7 @@ describe("AgentLibrary", () => {
         prefs={defaultStagePrefs()}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={["deployer", "scout"]}
       />,
@@ -50,6 +51,7 @@ describe("AgentLibrary", () => {
         prefs={defaultStagePrefs()}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={[]}
       />,
@@ -69,6 +71,7 @@ describe("AgentLibrary", () => {
         prefs={defaultStagePrefs()}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={[]}
       />,
@@ -81,6 +84,7 @@ describe("AgentLibrary", () => {
         prefs={{ chars: { main: "ops" } }}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={[]}
       />,
@@ -99,6 +103,7 @@ describe("AgentLibrary", () => {
         prefs={defaultStagePrefs()}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={["constructor"]}
       />,
@@ -115,6 +120,7 @@ describe("AgentLibrary", () => {
         prefs={{ chars: { constructor: "ops" as const } }}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={["constructor"]}
       />,
@@ -132,6 +138,7 @@ describe("AgentLibrary", () => {
         prefs={{ chars: { main: "ops" } }}
         onChange={onChange}
         onClose={onClose}
+        onManageAgents={() => {}}
         catalog={catalog()}
         stageAgents={[]}
       />,

@@ -9,8 +9,8 @@ import {
   formatDuration,
   formatErrorRate,
   formatHitRate,
-  heatGrid,
-  heatLevels,
+  formatMaxDuration,
+  prevDelta,
   sparseIndexes,
   tickLabel,
 } from "./usageFormat";
@@ -100,34 +100,29 @@ it("缓存命中率：无缓存数据时 null", () => {
   expect(cacheHitRate({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 })).toBeNull();
 });
 
-it("热力等级按非零秩分四档", () => {
-  expect(heatLevels([0, 5, 1, 3, 9])).toEqual([0, 3, 1, 2, 4]);
-  expect(heatLevels([0, 0])).toEqual([0, 0]);
-  expect(heatLevels([7])).toEqual([4]);
+it("较上一周期涨跌：prev≤0 或缺省为 null", () => {
+  expect(prevDelta(110, 100)).toBeCloseTo(0.1, 10);
+  expect(prevDelta(90, 100)).toBeCloseTo(-0.1, 10);
+  expect(prevDelta(5, 0)).toBeNull();
+  expect(prevDelta(null, 100)).toBeNull();
+  expect(prevDelta(5, null)).toBeNull();
+  expect(prevDelta(5, undefined)).toBeNull();
 });
 
-it("热力列：周一为行 0，首尾补 null 至整列", () => {
-  const days = Array.from({ length: 8 }, (_, i) => {
-    const d = new Date(2026, 9, 14 + i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return { key, cost: 1, tokens: 10, level: 1 };
-  });
-  const cols = heatGrid(days);
-  expect(cols).toHaveLength(2);
-  expect(cols[0][0]).toBeNull();
-  expect(cols[0][1]).toBeNull();
-  expect(cols[0][2]?.key).toBe("2026-10-14");
-  expect(cols[1][0]?.key).toBe("2026-10-19");
-  expect(cols[1][1]?.key).toBe("2026-10-20");
-  expect(cols[1][2]?.key).toBe("2026-10-21");
-  expect(cols[1].slice(3)).toEqual([null, null, null, null]);
+it("最长单次：59s / 16m12s / 1h1m（整分不补零）", () => {
+  expect(formatMaxDuration(null)).toBe("—");
+  expect(formatMaxDuration(-5)).toBe("—");
+  expect(formatMaxDuration(59000)).toBe("59s");
+  expect(formatMaxDuration(972000)).toBe("16m12s");
+  expect(formatMaxDuration(3660000)).toBe("1h1m");
+  expect(formatMaxDuration(3600000)).toBe("1h");
 });
 
-it("活跃度汇总：活跃天数、合计、最高单日（同价取最早）、末尾连续天数", () => {
-  expect(activitySummary([])).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0 });
+it("活跃度汇总：活跃天数、合计、最高单日（同价取最早）、末尾连续、最长连续", () => {
+  expect(activitySummary([])).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0, longest: 0 });
   expect(
     activitySummary(["2026-01-01", "2026-01-02", "2026-01-03"].map((key) => ({ key, cost: 0 }))),
-  ).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0 });
+  ).toEqual({ activeDays: 0, totalCost: 0, best: null, streak: 0, longest: 0 });
   const days = [10, 0, 5, 7].map((cost, i) => ({ key: `2026-01-0${i + 1}`, cost }));
   const sum = activitySummary(days);
   expect(sum.activeDays).toBe(3);
@@ -135,8 +130,10 @@ it("活跃度汇总：活跃天数、合计、最高单日（同价取最早）�
   // 最高单日只看花费；末尾 5、7 连续 ⇒ streak 2（中间那天的 0 是断点但不影响末尾）。
   expect(sum.best).toEqual({ key: "2026-01-01", cost: 10 });
   expect(sum.streak).toBe(2);
+  expect(sum.longest).toBe(2);
   // 同价取最早。
   expect(activitySummary([{ key: "a", cost: 3 }, { key: "b", cost: 3 }]).best).toEqual({ key: "a", cost: 3 });
+  expect(activitySummary([{ key: "a", cost: 3 }, { key: "b", cost: 3 }]).longest).toBe(2);
 });
 
 describe("heatDayDetail", () => {
@@ -166,6 +163,26 @@ describe("heatDayDetail", () => {
     expect(heatDayDetail(days, "2026-02-03")?.costDelta).toBeNull();
     expect(heatDayDetail(days, "2026-02-01")?.costDelta).toBeNull();
     expect(heatDayDetail(days, "2026-03-01")).toBeNull();
+  });
+
+  it("请求数与主要项目透传；请求 delta 同口径", async () => {
+    const { heatDayDetail } = await import("./usageFormat");
+    const mk = (key: string, requests: number, top: string | null) => ({
+      key,
+      cost: requests,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      requests,
+      topProject: top,
+    });
+    const days = [mk("2026-03-01", 10, "/a"), mk("2026-03-02", 10, "/a"), mk("2026-03-03", 20, "/b")];
+    const d = heatDayDetail(days, "2026-03-03");
+    expect(d?.requests).toBe(20);
+    expect(d?.topProject).toBe("/b");
+    expect(d?.requestsDelta).toBeCloseTo(1, 5);
+    // 缺字段的旧 trend 点：按 0/null 处理。
+    const legacy = heatDayDetail([{ key: "2026-03-01", cost: 1, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }], "2026-03-01");
+    expect(legacy?.requests).toBe(0);
+    expect(legacy?.topProject).toBeNull();
   });
 });
 

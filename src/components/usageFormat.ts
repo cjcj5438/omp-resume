@@ -1,4 +1,4 @@
-import type { ErrorKind, UsageStats, UsageTokens, UsageTrendPoint, UsageTrendUnit } from "../types";
+import type { ErrorKind, UsageStats, UsageTokens, UsageTrendUnit } from "../types";
 import { usageMoney, usageNumber } from "../format";
 
 /** ErrorKind 中文映射（契约固定 7 种）。 */
@@ -89,44 +89,6 @@ export function cacheHitRate(t: UsageTokens): number | null {
   return t.cacheRead / denom;
 }
 
-/** 热力等级：0 → 0；非零按秩分 1–4（排名四分位）。 */
-export function heatLevels(values: number[]): number[] {
-  const nonzero = values.filter((v) => v > 0);
-  if (nonzero.length === 0) return values.map(() => 0);
-  return values.map((v) => {
-    if (v <= 0) return 0;
-    const rank = nonzero.filter((u) => u < v).length + 1;
-    return Math.max(1, Math.ceil((4 * rank) / nonzero.length));
-  });
-}
-
-export interface HeatCell { key: string; cost: number; tokens: number; level: number }
-
-/** 热力列：周一为行 0，首尾补 null 至整列，每列 7 项。 */
-export function heatGrid(cells: HeatCell[]): (HeatCell | null)[][] {
-  const weekday = (key: string): number => {
-    const [y, m, day] = key.slice(0, 10).split("-").map(Number);
-    return (new Date(y, m - 1, day).getDay() + 6) % 7;
-  };
-  const cols: (HeatCell | null)[][] = [];
-  if (cells.length === 0) return cols;
-  let col: (HeatCell | null)[] = [];
-  const pushCol = () => {
-    while (col.length < 7) col.push(null);
-    cols.push(col);
-    col = [];
-  };
-  for (const cell of cells) {
-    if (col.length === 0) {
-      const w = weekday(cell.key);
-      for (let i = 0; i < w; i += 1) col.push(null);
-    }
-    col.push(cell);
-    if (col.length === 7) pushCol();
-  }
-  if (col.length > 0) pushCol();
-  return cols;
-}
 
 /**
  * 活跃度汇总：活跃天数（花费 > 0）、合计花费、最高单日（同价取最早）、
@@ -137,14 +99,22 @@ export function activitySummary(days: { key: string; cost: number }[]): {
   totalCost: number;
   best: { key: string; cost: number } | null;
   streak: number;
+  longest: number;
 } {
   let activeDays = 0;
   let totalCost = 0;
   let best: { key: string; cost: number } | null = null;
+  let longest = 0;
+  let run = 0;
   for (const d of days) {
-    if (d.cost <= 0) continue;
+    if (d.cost <= 0) {
+      run = 0;
+      continue;
+    }
     activeDays += 1;
     totalCost += d.cost;
+    run += 1;
+    if (run > longest) longest = run;
     if (best === null || d.cost > best.cost) best = { key: d.key, cost: d.cost };
   }
   let streak = 0;
@@ -152,19 +122,47 @@ export function activitySummary(days: { key: string; cost: number }[]): {
     if (days[i].cost <= 0) break;
     streak += 1;
   }
-  return { activeDays, totalCost, best, streak };
+  return { activeDays, totalCost, best, streak, longest };
 }
 
-/** 热力指标：花费 / Token。 */
-export type HeatMetric = "cost" | "tokens";
+/**
+ * 较上一周期涨跌：delta = (cur − prev) / prev；prev ≤ 0 或任一缺省时为 null。
+ * 成本上涨是坏事还是中性由调用方定文案，此处只给数字。
+ */
+export function prevDelta(cur: number | null | undefined, prev: number | null | undefined): number | null {
+  if (cur === null || cur === undefined || prev === null || prev === undefined || prev <= 0) return null;
+  return (cur - prev) / prev;
+}
+
+/** 最长单次：毫秒 → "16m12s"（复用 s/m/h 层级，无秒时不补零）。 */
+export function formatMaxDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m < 60) return rest === 0 ? `${m}m` : `${m}m${rest}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm === 0 ? `${h}h` : `${h}h${rm}m`;
+}
+
+/** 热力指标：花费 / Token / 请求（设计稿默认请求）。 */
+export type HeatMetric = "cost" | "tokens" | "requests";
+
+/** 趋势指标：花费 / Token（面积图的 panel-head 扩展切换）。 */
+export type TrendMetric = "cost" | "tokens";
 
 export interface HeatDayDetail {
   key: string;
   weekday: string;
   cost: number;
   tokens: number;
+  requests: number;
+  topProject: string | null;
   costDelta: number | null;
   tokensDelta: number | null;
+  requestsDelta: number | null;
 }
 
 const HEAT_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
@@ -179,8 +177,9 @@ function heatDelta(prev: number[], value: number): number | null {
 /**
  * 选中日详情：delta = (当日 − 前 7 个条目均值) / 均值；前面不足 7 个用实有条目；
  * 均值为 0 或没有前序条目时为 null。`activity` 是连续日序列，`key` 不存在时返回 null。
+ * trend 点无 requests/topProject 字段，缺省时按 0/null 处理。
  */
-export function heatDayDetail(days: UsageTrendPoint[], key: string): HeatDayDetail | null {
+export function heatDayDetail(days: { key: string; cost: number; tokens: UsageTokens; requests?: number; topProject?: string | null }[], key: string): HeatDayDetail | null {
   const idx = days.findIndex((d) => d.key === key);
   if (idx < 0) return null;
   const day = days[idx];
@@ -191,6 +190,8 @@ export function heatDayDetail(days: UsageTrendPoint[], key: string): HeatDayDeta
     weekday,
     cost: day.cost,
     tokens: day.tokens.total,
+    requests: day.requests ?? 0,
+    topProject: day.topProject ?? null,
     costDelta: heatDelta(
       prev.map((d) => d.cost),
       day.cost,
@@ -198,6 +199,10 @@ export function heatDayDetail(days: UsageTrendPoint[], key: string): HeatDayDeta
     tokensDelta: heatDelta(
       prev.map((d) => d.tokens.total),
       day.tokens.total,
+    ),
+    requestsDelta: heatDelta(
+      prev.map((d) => d.requests ?? 0),
+      day.requests ?? 0,
     ),
   };
 }

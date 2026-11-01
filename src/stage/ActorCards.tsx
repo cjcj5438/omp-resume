@@ -4,6 +4,7 @@
  */
 import { formatUsd } from "../format";
 import { compactNumber } from "../components/usageFormat";
+import { StatePill } from "../components/page";
 import type { StageActor, StageActorState } from "../types";
 import { charFor, type StagePrefs } from "./prefs";
 import { CharacterAvatar } from "./StageCanvas";
@@ -56,15 +57,15 @@ export function ActorCards({ actors, prefs, selectedId, onSelect, onMove }: Acto
               </span>
             </span>
             <span className="stage-card-state">
-              {STATE_WORD[actor.state]}
-              {/* 后端 statusText 常常就是状态词本身（「已结束」「待命」），不重复显示。 */}
+              <StatePill state={actor.state}>{STATE_WORD[actor.state]}</StatePill>
+              {/* 后端 statusText 常常就是状态词本身（「已结束」「待命」是旧词，去重逻辑保留），不重复显示。 */}
               {actor.statusText !== null && !redundant(actor.state, actor.statusText) ? (
                 <span className="stage-card-note"> · {actor.statusText}</span>
               ) : null}
             </span>
             <span className="stage-card-line">{actor.current?.text ?? actor.brief ?? "—"}</span>
             <span className="stage-card-foot">
-              <span className="stage-mono">{compactNumber(actor.contextTokens)}</span>
+              <span className="stage-mono">{compactNumber(actor.contextTokens)} tok</span>
               <span className="stage-mono">{formatUsd(actor.cost)}</span>
             </span>
           </button>

@@ -4,7 +4,8 @@
  * 本视图不自己删除任何东西：勾选后交给 App 的既有批量永久删除编排
  * （DeleteDialog + delete_sessions，含占用拒绝与逐条独立失败）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Broom, Check, RefreshCw, Trash2, Sparkles } from "lucide-react";
 import { listCleanupCandidates, normalizeError } from "../api";
 import { formatRelativeTime, formatSize } from "../format";
 import { retainExisting } from "../listUtils";
@@ -19,11 +20,10 @@ import {
   toggleAllSelectable,
   type CleanupSortDir,
 } from "../cleanup";
-import { ErrorBanner, PageHeader, Seg } from "./page";
+import { ErrorBanner, PageHeader, Panel, Seg } from "./page";
 import type { DeleteTarget } from "../flows";
 import { Badge, EmptyState } from "./ui";
-import { Sparkles } from "lucide-react";
-import "./Usage.css";
+import "./CleanupView.css";
 
 interface CleanupViewProps {
   /** 会话是否在当前已加载列表中（决定「查看」能否跳回主列表）。 */
@@ -43,6 +43,8 @@ function positiveInt(raw: string, min: number): number | null {
   return floored >= min ? floored : null;
 }
 
+const REASONS: CleanupReason[] = ["empty", "cwd_missing", "large", "stale"];
+
 export function CleanupView({
   canView,
   onView,
@@ -60,6 +62,7 @@ export function CleanupView({
   const [error, setError] = useState<AppError | null>(null);
   const [sortDir, setSortDir] = useState<CleanupSortDir>("desc");
   const [reason, setReason] = useState<CleanupReason | null>(null);
+  const [scannedAt, setScannedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -69,6 +72,7 @@ export function CleanupView({
       .then((list) => {
         if (!alive) return;
         setCandidates(list);
+        setScannedAt(new Date());
         // 刷新后丢弃已消失或已变为不可勾选的选中项。
         setChecked(
           (prev) =>
@@ -94,13 +98,18 @@ export function CleanupView({
   }, [days, topN, refreshToken, rescan]);
 
   // 展示顺序完全由前端决定（后端固定体积降序），勾选集合按 path，换序不丢选中。
-  const list = sortCandidates(candidates ?? [], sortDir);
+  const list = useMemo(() => sortCandidates(candidates ?? [], sortDir), [candidates, sortDir]);
   const visible = reason ? list.filter((c) => c.reasons.includes(reason)) : list;
   const counts = reasonCounts(list);
   const selectableCount = visible.filter(isSelectable).length;
   const totals = selectionTotals(visible, checked);
+  // 发起删除时可见集里不可勾选（占用中/占用未知）的被排除条数，随 targets 给 cleanup 对话框 kv 用。
+  const excludedCount = visible.length - selectableCount;
   const allSelected =
     selectableCount > 0 && visible.filter(isSelectable).every((c) => checked.has(c.path));
+  const scannedLabel = scannedAt === null
+    ? null
+    : `${String(scannedAt.getHours()).padStart(2, "0")}:${String(scannedAt.getMinutes()).padStart(2, "0")}`;
 
   function selectReason(next: CleanupReason | null) {
     setReason(next);
@@ -110,50 +119,74 @@ export function CleanupView({
     setChecked((prev) => new Set([...prev].filter((p) => allowed.has(p))));
   }
 
-  const REASONS: CleanupReason[] = ["empty", "cwd_missing", "large", "stale"];
+  function toggleOne(c: CleanupCandidate, on: boolean) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(c.path);
+      else next.delete(c.path);
+      return next;
+    });
+  }
+
+  const REASON_FOOT: Record<CleanupReason, string> = {
+    empty: "0 条有效消息",
+    cwd_missing: "cwd 已删除",
+    large: `体积前 ${topN} 且 ≥5MiB`,
+    stale: `超过 ${days} 天未更新`,
+  };
+
   return (
     <div className="view">
       <PageHeader
         kicker="分析 · 只读扫描"
         title="清理候选"
-        sub="只读扫描本机会话，按规则列出候选；删除走既有永久删除流程（不进废纸篓）。"
+        sub="空会话、失效路径、异常体积与长期未使用。扫描不会改动任何文件；删除仍然走带占用检查的确认流程。"
         actions={
           <>
             <button
               type="button"
-              className="btn"
+              className="btn btn-ghost"
               disabled={loading}
               onClick={() => setRescan((v) => v + 1)}
             >
-              {loading ? <span className="spinner" aria-hidden="true" /> : null}
+              {loading ? <span className="spinner" aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
               重新扫描
             </button>
             <button
               type="button"
-              className="btn btn-danger"
+              className="btn btn-accent"
               disabled={totals.count === 0}
-              onClick={() => onDelete(toDeleteTargets(visible, checked))}
+              onClick={() => onDelete(toDeleteTargets(visible, checked, excludedCount))}
             >
-              删除所选…
+              删除选中{totals.count > 0 ? ` (${totals.count})` : ""}
             </button>
           </>
         }
       />
-      <div className="kpi-grid kpi-grid-4" role="group" aria-label="按原因筛选">
+      <div className="grid-4" role="group" aria-label="按原因筛选" style={{ marginBottom: 16 }}>
         {REASONS.map((r) => (
           <button
             key={r}
             type="button"
-            className="kpi-card"
+            className={reason === r ? "kpi kpi-click is-on" : "kpi kpi-click"}
             aria-pressed={reason === r}
             onClick={() => selectReason(reason === r ? null : r)}
           >
             <span className="kpi-label">{REASON_LABEL[r]}</span>
             <span className="kpi-value">{counts[r]}</span>
+            <span className="kpi-foot">{REASON_FOOT[r]}</span>
           </button>
         ))}
       </div>
       <div className="toolbar cleanup-controls">
+        {reason !== null ? (
+          <span className="cleanup-filter-note">
+            已按原因过滤
+            <button type="button" className="btn btn-small btn-quiet" onClick={() => selectReason(null)}>
+              清除
+            </button>
+          </span>
+        ) : null}
         <label className="cleanup-field">
           超过
           <input
@@ -169,6 +202,7 @@ export function CleanupView({
             }}
             onBlur={() => setDaysText(String(days))}
           />
+          天未更新
         </label>
         <label className="cleanup-field">
           体积前
@@ -185,6 +219,7 @@ export function CleanupView({
             }}
             onBlur={() => setTopNText(String(topN))}
           />
+          名
         </label>
         <Seg
           label="排序方向"
@@ -203,9 +238,6 @@ export function CleanupView({
         >
           {allSelected ? "取消全选" : "全选可勾选项"}
         </button>
-        <span className="cleanup-total" role="status">
-          已选 {totals.count} 个，可释放 {formatSize(totals.bytes)}
-        </span>
       </div>
       <div className="cleanup-body" aria-busy={loading}>
         {error ? <ErrorBanner error={error} onRetry={() => setRescan((v) => v + 1)} /> : null}
@@ -225,88 +257,117 @@ export function CleanupView({
           </div>
         ) : null}
         {visible.length > 0 ? (
-          <table className="manage-table cleanup-table">
-            <thead>
-              <tr>
-                <th scope="col">选择</th>
-                <th scope="col">会话</th>
-                <th scope="col">原因</th>
-                <th scope="col">体积</th>
-                <th scope="col">修改时间</th>
-                <th scope="col">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((c) => {
-                const selectable = isSelectable(c);
-                return (
-                  <tr key={c.path} className={selectable ? undefined : "cleanup-locked"}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        disabled={!selectable}
-                        checked={checked.has(c.path)}
-                        aria-label={`选择 ${c.title}`}
-                        onChange={(e) =>
-                          setChecked((prev) => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(c.path);
-                            else next.delete(c.path);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <div className="row-title" title={c.title}>
-                        {c.title}
-                      </div>
-                      <div className="row-meta">
-                        <span className="mono" title={c.cwd}>
-                          {c.cwd.split("/").filter(Boolean).pop() ?? c.cwd}
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="cleanup-reasons">
-                        {c.reasons.map((r) => (
-                          <Badge key={r} tone="grey">
-                            {REASON_LABEL[r]}
-                          </Badge>
-                        ))}
-                      </span>
-                    </td>
-                    <td>{formatSize(c.bytes)}</td>
-                    <td>{formatRelativeTime(c.mtime)}</td>
-                    <td>
-                      <span className="cleanup-actions">
-                        {c.inUse ? (
-                          <Badge tone="accent">占用中</Badge>
-                        ) : !c.probeOk ? (
-                          <Badge tone="grey" title="占用探测失败，不敢断言空闲，不可删除">
-                            占用未知
-                          </Badge>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn btn-small"
-                          disabled={!canView(c.path)}
-                          title={
-                            canView(c.path)
-                              ? "在主列表中选中该会话"
-                              : "该会话当前不在会话列表中（可能因无标题且无用户消息被隐藏）"
-                          }
-                          onClick={() => onView(c.path)}
-                        >
-                          查看
-                        </button>
-                      </span>
-                    </td>
+          <Panel
+            title="可清理的会话"
+            icon={Broom}
+            meta={`${visible.length} 项 · ${totals.count > 0 ? `已选 ${formatSize(totals.bytes)}` : "未选择"}`}
+            body="flush"
+            foot={
+              <>
+                <span>删除前会做一次占用探测；正在使用的会话会被排除。</span>
+                {scannedLabel !== null ? <span className="mono">扫描于 {scannedLabel}</span> : null}
+              </>
+            }
+          >
+            <div className="tbl-wrap">
+              <table className="tbl cleanup-table">
+                <colgroup>
+                  <col className="cleanup-col-check" />
+                  <col className="cleanup-col-session" />
+                  <col className="cleanup-col-reason" />
+                  <col className="cleanup-col-size" />
+                  <col className="cleanup-col-time" />
+                  <col className="cleanup-col-actions" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col" aria-label="选择" />
+                    <th scope="col">会话</th>
+                    <th scope="col">原因</th>
+                    <th scope="col" className="r">体积</th>
+                    <th scope="col" className="r">修改时间</th>
+                    <th scope="col" aria-label="操作" className="cleanup-actions" />
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {visible.map((c) => {
+                    const selectable = isSelectable(c);
+                    const on = checked.has(c.path);
+                    return (
+                      <tr key={c.path} className={selectable ? undefined : "cleanup-locked"}>
+                        <td>
+                          <button
+                            type="button"
+                            className={on ? "sel-box is-on" : "sel-box"}
+                            disabled={!selectable}
+                            aria-label={`选择 ${c.title}`}
+                            aria-pressed={on}
+                            onClick={() => toggleOne(c, !on)}
+                          >
+                            <Check size={10} aria-hidden="true" />
+                          </button>
+                        </td>
+                        <td className="cleanup-session">
+                          <span className="cleanup-title-row">
+                            <span className="strong cleanup-title" title={c.title}>
+                              {c.title}
+                            </span>
+                            {c.inUse ? <Badge tone="accent">占用中</Badge> : null}
+                            {!c.inUse && !c.probeOk ? (
+                              <Badge tone="grey" title="占用探测失败，不敢断言空闲，不可删除">
+                                占用未知
+                              </Badge>
+                            ) : null}
+                          </span>
+                          <span className="sub mono" title={c.cwd}>
+                            {c.cwd.split("/").filter(Boolean).pop() ?? c.cwd}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="cleanup-reasons">
+                            {c.reasons.map((r) => (
+                              <Badge key={r} tone="warn">
+                                {REASON_LABEL[r]}
+                              </Badge>
+                            ))}
+                          </span>
+                        </td>
+                        <td className="r mono">{formatSize(c.bytes)}</td>
+                        <td className="r mono">{formatRelativeTime(c.mtime)}</td>
+                        <td className="cleanup-actions">
+                          <span className="cell-actions">
+                            <button
+                              type="button"
+                              className="btn btn-small btn-quiet"
+                              disabled={!canView(c.path)}
+                              title={
+                                canView(c.path)
+                                  ? "在主列表中选中该会话"
+                                  : "该会话当前不在会话列表中（可能因无标题且无用户消息被隐藏）"
+                              }
+                              onClick={() => onView(c.path)}
+                            >
+                              查看
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-small btn-quiet btn-danger-ghost cleanup-del"
+                              disabled={!selectable}
+                              aria-label={`删除 ${c.title}`}
+                              title={selectable ? `删除 ${c.title}` : "占用中或占用未知，不可删除"}
+                              onClick={() => onDelete(toDeleteTargets([c], new Set([c.path]), excludedCount))}
+                            >
+                              <Trash2 size={13} aria-hidden="true" />
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
         ) : null}
       </div>
     </div>

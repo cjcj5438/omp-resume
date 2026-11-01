@@ -18,6 +18,7 @@ function actor(id: string, over: Partial<StageActor> = {}): StageActor {
     model: null,
     contextTokens: 0,
     cost: 0,
+    provenance: null,
     toolCalls: 0,
     current: null,
     recent: [],

@@ -7,7 +7,6 @@
   --stage-idle: var(--text-muted);
   --stage-queue: #b25a00;
   --stage-lost: #8e8e93;
-  overflow: hidden;
 }
 
 :root[data-theme="dark"] .stage-view {
@@ -15,19 +14,21 @@
 }
 
 .stage-body {
-  flex: 1;
-  min-height: 0;
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
 }
 
+/* 左栏会话选择：sticky + 自滚（设计稿 ws-rail 同构）；整页由外层 .main-pane 纵滚。 */
 .stage-rail {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 120px);
   border-right: 1px solid var(--border);
   overflow-y: auto;
   padding: 8px;
   background: var(--bg-sidebar);
 }
-
 .stage-rail-group + .stage-rail-group {
   margin-top: 12px;
 }
@@ -100,13 +101,11 @@
 
 .stage-main {
   min-width: 0;
-  overflow-y: auto;
   padding: 10px 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
 .stage-head-title {
   font-size: var(--fs-sm);
   color: var(--text-muted);
@@ -213,6 +212,48 @@
   outline: 1px solid var(--accent);
 }
 
+/* +N 溢出标记（stage-P1-12）：lane 用尽时收起低优先级标签，hover 显示名单。 */
+.stage-label-more {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid var(--border);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+  opacity: 0;
+  will-change: transform;
+}
+
+.stage-label-more-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  display: none;
+  max-width: 220px;
+  padding: 4px 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.stage-label-more.is-on .stage-label-more-tip {
+  display: block;
+}
+
 .stage-tip {
   position: absolute;
   z-index: 3;
@@ -233,15 +274,6 @@
   font-family: var(--mono);
   font-size: var(--fs-xs);
   color: var(--text-muted);
-}
-
-/* ---- 筛选 ---- */
-
-.stage-filters {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  flex: none;
 }
 
 .stage-head-row {
@@ -358,30 +390,6 @@
   display: flex;
   justify-content: space-between;
   color: var(--text-muted);
-}
-
-/* ---- 时间线 + 活动流 ---- */
-
-.stage-lower {
-  flex: none;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
-}
-
-.stage-panel {
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  padding: var(--sp-2) var(--sp-3) var(--sp-3);
-  min-width: 0;
-}
-
-.stage-panel-head {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  margin: 0 0 var(--sp-1);
 }
 
 .stage-timeline {
@@ -633,6 +641,227 @@
 }
 
 @media (max-width: 900px) {
-  .stage-lower { grid-template-columns: minmax(0, 1fr); }
   .stage-lib-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---- 角色 aside / 原始节点对话框 / 活动流 code pill ---- */
+.stage-aside {
+  align-self: start;
+}
+
+.actor-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.actor-summary .stage-avatar {
+  width: 30px;
+  height: 38px;
+}
+
+.actor-summary-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.actor-summary h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actor-summary p {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.feed-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 11px;
+}
+
+.feed-item:last-child {
+  border-bottom: 0;
+}
+
+.feed-time {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  padding-top: 1px;
+}
+
+.feed-text {
+  color: var(--text-muted);
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.feed-text code,
+.stage-feed-code {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--bg-raised);
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.stage-detail-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* 主活动流：亮色多行文本 + 9.5px 时间列（设计稿 feed-text 口径）。 */
+.stage-feed-text {
+  align-items: flex-start;
+  white-space: normal;
+  color: var(--text);
+}
+
+.stage-feed-row {
+  grid-template-columns: 40px 66px minmax(0, 1fr);
+}
+
+.stage-feed-time {
+  font-size: 9.5px;
+}
+
+/* ---- 筛选条 / 场景 / 布局（设计稿 stage-filterbar/scene/stage-layout） ---- */
+.stage-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  flex: none;
+}
+
+.stage-filterbar .spacer {
+  flex: 1;
+}
+
+.stage-filterbar .meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.stage-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 316px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1120px) {
+  .stage-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.scene {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.scene-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.scene-top .live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.scene-note {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scene-empty {
+  min-height: 296px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* 画布工具条在 scene 内：去掉外边距，与 scene-top 拉开距离。 */
+.scene .stage-canvas-tools {
+  padding: 8px 12px 0;
+  margin-bottom: 0;
+}
+
+.scene .stage-canvas-box {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* seg 计数 pill（stage 本地覆盖，不动共享 Seg）。 */
+.stage-filterbar .seg-count {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.stage-filterbar .seg .btn[aria-pressed="true"] .seg-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 时间线名列提到 10px（SVG 文本不受 7/8px 画布例外约束）。 */
+.stage-tl-name {
+  font-size: 10px;
+}
+
+.stage-tl-tick {
+  font-size: 8px;
 }
