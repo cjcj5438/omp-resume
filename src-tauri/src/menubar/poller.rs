@@ -11,13 +11,16 @@ use super::classify::{self, ClassifyInput, SessionStatus, TitleState};
 use super::detect;
 use super::iterm::{self, ParsedTitle, Runner};
 use super::menu::{self, MenuModel, RowInput};
-use super::notify::{self, NotifyAction, Tracker, Transition};
+use super::notify::{self, NotifyAction, NotifyFlags, Tracker, Transition};
+use super::settings::Settings;
 use super::tail::{self, TailState};
 
 /// 轮询间隔（秒）。
 pub const POLL_INTERVAL_SECS: u64 = 3;
 /// 索引兜底重建周期（轮数；inUse 变化时立即重建）。
 const INDEX_REFRESH_TICKS: u64 = 10;
+/// 结束确认轮数：连续这么多轮不在占用集里才算结束（约 6 秒）。
+const FINISH_CONFIRM_POLLS: u8 = 2;
 
 /// 占用者解析（T1 的 lsof+归类部分），便于测试注入。
 pub trait OccupantSource {
@@ -51,6 +54,8 @@ pub struct Snapshot {
     pub status: SessionStatus,
     /// 中文判定依据（探针展示，不进菜单）。
     pub reason: String,
+    /// 会话 header 的 cwd（项目名展示用）。
+    pub cwd: Option<String>,
     pub app: Option<String>,
     pub pid: Option<u32>,
     pub tty: Option<String>,
@@ -78,6 +83,8 @@ pub struct PollOutcome {
     pub snapshots: Vec<Snapshot>,
     /// None = 本轮失败，调用方保留旧菜单。
     pub menu: Option<MenuModel>,
+    /// 本轮菜单行的输入快照（设置变更重建菜单用；错误时为空）。
+    pub rows: Vec<RowInput>,
     pub actions: Vec<NotifyAction>,
     pub transitions: Vec<Transition>,
     pub timings: Timings,
@@ -103,6 +110,10 @@ pub struct Poller {
     prev_status: HashMap<String, SessionStatus>,
     busy_since: HashMap<String, i64>,
     seen_at: HashMap<String, i64>,
+    /// 会话 id → 上次见到的标题（结束通知用）。
+    last_title: HashMap<String, String>,
+    /// 会话 id → (标题, 连续缺席轮数)（结束确认中）。
+    vanished: HashMap<String, (String, u8)>,
     tracker: Tracker,
     tick: u64,
 }
@@ -128,12 +139,14 @@ impl Poller {
             prev_status: HashMap::new(),
             busy_since: HashMap::new(),
             seen_at: HashMap::new(),
+            last_title: HashMap::new(),
+            vanished: HashMap::new(),
             tracker: Tracker::default(),
             tick: 0,
         }
     }
 
-    pub fn poll_once(&mut self, now: i64, notify_on: bool, dock_on: bool) -> PollOutcome {
+    pub fn poll_once(&mut self, now: i64, settings: &Settings) -> PollOutcome {
         let total = Instant::now();
         let mut timings = Timings::default();
 
@@ -145,6 +158,7 @@ impl Poller {
                 return PollOutcome {
                     snapshots: Vec::new(),
                     menu: None,
+                    rows: Vec::new(),
                     actions: Vec::new(),
                     transitions: Vec::new(),
                     timings,
@@ -158,6 +172,8 @@ impl Poller {
 
         // ---- T1：inUse 变化时重建索引 + 占用者 + tty ----
         let t = Instant::now();
+        // 本轮 T0 之前的占用集：结束检测用（`prev_inuse` 在下面会被覆盖）。
+        let prev_inuse_snapshot = self.prev_inuse.clone();
         if inuse != self.prev_inuse || self.tick.is_multiple_of(INDEX_REFRESH_TICKS) {
             if let Ok(index) = detect::build_index(&self.sessions_dir) {
                 self.index = index;
@@ -283,6 +299,7 @@ impl Poller {
                 title: tail.title(),
                 status,
                 reason: verdict.reason,
+                cwd: tail.header_cwd().map(str::to_string),
                 app,
                 pid,
                 tty,
@@ -295,25 +312,64 @@ impl Poller {
         }
         timings.t2_ms = t.elapsed().as_secs_f64() * 1000.0;
 
-        // 清理已消失会话的缓存。
+        // 结束检测（CONTRACT §17.5）：上轮在占用集、本轮不在的 id 进入确认；
+        // 连续 FINISH_CONFIRM_POLLS 轮缺席才算结束。失败轮已提前返回，不动 vanished。
+        // 注意用本轮 T0 的 `inuse` 而非快照 `live`：读失败跳过的会话仍在占用，
+        // 不能算缺席。
         let live: HashSet<&str> = snapshots.iter().map(|s| s.id.as_str()).collect();
+        for s in &snapshots {
+            self.last_title.insert(s.id.clone(), s.title.clone());
+        }
+        for id in prev_inuse_snapshot {
+            if !inuse.contains(&id) {
+                let title = self
+                    .last_title
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "未命名会话".to_string());
+                self.vanished.entry(id).or_insert((title, 0));
+            }
+        }
+        let mut finished: Vec<(String, String)> = Vec::new();
+        self.vanished.retain(|id, (title, misses)| {
+            if inuse.contains(id) {
+                // 中途重新出现：取消确认。
+                return false;
+            }
+            *misses += 1;
+            if *misses >= FINISH_CONFIRM_POLLS {
+                finished.push((id.clone(), title.clone()));
+                return false;
+            }
+            true
+        });
+
+        // 清理已消失会话的缓存。
         self.tails.retain(|id, _| live.contains(id.as_str()));
         self.prev_status.retain(|id, _| live.contains(id.as_str()));
         self.busy_since.retain(|id, _| live.contains(id.as_str()));
         self.seen_at.retain(|id, _| live.contains(id.as_str()));
+        self.last_title.retain(|id, _| live.contains(id.as_str()));
         for id in self.prev_inuse.clone() {
             if !live.contains(id.as_str()) {
                 self.tracker.forget(&id);
             }
         }
 
-        let actions = notify::decide(&transitions, now, notify_on, &mut self.tracker);
+        let actions = notify::decide(
+            &transitions,
+            &finished,
+            now,
+            NotifyFlags::from(settings),
+            &mut self.tracker,
+        );
         let rows: Vec<RowInput> = snapshots
             .iter()
             .map(|s| RowInput {
                 session_id: s.id.clone(),
                 title: s.title.clone(),
                 status: s.status,
+                project: project_name(s.cwd.as_deref()),
                 app_label: s.app.clone(),
                 pid: s.pid,
                 focusable: s.focusable,
@@ -322,12 +378,13 @@ impl Poller {
                 idle_secs: s.idle_secs,
             })
             .collect();
-        let menu = menu::build_model(rows, notify_on, dock_on);
+        let menu = menu::build_model(rows.clone(), settings);
         self.tick += 1;
         timings.total_ms = total.elapsed().as_secs_f64() * 1000.0;
         PollOutcome {
             snapshots,
             menu: Some(menu),
+            rows,
             actions,
             transitions,
             timings,
@@ -349,6 +406,15 @@ fn focus_block_reason(s: &Snapshot) -> Option<String> {
         return Some("仅 iTerm 可聚焦".to_string());
     }
     Some("未找到终端".to_string())
+}
+
+/// cwd 末个非空段即项目名（无 cwd 或全空时 None）。
+fn project_name(cwd: Option<&str>) -> Option<String> {
+    cwd.and_then(|c| {
+        c.rsplit('/')
+            .find(|seg| !seg.is_empty())
+            .map(str::to_string)
+    })
 }
 
 #[cfg(test)]
@@ -483,7 +549,7 @@ mod tests {
         titles.insert("/dev/ttys009".to_string(), "π > 测试会话 (omp)".to_string());
         let mut p = poller(&h, titles, Some("iTerm2"));
         // 第一轮：只有头，无有意义记录 → 空闲。
-        let o1 = p.poll_once(1_790_000_000, true, false);
+        let o1 = p.poll_once(1_790_000_000, &Settings::default());
         assert!(o1.error.is_none());
         assert_eq!(o1.inuse_total, 1);
         assert_eq!(o1.snapshots.len(), 1);
@@ -494,7 +560,7 @@ mod tests {
         // 追加 assistant stop（60 秒前）→ 等待输入；但首个转换 prev=Idle → 不通知。
         h.append(r#"{"type":"message","id":"a1","parentId":null,"timestamp":"2026-10-16T12:00:00.000Z","message":{"role":"assistant","content":[],"stopReason":"stop"}}"#);
         let now = 1_790_000_000 + 3600 + 60;
-        let o2 = p.poll_once(now, true, false);
+        let o2 = p.poll_once(now, &Settings::default());
         assert_eq!(o2.snapshots[0].status, SessionStatus::WaitingInput);
         assert!(o2.actions.is_empty());
         // 标题切旋转符 → 工作中。
@@ -511,7 +577,7 @@ mod tests {
         let h = Harness::setup("VS 会话");
         h.append(r#"{"type":"message","id":"a1","parentId":null,"timestamp":"2026-10-16T12:00:00.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"read"}],"stopReason":"toolUse"}}"#);
         let mut p = poller(&h, HashMap::new(), Some("VS Code"));
-        let o = p.poll_once(1_790_001_000, true, false);
+        let o = p.poll_once(1_790_001_000, &Settings::default());
         assert_eq!(o.snapshots.len(), 1);
         // 无标题信号，但有未配对工具 → 工作中；不可聚焦。
         assert_eq!(o.snapshots[0].status, SessionStatus::Working);
@@ -530,7 +596,7 @@ mod tests {
         let held = std::fs::OpenOptions::new().read(true).open(&sub).unwrap();
         unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         let mut p = poller(&h, HashMap::new(), None);
-        let o = p.poll_once(1_790_000_000, true, false);
+        let o = p.poll_once(1_790_000_000, &Settings::default());
         assert_eq!(o.inuse_total, 2);
         assert_eq!(o.unattributed, 1);
         assert_eq!(o.snapshots.len(), 1);
@@ -541,7 +607,7 @@ mod tests {
         let h = Harness::setup("顶层");
         let mut p = poller(&h, HashMap::new(), None);
         p.owners_dir = h._owners.path().join("missing");
-        let o = p.poll_once(1_790_000_000, true, false);
+        let o = p.poll_once(1_790_000_000, &Settings::default());
         assert!(o.menu.is_none());
         assert!(o.error.is_some());
     }
@@ -554,7 +620,7 @@ mod tests {
         );
         let mut p = poller(&h, HashMap::new(), None);
         // t0：工作中（未配对工具）。
-        let o = p.poll_once(1_790_000_000, true, false);
+        let o = p.poll_once(1_790_000_000, &Settings::default());
         assert_eq!(o.snapshots[0].status, SessionStatus::Working);
         assert!(o.actions.is_empty());
         // t0+40：工具返回 + 回合结束 → 等待输入；忙碌 40s ≥ 30s 门槛 → 通知。
@@ -565,7 +631,7 @@ mod tests {
         h.append(
             r#"{"type":"message","id":"a3","parentId":"a2","timestamp":"2026-10-16T12:01:01.000Z","message":{"role":"assistant","content":[],"stopReason":"stop"}}"#,
         );
-        let o = p.poll_once(1_790_000_040, true, false);
+        let o = p.poll_once(1_790_000_040, &Settings::default());
         assert_eq!(o.snapshots[0].status, SessionStatus::WaitingInput);
         assert!(
             matches!(o.actions.as_slice(), [NotifyAction::Waiting { .. }]),
@@ -586,13 +652,108 @@ mod tests {
             r#"{{"type":"message","id":"a1","parentId":null,"timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"t1","name":"read"}}],"stopReason":"toolUse"}}}}"#
         ));
         let mut p = poller(&h, HashMap::new(), None);
-        let o = p.poll_once(1_790_000_000, true, false);
+        let o = p.poll_once(1_790_000_000, &Settings::default());
         assert_eq!(o.snapshots[0].status, SessionStatus::Stuck);
         // 首次观察到卡住 = 出现一次 → 通知。
         assert_eq!(o.actions.len(), 1, "{:?}", o.actions);
         assert!(matches!(o.actions[0], NotifyAction::Stuck { .. }));
         // 同一 episode 内重复观察不再通知。
-        let o = p.poll_once(1_790_000_003, true, false);
+        let o = p.poll_once(1_790_000_003, &Settings::default());
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+    }
+
+    #[test]
+    fn project_name_takes_last_segment() {
+        assert_eq!(project_name(None), None);
+        assert_eq!(project_name(Some("")), None);
+        assert_eq!(project_name(Some("/")), None);
+        assert_eq!(
+            project_name(Some("/Users/x/my/omp-resume")),
+            Some("omp-resume".to_string())
+        );
+        // 末尾斜杠不影响。
+        assert_eq!(
+            project_name(Some("/Users/x/proj/")),
+            Some("proj".to_string())
+        );
+    }
+
+    #[test]
+    fn snapshot_carries_cwd_and_rows() {
+        let h = Harness::setup("带目录会话");
+        let mut p = poller(&h, HashMap::new(), None);
+        let o = p.poll_once(1_790_000_000, &Settings::default());
+        assert_eq!(o.snapshots[0].cwd.as_deref(), Some("/tmp"));
+        assert_eq!(o.rows.len(), 1);
+        assert_eq!(o.rows[0].project.as_deref(), Some("tmp"));
+    }
+
+    /// 释放锁文件：模拟会话结束（锁仍在但不被持有 → 不在占用集）。
+    fn release_lock(h: &Harness) {
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::flock(h._held.as_raw_fd(), libc::LOCK_UN) };
+    }
+
+    #[test]
+    fn finish_needs_two_consecutive_polls() {
+        let h = Harness::setup("会结束的会话");
+        let mut p = poller(&h, HashMap::new(), None);
+        let settings = Settings {
+            notify_on_finish: true,
+            ..Settings::default()
+        };
+        let o = p.poll_once(1_790_000_000, &settings);
+        assert_eq!(o.snapshots.len(), 1);
+        assert!(o.actions.is_empty());
+        // 第 1 轮缺席：进入确认，不通知。
+        release_lock(&h);
+        let o = p.poll_once(1_790_000_003, &settings);
+        assert!(o.snapshots.is_empty());
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        // 第 2 轮仍缺席：确认结束，通知。
+        let o = p.poll_once(1_790_000_006, &settings);
+        assert!(
+            matches!(o.actions.as_slice(), [NotifyAction::Finished { .. }]),
+            "{:?}",
+            o.actions
+        );
+        // 只通知一次。
+        let o = p.poll_once(1_790_000_009, &settings);
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        // 开关关时不通知。
+        let h2 = Harness::setup("静默结束");
+        let mut p2 = poller(&h2, HashMap::new(), None);
+        let quiet = Settings::default();
+        assert!(!quiet.notify_on_finish);
+        let _ = p2.poll_once(1_790_000_000, &quiet);
+        release_lock(&h2);
+        let _ = p2.poll_once(1_790_000_003, &quiet);
+        let o = p2.poll_once(1_790_000_006, &quiet);
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+    }
+
+    #[test]
+    fn finish_cancelled_when_session_reappears() {
+        let h = Harness::setup("抖动会话");
+        let mut p = poller(&h, HashMap::new(), None);
+        let settings = Settings {
+            notify_on_finish: true,
+            ..Settings::default()
+        };
+        let _ = p.poll_once(1_790_000_000, &settings);
+        // 第 1 轮缺席。
+        release_lock(&h);
+        let o = p.poll_once(1_790_000_003, &settings);
+        assert!(o.actions.is_empty());
+        // 第 2 轮重新出现：取消确认。
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::flock(h._held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        let o = p.poll_once(1_790_000_006, &settings);
+        assert_eq!(o.snapshots.len(), 1);
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        // 之后再消失：重新计数，第 1 轮仍不通知。
+        release_lock(&h);
+        let o = p.poll_once(1_790_000_009, &settings);
         assert!(o.actions.is_empty(), "{:?}", o.actions);
     }
 }

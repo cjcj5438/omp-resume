@@ -284,12 +284,32 @@ async fn omp_version() -> Result<model::OmpVersion, AppError> {
     blocking(|| omp_cli::omp_version_impl(omp_cli::resolve_omp().as_deref())).await
 }
 
+/// CONTRACT §4.68：应用关键路径（只读展示）。
+#[tauri::command]
+async fn get_app_paths(
+    cfg: tauri::State<'_, config::Config>,
+) -> Result<model::AppPaths, model::AppError> {
+    let cfg = cfg.inner().clone();
+    blocking(move || {
+        Ok(model::AppPaths {
+            sessions_dir: cfg.sessions_dir.to_string_lossy().to_string(),
+            owners_dir: cfg.owners_dir.to_string_lossy().to_string(),
+            history_db: history::resolve_db_path().to_string_lossy().to_string(),
+            memory_dir: memory::resolve_bank_root().to_string_lossy().to_string(),
+            data_dir: meta::data_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string()),
+            omp_bin: omp_cli::resolve_omp().map(|p| p.to_string_lossy().to_string()),
+        })
+    })
+    .await
+}
+
 /// CONTRACT §4.10：只检查 omp 更新，不安装。
 #[tauri::command]
 async fn omp_update_check() -> Result<model::OmpUpdateCheck, AppError> {
     blocking(|| omp_cli::omp_update_check_impl(omp_cli::resolve_omp().as_deref())).await
 }
-
 /// CONTRACT §4.11：持有全局门禁，逐行推送实际更新日志。
 #[tauri::command]
 async fn omp_update_run(
@@ -330,11 +350,7 @@ pub fn run() {
                 meta::data_dir().unwrap_or_else(|_| std::env::temp_dir().join("omp-resume"));
             let settings = menubar::settings::load(&data_dir);
             app.manage(menubar::tray::Shared::new(data_dir, settings.clone()));
-            let initial = menubar::menu::build_model(
-                Vec::new(),
-                settings.notify_on_waiting,
-                settings.show_dock_icon,
-            );
+            let initial = menubar::menu::build_model(Vec::new(), &settings);
             let _tray = menubar::tray::create_tray(app, &initial)?;
             menubar::tray::register_click_handler(app.handle())?;
             menubar::tray::apply_badge(app.handle(), &initial);
@@ -436,7 +452,11 @@ pub fn run() {
             memory::memory_delete_items,
             memory::memory_delete_bank,
             memory::memory_restore,
-            memory::memory_delete_backup
+            memory::memory_delete_backup,
+            menubar::tray::get_tray_settings,
+            menubar::tray::set_tray_settings,
+            menubar::tray::get_tray_preview,
+            get_app_paths
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

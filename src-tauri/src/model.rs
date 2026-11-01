@@ -1948,3 +1948,75 @@ pub struct ModelSpecUpdateResult {
     pub spec: ModelSpec,
     pub backup_path: String,
 }
+
+// ---------------------------------------------------------------------------
+// 菜单栏设置（CONTRACT §17.10）：托盘菜单的只读预览 + 设置读写。
+// ---------------------------------------------------------------------------
+
+/// 菜单栏页预览（由托盘缓存模型映射，前端不重算文案）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPreview {
+    /// 首轮检测是否已完成（false 时 rows 为空，前端显示提示）。
+    pub ready: bool,
+    pub header: String,
+    pub tray_title: Option<String>,
+    /// 仅 `show_cost` 为真时有值。
+    pub cost_text: Option<String>,
+    pub rows: Vec<TrayPreviewRow>,
+    pub overflow: Vec<TrayPreviewRow>,
+    pub recent: Vec<TrayPreviewEntry>,
+    pub projects: Vec<TrayPreviewEntry>,
+    /// `None` = 尚未读到模式列表（不显示子菜单）。
+    pub modes: Option<Vec<TrayPreviewMode>>,
+    pub badge_samples: Vec<TrayBadgeSample>,
+}
+
+/// 预览里的会话行。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPreviewRow {
+    pub session_id: String,
+    /// `SessionStatus::key()`：working/waiting/idle/stuck。
+    pub status: String,
+    /// 完整行文本（与原生菜单一致）。
+    pub text: String,
+    pub enabled: bool,
+}
+
+/// 预览里的最近会话 / 项目条目（key 为会话 id 或 cwd）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPreviewEntry {
+    pub key: String,
+    pub text: String,
+}
+
+/// 预览里的模式条目。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayPreviewMode {
+    pub name: String,
+    pub active: bool,
+    pub enabled: bool,
+}
+
+/// 徽标样式预览样例（state 为状态 key，title 为 None 时只显示图标）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayBadgeSample {
+    pub state: String,
+    pub title: Option<String>,
+}
+
+/// 应用关键路径（CONTRACT §4.68，只读展示）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPaths {
+    pub sessions_dir: String,
+    pub owners_dir: String,
+    pub history_db: String,
+    pub memory_dir: String,
+    pub data_dir: Option<String>,
+    pub omp_bin: Option<String>,
+}

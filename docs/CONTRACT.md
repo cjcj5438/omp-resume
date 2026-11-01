@@ -25,7 +25,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
 - 命令清单（§4 编号）：4.1–4.11 会话/更新、4.12–4.22 插件/技能、
   4.30–4.35 MCP、4.36–4.38 模型配置、4.39–4.50 记忆库、4.51–4.53 模型测试、4.56 bench 记录删除、
   4.54–4.55 模型规格（§21）、4.57–4.58 Agent 舞台（§23）、4.59 agent 定义详情（§23.6）、
-  4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）。
+  4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）、4.68 应用路径（§25.6）。
 
 ## 1. 配置解析
 
@@ -1347,22 +1347,24 @@ classify:
 生成方法：纯 Python 画 88×88 位图（顶横+双竖的 π）后 2×2 盒式下采样到 44×44
 写 RGBA PNG；如需重绘，按上述逻辑重跑即可。
 
-图标旁标题（单色窄文本；无占用时只显示图标）：
+图标旁标题（单色窄文本；无占用时只显示图标）。样式由设置 `badgeStyle` 控制：
 
-| 情形 | 字样 |
+| 样式 | 字样 |
 |---|---|
-| 无占用会话 | （空） |
-| 有占用 | `<工作中+疑似卡住>·<等待输入>`，如 `2·1` |
-| 有疑似卡住 | 追加 `!`，如 `1·0!` |
+| `count`（计数，默认） | `<工作中+疑似卡住>·<等待输入>`，如 `2·1`；有疑似卡住追加 `!`，如 `1·0!` |
+| `dot`（圆点） | 有等待输入/疑似卡住时为 `●`，否则为 `○` |
+| `icon`（仅图标） | 恒为空（只显示图标） |
 
 下拉菜单自上而下：①头部（禁用项）`omp 会话 · 占用 N · 工作中 X · 等待输入 Y`
 （含疑似卡住时追加 `· 疑似卡住 Z`；无占用：`没有运行中的 omp 会话`）；
 ②今日花费行（禁用项）`今日花费 $X.XX`（用量统计的当日花费，见 §17.2；
-首次统计完成前不显示本行）；③分隔线；④会话行按 疑似卡住 → 等待输入 →
+首次统计完成前不显示本行；设置 `showCost` 为关时不显示）；③分隔线；④会话行按 疑似卡住 → 等待输入 →
 工作中 → 空闲 排序，每行 `<原生状态圆点> <标题去 π 前缀与 (omp) 后缀，`
-截断 32 字> · <应用名，iTerm2 时省略> · <状态> · <距上次活动>`
+按设置 `titleWidth` 截断（`compact` 20 / `standard` 32 / `wide` 48 字）>[ · 项目名（`showProject` 开时追加）] · <应用名，iTerm2 时省略> · <状态> · <距上次活动>`
 （距上次活动自最后一条有意义记录起，`刚刚/X分/X小时Y分/X天`），
-有子代理在跑时行尾加 `· 子代理 n`；最多 8 行，超出进「更多…」子菜单；
+有子代理在跑时行尾加 `· 子代理 n`；设置 `showIdle` 为关时空闲行不进菜单（头部计数不变）；
+设置 `compactRows` 为开时每行只保留 `标题[ · 项目名] · 距上次活动`（状态由原生圆点表示）；
+最多 8 行，超出进「更多…」子菜单；
 状态圆点为 macOS 原生 NSImage 状态图标（IconMenuItem）：工作中绿、等待输入黄、
 疑似卡住红、空闲灰（取代旧文本字形 ▶ ⏸ ○ ⚠）；
 点击行 = 聚焦该会话所在 iTerm 标签（`activate` + 按 tty `select`）；
@@ -1373,13 +1375,16 @@ classify:
 ⑦「最近会话 ▸」（最近 ≤5 个非运行中会话 `标题 · 项目名`，无则「没有最近会话」，
 点选即在新 iTerm 标签跑 `omp --resume '<path>'`，§4.8 同一语义）；
 ⑧「模式：<name> ▸」（不变，见 §24）；⑨分隔线；⑩「打开主窗口」；
-⑪「设置 ▸」（✓「完成时通知」（默认开）、✓「在 Dock 显示图标」（默认关）、
-分隔线、「检查更新…」，点后拉起主窗口并发出 `check-app-update` 事件走手动检查：
+⑪「设置 ▸」（✓「等待输入时通知」（默认开）、✓「疑似卡住时通知」（默认开，旧文件继承等待开关）、
+✓「会话结束时通知」（默认关）、✓「在 Dock 显示图标」（默认关）、
+分隔线、「更多菜单栏设置…」（拉起主窗口并发出 `open-tray-settings` 事件切到菜单栏页）、
+「检查更新…」，点后拉起主窗口并发出 `check-app-update` 事件走手动检查：
 有新版弹「发现新版本 X」，已是最新 toast「已是最新版本 X」，
 失败 toast「检查更新失败：<msg>」；侧栏底部 `omp-resume <version>` 行的
 「检查应用更新」按钮走同一流程，版本经 `@tauri-apps/api/app` `getVersion` 读取，
 启动时静默检查不变）；⑫分隔线；⑬「退出 omp-resume」。
-菜单项 id 编码会话 id（`session:<id>`）路由事件。
+点击托盘图标的行为由设置 `clickAction` 控制：`menu`（默认）左键弹菜单；
+`window` 左键打开主窗口（右键仍弹菜单）。
 菜单刷新（`menu::refresh_decision`，纯函数 + 单测）：模型一致不动；
 **仅行内文字（距上次活动 / 今日花费）变化**时用已装配菜单项的 `set_text`
 **就地更新**（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
@@ -1394,23 +1399,36 @@ classify:
 `<data_dir>/settings.json`（`OMP_RESUME_DATA_DIR` 可覆盖数据目录）：
 
 ```json
-{"version": 1, "notifyOnWaiting": true, "showDockIcon": false}
+{"version": 1, "notifyOnWaiting": true, "notifyOnStuck": true, "notifyOnFinish": false,
+ "badgeStyle": "count", "titleWidth": "standard", "showCost": true, "showProject": false,
+ "showIdle": true, "compactRows": false, "clickAction": "menu", "showDockIcon": false}
 ```
 
 原子写入（同目录临时文件 → sync → rename），新文件 0600，已有文件保留原权限位。
 损坏/版本不兼容 → **回落默认且不覆盖损坏文件**（与 meta.json 的「拒绝读写」
-口径不同：设置丢了可重选，备注丢了不行）。无 revision（唯一写者是菜单勾选）。
+口径不同：设置丢了可重选，备注丢了不行）。无 revision（写者是原生菜单勾选与
+`set_tray_settings` 命令，主线程串行）。
+
+向后兼容：`version` 仍为 1，新字段靠 `#[serde(default…)]` 兼容旧文件
+（只有 `version/notifyOnWaiting/showDockIcon`）。其中 `notifyOnStuck` 缺省时
+继承 `notifyOnWaiting`（卡住通知过去由等待输入总开关控制，继承后行为不变）；
+其余缺省字段取上表示例的默认值。
 
 ### 17.5 通知（`menubar::notify` + `tray` 接线）
 
+- 三个开关各自门控一类通知：`notifyOnWaiting`（等待输入）、`notifyOnStuck`
+  （疑似卡住）、`notifyOnFinish`（会话结束）。
 - 仅「工作中 → 等待输入」转换通知，且该会话此前工作中（Working/Stuck）
   持续 ≥ 30 秒；同会话 30 秒防抖；同一轮询周期 > 3 个会话转换 → 合并成一条汇总
   （「N 个会话在等你」）；「疑似卡住」首次出现通知一次（离开卡住态后重新计数，
-  即按 episode 一次）。正文只含会话标题（截断 60 字）与状态，**不含对话内容**。
-  设置「完成时通知」关闭时不发。
+  即按 episode 一次；记账始终执行，开关关时不发、中途开启不为进行中的 episode 补发）。
+  正文只含会话标题（截断 60 字）与状态，**不含对话内容**。
+- 结束检测：会话连续 2 轮（约 6 秒）不再出现在占用集才算结束；失败轮不动确认计数；
+  中途重新出现则取消确认。确认结束的会话按标题逐条通知（「会话已结束」），
+  同一轮询周期 > 3 个结束 → 合并成一条汇总（「N 个会话已结束」）。
 - 发送：优先 `tauri-plugin-notification`（2.7.0；Rust 侧 `NotificationExt` 直接
   发送，不需要前端权限调用；`default.json` 不声明通知权限）；
-  点击通知（`tap`）聚焦对应 iTerm 标签（汇总/失败类通知点击打开主窗口）。
+  点击通知（`tap`）聚焦对应 iTerm 标签（等待/卡住类；结束/汇总/失败类通知点击打开主窗口）。
   插件发送失败退回 `osascript display notification`（只展示、不可点击；
   标题/正文经 `applescript_escape` 转义）。
 - **未验证项**：ad-hoc 签名下通知是否需要用户首次授权、点击回调在 ad-hoc 下
@@ -1452,10 +1470,11 @@ classify:
 
 后端 `src-tauri/src/menubar/`：`classify`（状态判定）、`tail`（jsonl 增量读取）、
 `iterm`（标题批量查询/解析/聚焦、`Runner` 可注入）、`detect`（T0 + 索引）、
-`poller`（T0–T3 组装，`OccupantSource` 可注入）、`menu`（菜单模型，含 Dock 角标计数）、
-`settings`（settings.json）、`notify`（通知判定 + osascript 回退）、
-`tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程，含角标应用与 Dock 跳动）、
-`dock`（仅 macOS：Dock 右键菜单，运行时注入 `applicationDockMenu:`）。无新增前端命令；
+`poller`（T0–T3 组装，`OccupantSource` 可注入；含结束确认）、`menu`（菜单模型，含 Dock 角标计数）、
+`settings`（settings.json 读写 + `SettingsPatch`）、`notify`（通知判定 + osascript 回退）、
+`tray`（托盘装配与事件路由，`Shared` 状态 + 轮询线程，含角标应用与 Dock 跳动；
+另提供 `get_tray_settings` / `set_tray_settings` / `get_tray_preview` 三个前端命令，见 §17.10）、
+`dock`（仅 macOS：Dock 右键菜单，运行时注入 `applicationDockMenu:`）。
 探针 `cargo test --test menubar_probe -- --ignored --nocapture`（只读）。
 
 ### 17.8 实测记录（2026-10-16，macOS arm64）
@@ -1499,6 +1518,24 @@ classify:
   再 `npx tauri icon src-tauri/icons/app-icon.png` 产出各尺寸（随后删掉 CLI
   额外生成的 `android/`、`ios/`、`64x64.png`）；macOS 可能缓存旧图标，
   必要时 `killall Dock`。
+
+### 17.10 菜单栏设置命令（`menubar::tray`）
+
+前端菜单栏页经下面三个命令读写设置、取预览（类型见 `model.rs` / `types.ts` 的
+`TraySettings` / `TraySettingsPatch` / `TrayPreview`）：
+
+- `get_tray_settings() -> TraySettings`：读当前内存设置（只读）。
+- `set_tray_settings { patch } -> TraySettings`：按补丁改设置。`patch` 缺席字段
+  不触碰；未知键反序列化失败（前端报 `INVALID_INPUT` 类错误）。成功后返回完整
+  设置，并依次：落盘（失败返回 `Io` 且内存设置不变）、应用 Dock 激活策略、
+  `set_show_menu_on_left_click`、用上轮行快照重建托盘菜单、发出
+  `tray-settings-changed` 事件（payload 为完整设置）。
+- `get_tray_preview() -> TrayPreview`：菜单的只读预览，由托盘缓存模型映射；
+  尚未完成首轮检测时 `ready=false`、行为空。`costText` 仅 `showCost` 为真时有值；
+  `modes` 为 null 表示尚未读到模式列表。前端只渲染、不重算文案。
+- 事件：`tray-settings-changed`（设置变更，payload 为完整设置；原生菜单勾选与
+  `set_tray_settings` 都会发）；`open-tray-settings`（原生菜单「更多菜单栏设置…」
+  发出，无 payload，前端收到后切到菜单栏页）。
 
 ## 18. 记忆库（§4.39–§4.50，Mnemopi 维护：只读 + 写操作 + 关系图）
 
@@ -2182,7 +2219,7 @@ current: ModelPresetSnapshot, rawPresets: unknown }`。
 - 托盘「模式」子菜单由 `spawn_modes_refresher`（30 秒）与三个写命令的
   `tray::publish_modes` 驱动；`MenuModel.modes = None` 表示尚未读到（不显示子菜单）。
 
-## 25. 会话右键菜单的辅助命令（§4.64–§4.67）
+## 25. 会话右键菜单的辅助命令（§4.64–§4.67）与应用路径（§4.68）
 
 > 右键菜单用原生菜单（`src/nativeMenu.ts`），动作分两类：纯前端（复制、置顶、折叠）
 > 与需要后端的一条命令。这里只记后端新增的四个。
@@ -2214,3 +2251,20 @@ current: ModelPresetSnapshot, rawPresets: unknown }`。
 
 `/usr/bin/open <cwd>`。校验与 `new_session_in_iterm` 相同：
 非绝对路径/不是目录 → `CWD_MISSING`；含控制字符 → `INVALID_INPUT`；Runner 失败 → `IO`。
+
+### 25.6 / 4.68 `get_app_paths() -> AppPaths`（只读）
+
+返回应用关键路径（设置页「路径」卡展示；`dataDir` / `ompBin` 找不到时为 null）：
+
+```ts
+AppPaths = { sessionsDir: string; ownersDir: string; historyDb: string; memoryDir: string;
+             dataDir: string | null; ompBin: string | null }
+```
+
+- `sessionsDir` / `ownersDir`：启动配置（§1，同 `list_sessions` 口径）。
+- `historyDb`：`history::resolve_db_path()`（`OMP_RESUME_HISTORY_DB` >
+  `$HOME/.omp/agent/history.db`）。
+- `memoryDir`：`memory::resolve_bank_root()`（`OMP_RESUME_MEMORY_DIR` >
+  `$HOME/.omp/agent/memories/mnemopi/banks`）。
+- `dataDir`：`meta::data_dir()`（失败时 null）。
+- `ompBin`：`omp_cli::resolve_omp()`（找不到时 null）。

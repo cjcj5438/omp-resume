@@ -935,3 +935,83 @@ export interface RunningSession {
   durationSecs: number;
   app: string | null;
 }
+
+// 菜单栏设置（CONTRACT §17.10）：与 Rust `menubar::settings::Settings` 逐字段对应。
+
+/** 托盘徽标样式：计数 / 圆点 / 仅图标。 */
+export type TrayBadgeStyle = "count" | "dot" | "icon";
+
+/** 菜单会话标题截断宽度：紧凑 20 字 / 标准 32 字 / 宽 48 字。 */
+export type TrayTitleWidth = "compact" | "standard" | "wide";
+
+/** 点击托盘图标：弹菜单 / 打开主窗口（右键仍弹菜单）。 */
+export type TrayClickAction = "menu" | "window";
+
+/** 菜单栏设置（`get_tray_settings` 返回、`set_tray_settings` 补丁目标）。 */
+export interface TraySettings {
+  notifyOnWaiting: boolean;
+  notifyOnStuck: boolean;
+  notifyOnFinish: boolean;
+  badgeStyle: TrayBadgeStyle;
+  titleWidth: TrayTitleWidth;
+  showCost: boolean;
+  showProject: boolean;
+  showIdle: boolean;
+  compactRows: boolean;
+  clickAction: TrayClickAction;
+  showDockIcon: boolean;
+}
+
+/** 设置补丁：缺席字段不触碰；未知键后端直接拒绝。 */
+export type TraySettingsPatch = Partial<TraySettings>;
+
+/** 预览里的会话行。 */
+export interface TrayPreviewRow {
+  sessionId: string;
+  status: "working" | "waiting" | "idle" | "stuck";
+  text: string;
+  enabled: boolean;
+}
+
+/** 预览里的最近会话 / 项目条目（key 为会话 id 或 cwd）。 */
+export interface TrayPreviewEntry {
+  key: string;
+  text: string;
+}
+
+/** 预览里的模式条目。 */
+export interface TrayPreviewMode {
+  name: string;
+  active: boolean;
+  enabled: boolean;
+}
+
+/** 徽标样式预览样例（title 为 null 时只显示图标）。 */
+export interface TrayBadgeSample {
+  state: string;
+  title: string | null;
+}
+
+/** 菜单栏页预览（`get_tray_preview` 返回，前端不重算文案）。 */
+export interface TrayPreview {
+  ready: boolean;
+  header: string;
+  trayTitle: string | null;
+  costText: string | null;
+  rows: TrayPreviewRow[];
+  overflow: TrayPreviewRow[];
+  recent: TrayPreviewEntry[];
+  projects: TrayPreviewEntry[];
+  modes: TrayPreviewMode[] | null;
+  badgeSamples: TrayBadgeSample[];
+}
+
+/** 应用关键路径（CONTRACT §4.68，只读展示）。 */
+export interface AppPaths {
+  sessionsDir: string;
+  ownersDir: string;
+  historyDb: string;
+  memoryDir: string;
+  dataDir: string | null;
+  ompBin: string | null;
+}

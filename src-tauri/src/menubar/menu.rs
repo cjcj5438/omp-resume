@@ -5,10 +5,11 @@
 //! 全部由本模块单测锁定，`tray` 只做机械装配。
 
 use super::classify::SessionStatus;
+use super::settings::{BadgeStyle, Settings};
 
 /// 首屏最多会话行数，超出进「更多…」子菜单。
 pub const MAX_ROWS: usize = 8;
-/// 行内标题最大字符数（超出截断加 `…`）。
+/// 行内标题最大字符数（超出截断加 `…`；只留给 `recent_entry`，会话行按设置宽度截断）。
 pub const TITLE_MAX_CHARS: usize = 32;
 /// 托盘「最近会话」子菜单最多条目数。
 pub const RECENT_LIMIT: usize = 5;
@@ -23,6 +24,8 @@ pub struct RowInput {
     pub session_id: String,
     pub title: String,
     pub status: SessionStatus,
+    /// 项目名（cwd 末个非空段；未知时 None）。
+    pub project: Option<String>,
     /// 占用应用展示名（未知时 None）。
     pub app_label: Option<String>,
     /// 占用者 PID（应用未知时展示用）。
@@ -83,8 +86,8 @@ pub struct MenuModel {
     /// 图标旁标题（无占用时 None = 只显示图标）。
     pub tray_title: Option<String>,
     pub tooltip: String,
-    pub notify_on: bool,
-    pub dock_on: bool,
+    /// 构建本模型的设置快照（任一字段变化都算结构性变化）。
+    pub settings: Settings,
     /// 需要用户处理的会话数（等待输入 + 疑似卡住），Dock 角标用；0 = 无角标。
     pub badge_count: usize,
     /// 模型模式列表；`None` = 尚未读到或读取失败（菜单不显示「模式」子菜单）。
@@ -133,8 +136,7 @@ impl MenuModel {
         self.header == other.header
             && self.tray_title == other.tray_title
             && self.tooltip == other.tooltip
-            && self.notify_on == other.notify_on
-            && self.dock_on == other.dock_on
+            && self.settings == other.settings
             && self.badge_count == other.badge_count
             && self.modes == other.modes
             && self.rows.len() == other.rows.len()
@@ -195,19 +197,97 @@ pub fn refresh_decision(prev: Option<&MenuModel>, new: &MenuModel) -> Refresh {
             texts.push((b.session_id.clone(), b.text()));
         }
     }
-    if let (Some(a), Some(b)) = (
-        prev.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
-        new.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
-    ) {
-        if a != b {
-            texts.push((COST_ITEM_ID.to_string(), b.clone()));
+    if new.settings.show_cost {
+        if let (Some(a), Some(b)) = (
+            prev.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
+            new.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
+        ) {
+            if a != b {
+                texts.push((COST_ITEM_ID.to_string(), b.clone()));
+            }
         }
     }
     Refresh::Texts(texts)
 }
 
+/// 托盘标题用的状态计数。
+pub struct StatusCounts {
+    pub total: usize,
+    pub working: usize,
+    pub waiting: usize,
+    pub stuck: usize,
+}
+
+/// 托盘图标旁标题（`None` = 只显示图标）。
+pub fn tray_title(style: BadgeStyle, c: &StatusCounts) -> Option<String> {
+    if c.total == 0 {
+        return None;
+    }
+    match style {
+        // `{在工作}·{在等我}`，在工作含疑似卡住；有卡住追加 `!`。
+        BadgeStyle::Count => {
+            let mut t = format!("{}·{}", c.working + c.stuck, c.waiting);
+            if c.stuck > 0 {
+                t.push('!');
+            }
+            Some(t)
+        }
+        BadgeStyle::Dot => Some(if c.waiting + c.stuck > 0 {
+            "●".to_string()
+        } else {
+            "○".to_string()
+        }),
+        BadgeStyle::Icon => None,
+    }
+}
+
+/// 徽标样式预览样例：固定计数下各状态的标题。
+pub fn badge_samples(style: BadgeStyle) -> Vec<(SessionStatus, Option<String>)> {
+    [
+        (
+            SessionStatus::Working,
+            StatusCounts {
+                total: 2,
+                working: 2,
+                waiting: 0,
+                stuck: 0,
+            },
+        ),
+        (
+            SessionStatus::WaitingInput,
+            StatusCounts {
+                total: 1,
+                working: 0,
+                waiting: 1,
+                stuck: 0,
+            },
+        ),
+        (
+            SessionStatus::Idle,
+            StatusCounts {
+                total: 1,
+                working: 0,
+                waiting: 0,
+                stuck: 0,
+            },
+        ),
+        (
+            SessionStatus::Stuck,
+            StatusCounts {
+                total: 1,
+                working: 0,
+                waiting: 0,
+                stuck: 1,
+            },
+        ),
+    ]
+    .into_iter()
+    .map(|(status, counts)| (status, tray_title(style, &counts)))
+    .collect()
+}
+
 /// 构建菜单模型（纯函数）。
-pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> MenuModel {
+pub fn build_model(inputs: Vec<RowInput>, settings: &Settings) -> MenuModel {
     let mut inputs = inputs;
     inputs.sort_by(|a, b| {
         (a.status.sort_rank(), a.title.clone(), a.session_id.clone()).cmp(&(
@@ -239,21 +319,23 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         }
         h
     };
-    // 托盘标题：`{在工作}·{在等我}`，在工作含疑似卡住；有卡住追加 `!`。
-    let tray_title = if total == 0 {
-        None
-    } else {
-        let mut t = format!("{}·{}", working + stuck, waiting);
-        if stuck > 0 {
-            t.push('!');
-        }
-        Some(t)
-    };
+    let tray_title = tray_title(
+        settings.badge_style,
+        &StatusCounts {
+            total,
+            working,
+            waiting,
+            stuck,
+        },
+    );
 
     let mut rows = Vec::new();
     let mut overflow = Vec::new();
-    for (i, input) in inputs.iter().enumerate() {
-        let (head, duration_text, tail) = row_parts(input);
+    for input in inputs
+        .iter()
+        .filter(|r| settings.show_idle || r.status != SessionStatus::Idle)
+    {
+        let (head, duration_text, tail) = row_parts(input, settings);
         let row = RowModel {
             session_id: input.session_id.clone(),
             status: input.status,
@@ -262,7 +344,7 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
             tail,
             enabled: input.focusable,
         };
-        if i < MAX_ROWS {
+        if rows.len() < MAX_ROWS {
             rows.push(row);
         } else {
             overflow.push(row);
@@ -274,8 +356,7 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
         rows,
         overflow,
         tray_title,
-        notify_on,
-        dock_on,
+        settings: settings.clone(),
         badge_count: waiting + stuck,
         modes: None,
         extras: None,
@@ -284,11 +365,25 @@ pub fn build_model(inputs: Vec<RowInput>, notify_on: bool, dock_on: bool) -> Men
 
 /// 行文本三段：(时长前、时长、时长后)。见 [`RowModel`]。
 ///
-/// 格式：`{标题} · [{应用} · ]{状态} · {距最后活动} [· 子代理 N][（原因）]`；
+/// 默认格式：`{标题}[ · {项目}] · [{应用} · ]{状态} · {距最后活动} [· 子代理 N][（原因）]`；
 /// iTerm2 占用不写应用名（默认情形），状态图标由装配层加原生点。
-fn row_parts(input: &RowInput) -> (String, String, String) {
-    let title = crate::sessions::truncate_chars(&input.title, TITLE_MAX_CHARS);
-    let mut head = format!("{title} · ");
+/// `compact_rows` 时只保留「前缀 + 时长」：`{标题}[ · {项目}] · {距最后活动}`。
+fn row_parts(input: &RowInput, settings: &Settings) -> (String, String, String) {
+    let title = crate::sessions::truncate_chars(&input.title, settings.title_width.chars());
+    let mut prefix = title;
+    if settings.show_project {
+        if let Some(project) = &input.project {
+            prefix.push_str(&format!(" · {project}"));
+        }
+    }
+    if settings.compact_rows {
+        return (
+            format!("{prefix} · "),
+            format_duration(input.idle_secs),
+            String::new(),
+        );
+    }
+    let mut head = format!("{prefix} · ");
     match (&input.app_label, input.pid) {
         (Some(app), _) if app == "iTerm2" => {}
         (Some(app), _) => head.push_str(&format!("{app} · ")),
@@ -307,7 +402,6 @@ fn row_parts(input: &RowInput) -> (String, String, String) {
     }
     (head, format_duration(input.idle_secs), tail)
 }
-
 /// 距最后活动展示：`刚刚` / `X分` / `X小时Y分` / `X天`。
 pub fn format_duration(secs: i64) -> String {
     let secs = secs.max(0);
@@ -391,6 +485,7 @@ mod tests {
             session_id: id.to_string(),
             title: format!("会话{id}"),
             status,
+            project: None,
             app_label: Some("iTerm2".to_string()),
             pid: Some(100),
             focusable: true,
@@ -402,7 +497,7 @@ mod tests {
 
     #[test]
     fn empty_model() {
-        let m = build_model(vec![], true, false);
+        let m = build_model(vec![], &Settings::default());
         assert_eq!(m.header, "没有运行中的 omp 会话");
         assert_eq!(m.tray_title, None);
         assert!(m.rows.is_empty() && m.overflow.is_empty());
@@ -418,8 +513,7 @@ mod tests {
                 row("wait", SessionStatus::WaitingInput),
                 row("stuck", SessionStatus::Stuck),
             ],
-            true,
-            false,
+            &Settings::default(),
         );
         let ids: Vec<&str> = m.rows.iter().map(|r| r.session_id.as_str()).collect();
         assert_eq!(ids, vec!["stuck", "wait", "work", "idle"]);
@@ -437,8 +531,7 @@ mod tests {
                 row("a", SessionStatus::Working),
                 row("b", SessionStatus::Idle),
             ],
-            true,
-            false,
+            &Settings::default(),
         );
         assert_eq!(m.header, "omp 会话 · 占用 2 · 工作中 1 · 等待输入 0");
         assert_eq!(m.tray_title, Some("1·0".to_string()));
@@ -449,7 +542,7 @@ mod tests {
         let inputs: Vec<RowInput> = (0..10)
             .map(|i| row(&format!("s{i:02}"), SessionStatus::Working))
             .collect();
-        let m = build_model(inputs, true, false);
+        let m = build_model(inputs, &Settings::default());
         assert_eq!(m.rows.len(), MAX_ROWS);
         assert_eq!(m.overflow.len(), 2);
         assert_eq!(m.overflow[0].session_id, "s08");
@@ -461,7 +554,7 @@ mod tests {
         r.title = "加长标题测试会话".to_string();
         r.subagents_running = 2;
         r.idle_secs = 3700;
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         assert_eq!(
             m.rows[0].text(),
             "加长标题测试会话 · 工作中 · 1小时1分 · 子代理 2"
@@ -476,7 +569,7 @@ mod tests {
         r.app_label = Some("VS Code".to_string());
         r.focusable = false;
         r.focus_block_reason = Some("仅 iTerm 可聚焦".to_string());
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         assert!(!m.rows[0].enabled);
         assert!(m.rows[0].text().contains("VS Code"), "{}", m.rows[0].text());
         assert!(
@@ -493,7 +586,7 @@ mod tests {
         r.pid = Some(4242);
         r.focusable = false;
         r.focus_block_reason = Some("未找到占用进程".to_string());
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         assert!(
             m.rows[0].text().contains("PID 4242"),
             "{}",
@@ -505,7 +598,7 @@ mod tests {
         r.pid = None;
         r.focusable = false;
         r.focus_block_reason = Some("未找到占用进程".to_string());
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         assert!(
             m.rows[0].text().contains(" · 占用中 · "),
             "{}",
@@ -519,7 +612,7 @@ mod tests {
         r.title =
             "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四".to_string();
         assert!(r.title.chars().count() > TITLE_MAX_CHARS);
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         let text = m.rows[0].text();
         let title_part = text.split(" · ").next().unwrap().to_string();
         assert_eq!(title_part.chars().count(), TITLE_MAX_CHARS);
@@ -549,7 +642,7 @@ mod tests {
         let mut r = row("x", SessionStatus::Working);
         r.subagents_running = 1;
         r.idle_secs = 3660;
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         let row = &m.rows[0];
         assert_eq!(row.head, "会话x · 工作中 · ");
         assert_eq!(row.duration_text, "1小时1分");
@@ -563,9 +656,9 @@ mod tests {
         a.idle_secs = 3590;
         let mut b = row("b", SessionStatus::Idle);
         b.idle_secs = 3590;
-        let old = build_model(vec![a.clone(), b.clone()], true, false);
+        let old = build_model(vec![a.clone(), b.clone()], &Settings::default());
         a.idle_secs = 3660; // 只有 a 跨分钟/小时边界，文本变化
-        let new = build_model(vec![a, b], true, false);
+        let new = build_model(vec![a, b], &Settings::default());
         assert!(old.same_structure(&new));
         assert_eq!(
             refresh_decision(Some(&old), &new),
@@ -583,10 +676,10 @@ mod tests {
             .collect();
         let mut old_inputs = inputs.clone();
         old_inputs[8].idle_secs = 59;
-        let old = build_model(old_inputs, true, false);
+        let old = build_model(old_inputs, &Settings::default());
         let mut new_inputs = inputs;
         new_inputs[8].idle_secs = 120;
-        let new = build_model(new_inputs, true, false);
+        let new = build_model(new_inputs, &Settings::default());
         assert!(old.same_structure(&new));
         match refresh_decision(Some(&old), &new) {
             Refresh::Texts(texts) => {
@@ -600,35 +693,38 @@ mod tests {
 
     #[test]
     fn structural_changes_rebuild() {
-        let old = build_model(vec![row("a", SessionStatus::Idle)], true, false);
+        let old = build_model(vec![row("a", SessionStatus::Idle)], &Settings::default());
         // 状态变化（头部计数、行状态文字与原生图标都变）。
-        let new = build_model(vec![row("a", SessionStatus::Working)], true, false);
+        let new = build_model(vec![row("a", SessionStatus::Working)], &Settings::default());
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
         // 标题变化。
         let mut t = row("a", SessionStatus::Idle);
         t.title = "改了名".to_string();
-        let new = build_model(vec![t], true, false);
+        let new = build_model(vec![t], &Settings::default());
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
         // 会话增减。
         let new = build_model(
             vec![row("a", SessionStatus::Idle), row("b", SessionStatus::Idle)],
-            true,
-            false,
+            &Settings::default(),
         );
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
-        // 设置勾选变化。
-        let new = build_model(vec![row("a", SessionStatus::Idle)], false, false);
+        // 设置变化（任一字段都算结构变化）。
+        let changed = Settings {
+            notify_on_waiting: false,
+            ..Settings::default()
+        };
+        let new = build_model(vec![row("a", SessionStatus::Idle)], &changed);
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
         // 子代理数变化（行形状变化）。
         let mut s = row("a", SessionStatus::Idle);
         s.subagents_running = 2;
-        let new = build_model(vec![s], true, false);
+        let new = build_model(vec![s], &Settings::default());
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
     }
 
     #[test]
     fn identical_or_unseen_models() {
-        let m = build_model(vec![row("a", SessionStatus::Working)], true, false);
+        let m = build_model(vec![row("a", SessionStatus::Working)], &Settings::default());
         assert_eq!(refresh_decision(Some(&m), &m.clone()), Refresh::None);
         assert_eq!(refresh_decision(None, &m), Refresh::Rebuild);
     }
@@ -636,7 +732,7 @@ mod tests {
     #[test]
     fn badge_count_is_waiting_plus_stuck() {
         // 空模型 = 0（无角标）。
-        let m = build_model(vec![], true, false);
+        let m = build_model(vec![], &Settings::default());
         assert_eq!(m.badge_count, 0);
         // 工作中/空闲不计入。
         let m = build_model(
@@ -644,8 +740,7 @@ mod tests {
                 row("w", SessionStatus::Working),
                 row("i", SessionStatus::Idle),
             ],
-            true,
-            false,
+            &Settings::default(),
         );
         assert_eq!(m.badge_count, 0);
         // 等待输入 + 疑似卡住求和。
@@ -657,8 +752,7 @@ mod tests {
                 row("c", SessionStatus::Stuck),
                 row("i", SessionStatus::Idle),
             ],
-            true,
-            false,
+            &Settings::default(),
         );
         assert_eq!(m.badge_count, 3);
         // badge_count 参与 same_structure（仅它不同也算结构变化）。
@@ -670,18 +764,156 @@ mod tests {
     #[test]
     fn iterm_app_omitted_other_app_shown() {
         // iTerm2 是默认情形，不写应用名。
-        let m = build_model(vec![row("a", SessionStatus::Working)], true, false);
+        let m = build_model(vec![row("a", SessionStatus::Working)], &Settings::default());
         assert_eq!(m.rows[0].text(), "会话a · 工作中 · 2分");
         // 非 iTerm 应用保留在标题与状态之间。
         let mut r = row("v", SessionStatus::WaitingInput);
         r.app_label = Some("VS Code".to_string());
         r.focusable = false;
         r.focus_block_reason = Some("仅 iTerm 可聚焦".to_string());
-        let m = build_model(vec![r], true, false);
+        let m = build_model(vec![r], &Settings::default());
         assert_eq!(
             m.rows[0].text(),
             "会话v · VS Code · 等待输入 · 2分（仅 iTerm 可聚焦）"
         );
+    }
+
+    #[test]
+    fn tray_title_styles() {
+        let counts = |total: usize, working: usize, waiting: usize, stuck: usize| StatusCounts {
+            total,
+            working,
+            waiting,
+            stuck,
+        };
+        // 空集都为 None。
+        let empty = counts(0, 0, 0, 0);
+        assert_eq!(tray_title(BadgeStyle::Count, &empty), None);
+        assert_eq!(tray_title(BadgeStyle::Dot, &empty), None);
+        assert_eq!(tray_title(BadgeStyle::Icon, &empty), None);
+        // Count：现行格式。
+        assert_eq!(
+            tray_title(BadgeStyle::Count, &counts(3, 1, 1, 1)),
+            Some("2·1!".to_string())
+        );
+        assert_eq!(
+            tray_title(BadgeStyle::Count, &counts(2, 1, 0, 0)),
+            Some("1·0".to_string())
+        );
+        // Dot：有待处理为 ●，否则 ○。
+        assert_eq!(
+            tray_title(BadgeStyle::Dot, &counts(1, 0, 1, 0)),
+            Some("●".to_string())
+        );
+        assert_eq!(
+            tray_title(BadgeStyle::Dot, &counts(1, 0, 0, 1)),
+            Some("●".to_string())
+        );
+        assert_eq!(
+            tray_title(BadgeStyle::Dot, &counts(2, 1, 0, 0)),
+            Some("○".to_string())
+        );
+        // Icon：恒为 None。
+        assert_eq!(tray_title(BadgeStyle::Icon, &counts(3, 1, 1, 1)), None);
+        // 样例覆盖四态。
+        let samples = badge_samples(BadgeStyle::Count);
+        assert_eq!(samples.len(), 4);
+        assert_eq!(samples[0].0, SessionStatus::Working);
+        assert_eq!(samples[0].1, Some("2·0".to_string()));
+        assert_eq!(samples[1].1, Some("0·1".to_string()));
+        assert_eq!(samples[2].1, Some("0·0".to_string()));
+        assert_eq!(samples[3].1, Some("1·0!".to_string()));
+        let dots: Vec<Option<String>> = badge_samples(BadgeStyle::Dot)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(
+            dots,
+            vec![
+                Some("○".to_string()),
+                Some("●".to_string()),
+                Some("○".to_string()),
+                Some("●".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn hide_idle_keeps_header_counts() {
+        let s = Settings {
+            show_idle: false,
+            ..Settings::default()
+        };
+        let m = build_model(
+            vec![
+                row("w", SessionStatus::Working),
+                row("i", SessionStatus::Idle),
+            ],
+            &s,
+        );
+        assert_eq!(m.rows.len(), 1);
+        assert_eq!(m.rows[0].session_id, "w");
+        assert!(m.overflow.is_empty());
+        // 头部计数照常包含空闲行。
+        assert_eq!(m.header, "omp 会话 · 占用 2 · 工作中 1 · 等待输入 0");
+        assert_eq!(m.tray_title, Some("1·0".to_string()));
+    }
+
+    #[test]
+    fn row_options_project_compact_width() {
+        // show_project：标题后追加项目名。
+        let s = Settings {
+            show_project: true,
+            ..Settings::default()
+        };
+        let mut r = row("p", SessionStatus::Working);
+        r.project = Some("omp-resume".to_string());
+        let m = build_model(vec![r], &s);
+        assert_eq!(m.rows[0].text(), "会话p · omp-resume · 工作中 · 2分");
+        // 项目未知时不追加。
+        let m = build_model(vec![row("q", SessionStatus::Working)], &s);
+        assert_eq!(m.rows[0].text(), "会话q · 工作中 · 2分");
+        // compact_rows：只保留标题与时长。
+        let s = Settings {
+            compact_rows: true,
+            show_project: true,
+            ..Settings::default()
+        };
+        let mut r = row("c", SessionStatus::WaitingInput);
+        r.project = Some("proj".to_string());
+        r.subagents_running = 3;
+        let m = build_model(vec![r], &s);
+        assert_eq!(m.rows[0].text(), "会话c · proj · 2分");
+        // title_width：截断长度可调。
+        let s = Settings {
+            title_width: super::super::settings::TitleWidth::Compact,
+            ..Settings::default()
+        };
+        let mut r = row("t", SessionStatus::Idle);
+        r.title = "一二三四五六七八九十一二三四五六七八九十一二".to_string();
+        assert!(r.title.chars().count() > 20);
+        let m = build_model(vec![r], &s);
+        let title_part = m.rows[0].text().split(" · ").next().unwrap().to_string();
+        assert_eq!(title_part.chars().count(), 20);
+        assert!(title_part.ends_with('…'), "{title_part}");
+    }
+
+    #[test]
+    fn hidden_cost_skips_text_update() {
+        let s = Settings {
+            show_cost: false,
+            ..Settings::default()
+        };
+        let mut old = build_model(vec![], &s);
+        old.extras = Some(Extras {
+            cost_text: Some("今日花费 $1.20".to_string()),
+            recent: vec![],
+            projects: vec![],
+        });
+        let mut new = old.clone();
+        new.extras.as_mut().unwrap().cost_text = Some("今日花费 $1.50".to_string());
+        assert!(old.same_structure(&new));
+        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Texts(vec![]));
     }
 }
 
@@ -740,7 +972,7 @@ mod modes_tests {
 
     #[test]
     fn modes_change_rebuilds_menu() {
-        let base = build_model(vec![], true, false);
+        let base = build_model(vec![], &Settings::default());
         let mut with_modes = base.clone();
         with_modes.modes = Some(vec![ModeEntry {
             name: "A".into(),
@@ -789,7 +1021,7 @@ mod extras_tests {
 
     #[test]
     fn cost_change_is_text_update() {
-        let mut old = build_model(vec![], true, false);
+        let mut old = build_model(vec![], &Settings::default());
         old.extras = Some(extras("今日花费 $1.20"));
         let mut new = old.clone();
         new.extras = Some(extras("今日花费 $1.50"));
@@ -802,7 +1034,7 @@ mod extras_tests {
 
     #[test]
     fn recent_change_rebuilds() {
-        let mut old = build_model(vec![], true, false);
+        let mut old = build_model(vec![], &Settings::default());
         old.extras = Some(extras("今日花费 $1.50"));
         // 最近会话变化 → 重建。
         let mut new = old.clone();

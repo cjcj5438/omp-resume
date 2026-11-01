@@ -41,8 +41,30 @@ pub enum NotifyAction {
     Waiting { session_id: String, title: String },
     /// 单个会话疑似卡住。
     Stuck { session_id: String, title: String },
+    /// 单个会话结束。
+    Finished { title: String },
     /// 单周期大量转换的汇总。
     Summary { count: usize },
+    /// 单周期大量结束的汇总。
+    FinishedSummary { count: usize },
+}
+
+/// 三个通知开关（由设置派生）。
+#[derive(Debug, Clone, Copy)]
+pub struct NotifyFlags {
+    pub waiting: bool,
+    pub stuck: bool,
+    pub finish: bool,
+}
+
+impl From<&super::settings::Settings> for NotifyFlags {
+    fn from(s: &super::settings::Settings) -> Self {
+        Self {
+            waiting: s.notify_on_waiting,
+            stuck: s.notify_on_stuck,
+            finish: s.notify_on_finish,
+        }
+    }
 }
 
 /// 防抖/去重跟踪器（轮询持有，随进程常驻）。
@@ -65,20 +87,21 @@ fn is_busy(s: SessionStatus) -> bool {
 }
 
 /// 判定本周期要发的通知（纯函数，调用方负责发送）。
+///
+/// `finished` 为本轮确认结束的 `(会话 id, 标题)`。
 pub fn decide(
     transitions: &[Transition],
+    finished: &[(String, String)],
     now: i64,
-    enabled: bool,
+    flags: NotifyFlags,
     tracker: &mut Tracker,
 ) -> Vec<NotifyAction> {
-    if !enabled {
-        return Vec::new();
-    }
     let mut actions = Vec::new();
     // 卡住优先（更紧急），再处理等待输入。
+    // 记账始终执行：中途开启开关不会为进行中的 episode 补发通知。
     for t in transitions {
         if t.next == SessionStatus::Stuck && t.prev != SessionStatus::Stuck {
-            if tracker.stuck.insert(t.session_id.clone()) {
+            if tracker.stuck.insert(t.session_id.clone()) && flags.stuck {
                 actions.push(NotifyAction::Stuck {
                     session_id: t.session_id.clone(),
                     title: truncate_title(&t.title),
@@ -88,33 +111,50 @@ pub fn decide(
             tracker.stuck.remove(&t.session_id);
         }
     }
-    let mut waiting: Vec<&Transition> = transitions
-        .iter()
-        .filter(|t| {
-            t.next == SessionStatus::WaitingInput
-                && is_busy(t.prev)
-                && t.busy_secs >= WORK_GATE_SECS
-                && tracker
-                    .last_waiting
-                    .get(&t.session_id)
-                    .is_none_or(|at| now.saturating_sub(*at) > DEBOUNCE_SECS)
-        })
-        .collect();
-    waiting.sort_by(|a, b| a.session_id.cmp(&b.session_id));
-    if waiting.len() > SUMMARY_THRESHOLD {
-        for t in &waiting {
-            tracker.last_waiting.insert(t.session_id.clone(), now);
-        }
-        actions.push(NotifyAction::Summary {
-            count: waiting.len(),
-        });
-    } else {
-        for t in waiting {
-            tracker.last_waiting.insert(t.session_id.clone(), now);
-            actions.push(NotifyAction::Waiting {
-                session_id: t.session_id.clone(),
-                title: truncate_title(&t.title),
+    if flags.waiting {
+        let mut waiting: Vec<&Transition> = transitions
+            .iter()
+            .filter(|t| {
+                t.next == SessionStatus::WaitingInput
+                    && is_busy(t.prev)
+                    && t.busy_secs >= WORK_GATE_SECS
+                    && tracker
+                        .last_waiting
+                        .get(&t.session_id)
+                        .is_none_or(|at| now.saturating_sub(*at) > DEBOUNCE_SECS)
+            })
+            .collect();
+        waiting.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        if waiting.len() > SUMMARY_THRESHOLD {
+            for t in &waiting {
+                tracker.last_waiting.insert(t.session_id.clone(), now);
+            }
+            actions.push(NotifyAction::Summary {
+                count: waiting.len(),
             });
+        } else {
+            for t in waiting {
+                tracker.last_waiting.insert(t.session_id.clone(), now);
+                actions.push(NotifyAction::Waiting {
+                    session_id: t.session_id.clone(),
+                    title: truncate_title(&t.title),
+                });
+            }
+        }
+    }
+    if flags.finish && !finished.is_empty() {
+        if finished.len() > SUMMARY_THRESHOLD {
+            actions.push(NotifyAction::FinishedSummary {
+                count: finished.len(),
+            });
+        } else {
+            let mut ended = finished.to_vec();
+            ended.sort_by(|a, b| a.0.cmp(&b.0));
+            for (_, title) in ended {
+                actions.push(NotifyAction::Finished {
+                    title: truncate_title(&title),
+                });
+            }
         }
     }
     actions
@@ -129,8 +169,12 @@ pub fn action_text(action: &NotifyAction) -> (String, String) {
     match action {
         NotifyAction::Waiting { title, .. } => (title.clone(), "进入等待输入".to_string()),
         NotifyAction::Stuck { title, .. } => (title.clone(), "疑似卡住".to_string()),
+        NotifyAction::Finished { title } => (title.clone(), "会话已结束".to_string()),
         NotifyAction::Summary { count } => {
             ("omp-resume".to_string(), format!("{count} 个会话在等你"))
+        }
+        NotifyAction::FinishedSummary { count } => {
+            ("omp-resume".to_string(), format!("{count} 个会话已结束"))
         }
     }
 }
@@ -167,6 +211,22 @@ mod tests {
         }
     }
 
+    fn all_on() -> NotifyFlags {
+        NotifyFlags {
+            waiting: true,
+            stuck: true,
+            finish: true,
+        }
+    }
+
+    fn all_off() -> NotifyFlags {
+        NotifyFlags {
+            waiting: false,
+            stuck: false,
+            finish: false,
+        }
+    }
+
     #[test]
     fn work_gate_and_debounce() {
         let mut tracker = Tracker::default();
@@ -178,8 +238,9 @@ mod tests {
                 SessionStatus::WaitingInput,
                 29,
             )],
+            &[],
             1000,
-            true,
+            all_on(),
             &mut tracker,
         );
         assert!(a.is_empty());
@@ -191,8 +252,9 @@ mod tests {
                 SessionStatus::WaitingInput,
                 30,
             )],
+            &[],
             1000,
-            true,
+            all_on(),
             &mut tracker,
         );
         assert_eq!(a.len(), 1);
@@ -205,8 +267,9 @@ mod tests {
                 SessionStatus::WaitingInput,
                 99,
             )],
+            &[],
             1030,
-            true,
+            all_on(),
             &mut tracker,
         );
         assert!(a.is_empty(), "{a:?}");
@@ -218,8 +281,9 @@ mod tests {
                 SessionStatus::WaitingInput,
                 99,
             )],
+            &[],
             1031,
-            true,
+            all_on(),
             &mut tracker,
         );
         assert_eq!(a.len(), 1);
@@ -238,14 +302,14 @@ mod tests {
                 )
             })
             .collect();
-        let a = decide(&ts, 1000, true, &mut tracker);
+        let a = decide(&ts, &[], 1000, all_on(), &mut tracker);
         assert_eq!(a, vec![NotifyAction::Summary { count: 4 }]);
         // 汇总后同样防抖。
-        let a = decide(&ts, 1010, true, &mut tracker);
+        let a = decide(&ts, &[], 1010, all_on(), &mut tracker);
         assert!(a.is_empty());
         // 恰 3 个不汇总。
         let mut tracker = Tracker::default();
-        let a = decide(&ts[..3], 1000, true, &mut tracker);
+        let a = decide(&ts[..3], &[], 1000, all_on(), &mut tracker);
         assert_eq!(a.len(), 3);
     }
 
@@ -253,16 +317,16 @@ mod tests {
     fn stuck_once_per_episode() {
         let mut tracker = Tracker::default();
         let t = tr("s", SessionStatus::Working, SessionStatus::Stuck, 0);
-        let a = decide(std::slice::from_ref(&t), 1000, true, &mut tracker);
+        let a = decide(std::slice::from_ref(&t), &[], 1000, all_on(), &mut tracker);
         assert_eq!(a.len(), 1);
         // 同一 episode 内重复转换不再通知。
-        let a = decide(&[t], 1100, true, &mut tracker);
+        let a = decide(&[t], &[], 1100, all_on(), &mut tracker);
         assert!(a.is_empty());
         // 离开卡住态后清除；再次进入重新通知。
         let out = tr("s", SessionStatus::Stuck, SessionStatus::Working, 0);
-        assert!(decide(&[out], 1200, true, &mut tracker).is_empty());
+        assert!(decide(&[out], &[], 1200, all_on(), &mut tracker).is_empty());
         let again = tr("s", SessionStatus::Working, SessionStatus::Stuck, 0);
-        assert_eq!(decide(&[again], 1300, true, &mut tracker).len(), 1);
+        assert_eq!(decide(&[again], &[], 1300, all_on(), &mut tracker).len(), 1);
     }
 
     #[test]
@@ -276,8 +340,9 @@ mod tests {
                 SessionStatus::WaitingInput,
                 999,
             )],
+            &[],
             1000,
-            true,
+            all_on(),
             &mut tracker,
         );
         assert!(a.is_empty());
@@ -289,11 +354,80 @@ mod tests {
                 SessionStatus::WaitingInput,
                 99,
             )],
+            &[("s".to_string(), "标题s".to_string())],
             1000,
-            false,
+            all_off(),
             &mut tracker,
         );
         assert!(a.is_empty());
+    }
+
+    #[test]
+    fn stuck_off_skips_action_but_tracks_episode() {
+        let mut tracker = Tracker::default();
+        let off = NotifyFlags {
+            waiting: true,
+            stuck: false,
+            finish: false,
+        };
+        // 开关关时：记账照常，不产出动作。
+        let t = tr("s", SessionStatus::Working, SessionStatus::Stuck, 0);
+        assert!(decide(std::slice::from_ref(&t), &[], 1000, off, &mut tracker).is_empty());
+        // 中途开启：同一 episode 不补发。
+        assert!(decide(std::slice::from_ref(&t), &[], 1100, all_on(), &mut tracker).is_empty());
+        // 离开卡住态后再进入：通知恢复。
+        let out = tr("s", SessionStatus::Stuck, SessionStatus::Working, 0);
+        assert!(decide(&[out], &[], 1200, all_on(), &mut tracker).is_empty());
+        let again = tr("s", SessionStatus::Working, SessionStatus::Stuck, 0);
+        assert_eq!(decide(&[again], &[], 1300, all_on(), &mut tracker).len(), 1);
+    }
+
+    #[test]
+    fn finished_single_and_summary() {
+        let mut tracker = Tracker::default();
+        let on = NotifyFlags {
+            waiting: false,
+            stuck: true,
+            finish: true,
+        };
+        // ≤3 个逐条通知，按会话 id 排序。
+        let ended = vec![
+            ("b".to_string(), "标题b".to_string()),
+            ("a".to_string(), "标题a".to_string()),
+        ];
+        let a = decide(&[], &ended, 1000, on, &mut tracker);
+        assert_eq!(
+            a,
+            vec![
+                NotifyAction::Finished {
+                    title: "标题a".to_string()
+                },
+                NotifyAction::Finished {
+                    title: "标题b".to_string()
+                },
+            ]
+        );
+        assert_eq!(
+            action_text(&a[0]),
+            ("标题a".to_string(), "会话已结束".to_string())
+        );
+        // >3 个合并为汇总。
+        let ended: Vec<(String, String)> = (0..4)
+            .map(|i| (format!("s{i}"), format!("标题{i}")))
+            .collect();
+        let a = decide(&[], &ended, 1000, on, &mut tracker);
+        assert_eq!(a, vec![NotifyAction::FinishedSummary { count: 4 }]);
+        assert_eq!(
+            action_text(&a[0]),
+            ("omp-resume".to_string(), "4 个会话已结束".to_string())
+        );
+        // 开关关时不发。
+        let off = NotifyFlags {
+            waiting: true,
+            stuck: true,
+            finish: false,
+        };
+        assert!(decide(&[], &ended, 1000, off, &mut tracker).is_empty());
     }
 
     #[test]

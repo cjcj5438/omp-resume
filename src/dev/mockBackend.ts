@@ -14,9 +14,11 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
 import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import type { ModelPreset, ModelPresetSnapshot, ModelPresetsState } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry, UsageRange } from "../types";
 import type { AgentStage, StageActor, StageActorKind, StageActorState, StageActivity } from "../types";
+import type { TrayPreview, TrayPreviewRow, TraySettings } from "../types";
 import {
   FIXTURE_SESSIONS,
   buildListResult,
@@ -404,6 +406,110 @@ function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
   };
 }
 
+/** 模型模式 mock：内存 `modelPresets`，排序/active/expected 语义镜像真后端（CONTRACT §24）。 */
+function createPresetsMock() {
+  let rawPresets: Record<string, unknown> = {
+    "deep-work": {
+      modelRoles: { default: "5438/muse-spark-1.3-contributor:max" },
+      defaultThinkingLevel: "max",
+      agentModelOverrides: { task: "5438/mimo-v2.6-pro" },
+    },
+    "fast-triage": {
+      modelRoles: { default: "5438/deepseek-v4.1-flash" },
+      defaultThinkingLevel: null,
+      agentModelOverrides: null,
+    },
+  };
+  const current = (): ModelPresetSnapshot => ({
+    modelRoles: { default: "5438/muse-spark-1.3-contributor:max" },
+    agentModelOverrides: { task: "5438/mimo-v2.6-pro" },
+    defaultThinkingLevel: "max",
+  });
+  const parsePreset = (name: string, value: unknown): ModelPreset => {
+    const invalid = (reason: string): ModelPreset => ({
+      name,
+      modelRoles: {},
+      defaultThinkingLevel: null,
+      agentModelOverrides: null,
+      invalidReason: reason,
+    });
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return invalid("模式条目必须是对象");
+    const o = value as Record<string, unknown>;
+    const roles = o["modelRoles"];
+    if (roles === null || typeof roles !== "object" || Array.isArray(roles)) return invalid("modelRoles 必须是对象");
+    const thinking = o["defaultThinkingLevel"];
+    if (thinking !== null && thinking !== undefined && typeof thinking !== "string") {
+      return invalid("defaultThinkingLevel 必须是字符串或 null");
+    }
+    const overrides = o["agentModelOverrides"];
+    if (overrides !== null && overrides !== undefined && (typeof overrides !== "object" || Array.isArray(overrides))) {
+      return invalid("agentModelOverrides 必须是对象或 null");
+    }
+    return {
+      name,
+      modelRoles: roles as Record<string, unknown>,
+      defaultThinkingLevel: (thinking as string | null | undefined) ?? null,
+      agentModelOverrides: (overrides as Record<string, unknown> | null | undefined) ?? null,
+      invalidReason: null,
+    };
+  };
+  const snapshot = (): ModelPresetsState => {
+    const presets = Object.entries(rawPresets)
+      .map(([name, value]) => parsePreset(name, value))
+      .sort((a, b) =>
+        a.name.toLowerCase() < b.name.toLowerCase() ? -1
+        : a.name.toLowerCase() > b.name.toLowerCase() ? 1
+        : a.name < b.name ? -1
+        : a.name > b.name ? 1
+        : 0,
+      );
+    const cur = current();
+    const active =
+      presets.find(
+        (p) =>
+          p.invalidReason === null &&
+          deepEqual(p.modelRoles, cur.modelRoles) &&
+          (p.defaultThinkingLevel === null || p.defaultThinkingLevel === cur.defaultThinkingLevel) &&
+          (p.agentModelOverrides === null || deepEqual(p.agentModelOverrides, cur.agentModelOverrides)),
+      )?.name ?? null;
+    return { presets: structuredClone(presets), active, current: cur, rawPresets: structuredClone(rawPresets) };
+  };
+  return (cmd: string, args: Record<string, unknown>): ModelPresetsState => {
+    if (cmd === "list_model_presets") return snapshot();
+    const name = args["name"];
+    if (cmd === "switch_model_preset") {
+      if (typeof name !== "string" || !Object.hasOwn(rawPresets, name)) throw err("NOT_FOUND", `模式不存在：${String(name)}`);
+      const preset = parsePreset(name, rawPresets[name]);
+      if (preset.invalidReason !== null) throw err("INVALID_INPUT", `模式无效：${preset.invalidReason}`);
+      if (!deepEqual(current(), args["expected"])) throw err("CONFLICT", "配置已被外部修改，请刷新后重试");
+      return snapshot();
+    }
+    // save/delete：名称只要求非空；expectedPresets 过期 CONFLICT。
+    if (typeof name !== "string" || name.length === 0) throw err("INVALID_INPUT", "模式名称不能为空");
+    if (!deepEqual(rawPresets, args["expectedPresets"])) throw err("CONFLICT", "模式列表已被外部修改，请刷新后重试");
+    if (cmd === "save_model_preset") {
+      if (Object.hasOwn(rawPresets, name) && args["overwrite"] !== true) {
+        throw err("INVALID_INPUT", `模式已存在：${name}`);
+      }
+      const cur = current();
+      rawPresets = {
+        ...rawPresets,
+        [name]: {
+          modelRoles: structuredClone(cur.modelRoles),
+          defaultThinkingLevel: cur.defaultThinkingLevel,
+          agentModelOverrides: structuredClone(cur.agentModelOverrides),
+        },
+      };
+      return snapshot();
+    }
+    // delete_model_preset：只删保存记录，不改当前配置。
+    if (!Object.hasOwn(rawPresets, name)) throw err("NOT_FOUND", `模式不存在：${name}`);
+    const { [name]: _removed, ...rest } = rawPresets;
+    rawPresets = rest;
+    return snapshot();
+  };
+}
+
 /** 模型规格 mock：9 个 MOCK_MODELS 的内存规格，可编辑，revision 自增。永不读真实文件。 */
 function createSpecsMock(forceConflict: boolean) {
   let revision = 0;
@@ -612,6 +718,99 @@ function createBenchMock() {
   };
 }
 
+// ---- 菜单栏预览 mock（CONTRACT §17.10） ----
+
+const TRAY_STATUS_TEXT: Record<string, string> = {
+  working: "工作中",
+  waiting: "等待输入",
+  idle: "空闲",
+  stuck: "疑似卡住",
+};
+
+/** 用夹具会话按设置生成预览（与 `list_running_sessions` 同一份夹具）。 */
+function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): TrayPreview {
+  const titleChars = settings.titleWidth === "compact" ? 20 : settings.titleWidth === "wide" ? 48 : 32;
+  // 状态按位置轮换，保证四态在预览里都有机会出现；计数与行一致。
+  const cycle: TrayPreviewRow["status"][] = ["working", "waiting", "stuck", "idle"];
+  const running = sessions
+    .filter((s) => s.summary.inUse)
+    .map((s, i) => ({ s, status: cycle[i % cycle.length] }));
+  const working = running.filter((r) => r.status === "working").length;
+  const waiting = running.filter((r) => r.status === "waiting").length;
+  const stuck = running.filter((r) => r.status === "stuck").length;
+  const total = running.length;
+  const header =
+    total === 0
+      ? "没有运行中的 omp 会话"
+      : `omp 会话 · 占用 ${total} · 工作中 ${working} · 等待输入 ${waiting}${stuck > 0 ? ` · 疑似卡住 ${stuck}` : ""}`;
+  const trayTitle =
+    total === 0 || settings.badgeStyle === "icon"
+      ? null
+      : settings.badgeStyle === "dot"
+        ? waiting + stuck > 0
+          ? "●"
+          : "○"
+        : `${working + stuck}·${waiting}${stuck > 0 ? "!" : ""}`;
+  const rank: Record<string, number> = { stuck: 0, waiting: 1, working: 2, idle: 3 };
+  const visible = [...running]
+    .sort((a, b) => rank[a.status] - rank[b.status])
+    .filter((r) => settings.showIdle || r.status !== "idle");
+  const toRow = ({ s, status }: { s: FixtureSession; status: TrayPreviewRow["status"] }): TrayPreviewRow => {
+    const chars = [...s.summary.title];
+    const title = chars.length <= titleChars ? s.summary.title : `${chars.slice(0, titleChars - 1).join("")}…`;
+    let prefix = title;
+    if (settings.showProject) {
+      const segs = s.summary.cwd.split("/").filter(Boolean);
+      if (segs.length > 0) prefix += ` · ${segs[segs.length - 1]}`;
+    }
+    const text = settings.compactRows
+      ? `${prefix} · 2分`
+      : `${prefix} · ${TRAY_STATUS_TEXT[status]} · 2分`;
+    return { sessionId: s.summary.id, status, text, enabled: true };
+  };
+  const rows = visible.slice(0, 8).map(toRow);
+  const overflow = visible.slice(8).map(toRow);
+  const recent = sessions.slice(0, 3).map((s) => {
+    const segs = s.summary.cwd.split("/").filter(Boolean);
+    const project = segs.length > 0 ? segs[segs.length - 1] : "";
+    return { key: s.summary.id, text: `${s.summary.title} · ${project}` };
+  });
+  const projects = [...new Set(sessions.map((s) => s.summary.cwd))]
+    .slice(0, 3)
+    .map((cwd) => ({ key: cwd, text: cwd }));
+  // 固定样例计数（同 Rust `badge_samples`）：与当前运行数无关。
+  const badgeSamples = (
+    [
+      ["working", "2·0", "○"],
+      ["waiting", "0·1", "●"],
+      ["idle", "0·0", "○"],
+      ["stuck", "1·0!", "●"],
+    ] as const
+  ).map(([state, count, dot]) => ({
+    state,
+    title:
+      settings.badgeStyle === "icon"
+        ? null
+        : settings.badgeStyle === "dot"
+          ? dot
+          : count,
+  }));
+  return {
+    ready: true,
+    header,
+    trayTitle,
+    costText: settings.showCost ? "今日花费 $1.20" : null,
+    rows,
+    overflow,
+    recent,
+    projects,
+    modes: [
+      { name: "默认", active: true, enabled: true },
+      { name: "省钱", active: false, enabled: true },
+    ],
+    badgeSamples,
+  };
+}
 
 // ---- 舞台 mock（CONTRACT §23） ----
 
@@ -827,6 +1026,7 @@ export async function installMockBackend(): Promise<MockHandle> {
     (params.get("conflict") ?? "").split(",").includes("update_model_config"),
     params.get("fallback") === "off",
   );
+  const presets = createPresetsMock();
   const specs = createSpecsMock(
     (params.get("conflict") ?? "").split(",").includes("update_model_spec"),
   );
@@ -862,6 +1062,21 @@ export async function installMockBackend(): Promise<MockHandle> {
   const metaSnapshot = (): MetaSnapshot =>
     structuredClone({ revision: metaRevision, sessions: metaSessions });
 
+  // 菜单栏设置（内存态，默认值同 Rust `Settings::default`）。
+  let traySettings: TraySettings = {
+    notifyOnWaiting: true,
+    notifyOnStuck: true,
+    notifyOnFinish: false,
+    badgeStyle: "count",
+    titleWidth: "standard",
+    showCost: true,
+    showProject: false,
+    showIdle: true,
+    compactRows: false,
+    clickAction: "menu",
+    showDockIcon: false,
+  };
+
   (window as unknown as { __ompMock?: unknown }).__ompMock = {
     calls: itermCalls,
     newSessionCalls,
@@ -870,6 +1085,9 @@ export async function installMockBackend(): Promise<MockHandle> {
     },
     get meta() {
       return metaSnapshot();
+    },
+    get traySettings() {
+      return traySettings;
     },
     /** 冒烟用：模拟外部修改，把 revision 顶掉一次，使下次保存触发 CONFLICT。 */
     bumpMeta() {
@@ -1100,6 +1318,29 @@ export async function installMockBackend(): Promise<MockHandle> {
         newSessionCalls.push(cwd);
         return null;
       }
+      case "resume_command_for": {
+        // 与真后端同口径：校验同 open_in_iterm，但不做占用探测（CONTRACT §25.2）。
+        const s = find(args["path"] as string);
+        if (!s) throw err("NOT_FOUND", "会话文件不存在");
+        if (!s.summary.cwdExists) throw err("CWD_MISSING", "项目目录不存在");
+        const quote = (v: string): string => `'${v.replace(/'/g, `'\"'\"'`)}'`;
+        return `cd ${quote(s.summary.cwd)} && omp --resume ${quote(s.summary.path)}`;
+      }
+      case "copy_text":
+        // 系统剪贴板在 mock 下无从验证：只校验参数形状，视为成功。
+        if (typeof args["text"] !== "string") throw err("INVALID_INPUT", "text 必须为字符串");
+        return null;
+      case "reveal_session_file": {
+        // 只做与真后端相同的存在性校验（CONTRACT §25.4），不调 Finder。
+        if (!find(args["path"] as string)) throw err("NOT_FOUND", "会话文件不存在");
+        return null;
+      }
+      case "open_project_dir": {
+        // 校验口径同 new_session_in_iterm（CONTRACT §25.5），不调 Finder。
+        const cwd = args["cwd"];
+        if (typeof cwd !== "string" || !cwd.startsWith("/")) throw err("CWD_MISSING", "目录不存在或不是目录");
+        return null;
+      }
       case "choose_directory":
         return params.get("pick") === "cancel" ? null : "/Users/demo/my/omp-resume";
       case "get_session_recap": {
@@ -1221,6 +1462,11 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "get_model_config":
       case "update_model_config":
         return model(cmd, args);
+      case "list_model_presets":
+      case "save_model_preset":
+      case "switch_model_preset":
+      case "delete_model_preset":
+        return presets(cmd, args);
       case "get_model_specs":
       case "update_model_spec":
         return specs(cmd, args);
@@ -1241,6 +1487,31 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "memory_restore":
       case "memory_delete_backup":
         return memory(cmd, args);
+      case "get_tray_settings":
+        return structuredClone(traySettings);
+      case "set_tray_settings": {
+        const patch = args["patch"];
+        if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
+          throw err("INVALID_INPUT", "patch 必须为对象");
+        }
+        const known = new Set(Object.keys(traySettings));
+        for (const key of Object.keys(patch)) {
+          if (!known.has(key)) throw err("INVALID_INPUT", `未知设置键：${key}`);
+        }
+        traySettings = structuredClone({ ...traySettings, ...patch });
+        return structuredClone(traySettings);
+      }
+      case "get_tray_preview":
+        return mockTrayPreview(sessions, traySettings);
+      case "get_app_paths":
+        return {
+          sessionsDir: "/Users/demo/.omp/agent/sessions",
+          ownersDir: "/Users/demo/.omp/run/session-owners",
+          historyDb: "/Users/demo/.omp/agent/history.db",
+          memoryDir: "/Users/demo/.omp/agent/memories/mnemopi/banks",
+          dataDir: "/Users/demo/Library/Application Support/omp-resume",
+          ompBin: "/Users/demo/.local/bin/omp",
+        };
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }

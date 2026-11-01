@@ -34,8 +34,10 @@ fn live_pipeline_once() {
     );
     // 跑两轮：第二轮验证增量路径（偏移推进、无重复计数）。
     for round in 1..=2 {
-        let outcome = poller.poll_once(epoch_now(), true, false);
-        println!("--- round {round} ---");
+        let outcome = poller.poll_once(
+            epoch_now(),
+            &omp_resume_lib::menubar::settings::Settings::default(),
+        );
         println!(
             "locks held={} unattributed={} rows={} error={:?}",
             outcome.inuse_total,

@@ -3,7 +3,7 @@
  * 命令名 snake_case，参数/返回值 JSON camelCase（见 docs/CONTRACT.md）。
  */
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { CleanupCandidate } from "./types";
+import type { AppPaths, CleanupCandidate, TrayPreview, TraySettings, TraySettingsPatch } from "./types";
 import type {
   AgentDetail,
   AgentStage,
@@ -498,4 +498,24 @@ export function listRunningSessions(): Promise<RunningSession[]> {
 /** CONTRACT §4.59：agent 定义的完整只读视图（工具 / 派生 / 系统提示词）。 */
 export function listAgentDetails(): Promise<AgentDetail[]> {
   return call("list_agent_details");
+}
+
+/** CONTRACT §17.10：读菜单栏设置。 */
+export function getTraySettings(): Promise<TraySettings> {
+  return call("get_tray_settings");
+}
+
+/** CONTRACT §17.10：按补丁改菜单栏设置（成功返回完整设置）。 */
+export function setTraySettings(patch: TraySettingsPatch): Promise<TraySettings> {
+  return call("set_tray_settings", { patch });
+}
+
+/** CONTRACT §17.10：菜单栏页预览（只读，由托盘缓存模型映射）。 */
+export function getTrayPreview(): Promise<TrayPreview> {
+  return call("get_tray_preview");
+}
+
+/** CONTRACT §4.68：应用关键路径（只读展示）。 */
+export function getAppPaths(): Promise<AppPaths> {
+  return call("get_app_paths");
 }

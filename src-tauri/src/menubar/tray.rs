@@ -20,17 +20,21 @@ use tauri::{
 
 use super::classify::SessionStatus;
 use super::menu::{
-    cost_text, menu_text, project_entry, recent_entry, refresh_decision, Extras, MenuModel,
-    Refresh, COST_ITEM_ID, PROJECT_LIMIT, RECENT_LIMIT,
+    badge_samples, cost_text, menu_text, project_entry, recent_entry, refresh_decision, Extras,
+    MenuModel, Refresh, RowInput, COST_ITEM_ID, PROJECT_LIMIT, RECENT_LIMIT,
 };
 use super::notify::{self, NotifyAction};
 use super::poller::{Poller, SystemOccupants, POLL_INTERVAL_SECS};
-use super::settings::{self, Settings};
+use super::settings::{self, ClickAction, Settings, SettingsPatch};
+use crate::model::{AppError, ErrorCode};
 
 pub const TRAY_ID: &str = "menubar";
 pub const ITEM_OPEN_WINDOW: &str = "open-window";
 pub const ITEM_TOGGLE_NOTIFY: &str = "toggle-notify";
+pub const ITEM_TOGGLE_STUCK: &str = "toggle-stuck";
+pub const ITEM_TOGGLE_FINISH: &str = "toggle-finish";
 pub const ITEM_TOGGLE_DOCK: &str = "toggle-dock";
+pub const ITEM_TRAY_SETTINGS: &str = "tray-settings";
 pub const ITEM_QUIT: &str = "quit";
 pub const ITEM_MORE: &str = "more";
 pub const SESSION_PREFIX: &str = "session:";
@@ -51,7 +55,10 @@ pub const RECENT_PREFIX: &str = "recent:";
 pub const ITEM_SETTINGS: &str = "settings";
 /// 「设置 ▸ 检查更新…」项 id。
 pub const ITEM_CHECK_UPDATE: &str = "check-update";
-
+/// 设置变更事件（payload 为完整 `Settings`）。
+pub const TRAY_SETTINGS_CHANGED_EVENT: &str = "tray-settings-changed";
+/// 打开菜单栏页请求（无 payload）。
+pub const OPEN_TRAY_SETTINGS_EVENT: &str = "open-tray-settings";
 /// 托盘共享状态（Tauri 全局 `manage`，跨线程）。
 pub struct Shared {
     /// 会话 id → tty（聚焦用，轮询每轮发布）。
@@ -59,6 +66,8 @@ pub struct Shared {
     /// 运行中会话快照（每轮整体覆盖；`list_running_sessions` 读它）。
     pub running: Mutex<Vec<crate::model::RunningSession>>,
     pub last_menu: Mutex<Option<MenuModel>>,
+    /// 上轮菜单行的输入快照（设置变更时重建菜单用）。
+    pub last_rows: Mutex<Vec<RowInput>>,
     pub settings: Mutex<Settings>,
     /// 通知 id → 会话 id（点击回调聚焦用；汇总/ plain 通知记空串 → 打开主窗口）。
     pub notify_targets: Mutex<HashMap<i32, String>>,
@@ -81,6 +90,7 @@ impl Shared {
             focus: Mutex::new(HashMap::new()),
             running: Mutex::new(Vec::new()),
             last_menu: Mutex::new(None),
+            last_rows: Mutex::new(Vec::new()),
             settings: Mutex::new(settings),
             notify_targets: Mutex::new(HashMap::new()),
             notify_seq: AtomicI32::new(1),
@@ -92,7 +102,6 @@ impl Shared {
         }
     }
 }
-
 /// 文本更新器：(项 id, `set_text` 闭包)。结构性重建时整体替换。
 pub type RowUpdaters = Vec<(String, Box<dyn Fn(&str) + Send + Sync>)>;
 
@@ -109,13 +118,15 @@ pub fn build_menu<R: Runtime>(
     let header = MenuItem::new(app, menu_text(&model.header), false, None::<&str>)?;
     menu.append(&header)?;
     let mut updaters: RowUpdaters = Vec::new();
-    if let Some(cost) = model.extras.as_ref().and_then(|e| e.cost_text.as_ref()) {
-        let item = MenuItem::with_id(app, COST_ITEM_ID, menu_text(cost), false, None::<&str>)?;
-        menu.append(&item)?;
-        let f: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |text: &str| {
-            let _ = item.set_text(menu_text(text));
-        });
-        updaters.push((COST_ITEM_ID.to_string(), f));
+    if model.settings.show_cost {
+        if let Some(cost) = model.extras.as_ref().and_then(|e| e.cost_text.as_ref()) {
+            let item = MenuItem::with_id(app, COST_ITEM_ID, menu_text(cost), false, None::<&str>)?;
+            menu.append(&item)?;
+            let f: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |text: &str| {
+                let _ = item.set_text(menu_text(text));
+            });
+            updaters.push((COST_ITEM_ID.to_string(), f));
+        }
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     for row in &model.rows {
@@ -262,9 +273,25 @@ pub fn build_menu<R: Runtime>(
         let notify = CheckMenuItem::with_id(
             app,
             ITEM_TOGGLE_NOTIFY,
-            "完成时通知",
+            "等待输入时通知",
             true,
-            model.notify_on,
+            model.settings.notify_on_waiting,
+            None::<&str>,
+        )?;
+        let stuck = CheckMenuItem::with_id(
+            app,
+            ITEM_TOGGLE_STUCK,
+            "疑似卡住时通知",
+            true,
+            model.settings.notify_on_stuck,
+            None::<&str>,
+        )?;
+        let finish = CheckMenuItem::with_id(
+            app,
+            ITEM_TOGGLE_FINISH,
+            "会话结束时通知",
+            true,
+            model.settings.notify_on_finish,
             None::<&str>,
         )?;
         let dock = CheckMenuItem::with_id(
@@ -272,12 +299,20 @@ pub fn build_menu<R: Runtime>(
             ITEM_TOGGLE_DOCK,
             "在 Dock 显示图标",
             true,
-            model.dock_on,
+            model.settings.show_dock_icon,
             None::<&str>,
         )?;
         let sep = PredefinedMenuItem::separator(app)?;
+        let more = MenuItem::with_id(
+            app,
+            ITEM_TRAY_SETTINGS,
+            "更多菜单栏设置…",
+            true,
+            None::<&str>,
+        )?;
         let check = MenuItem::with_id(app, ITEM_CHECK_UPDATE, "检查更新…", true, None::<&str>)?;
-        let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&notify, &dock, &sep, &check];
+        let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> =
+            vec![&notify, &stuck, &finish, &dock, &sep, &more, &check];
         let sub = Submenu::with_id_and_items(app, ITEM_SETTINGS, "设置", true, &refs)?;
         menu.append(&sub)?;
     }
@@ -304,6 +339,7 @@ fn status_icon(s: SessionStatus) -> tauri::menu::NativeIcon {
 
 /// 创建托盘图标（初始菜单由调用方给，首轮轮询后刷新）。
 pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result<TrayIcon<R>> {
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
     let icon = Image::from_bytes(include_bytes!("../../icons/tray-icon.png"))?;
     let handle = app.handle();
     let (menu, _handles) = build_menu(handle, model)?;
@@ -312,11 +348,30 @@ pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result
         .icon_as_template(true)
         .tooltip(&model.tooltip)
         .menu(&menu)
-        .show_menu_on_left_click(true);
+        .show_menu_on_left_click(model.settings.click_action == ClickAction::Menu)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if click_action(tray.app_handle()) == ClickAction::Window {
+                    show_main(tray.app_handle());
+                }
+            }
+        });
     if let Some(title) = &model.tray_title {
         builder = builder.title(title);
     }
     builder.build(app)
+}
+
+/// 当前点击行为（读不到状态时按默认弹菜单）。
+fn click_action<R: Runtime>(app: &AppHandle<R>) -> ClickAction {
+    app.try_state::<Shared>()
+        .and_then(|s| s.settings.lock().ok().map(|g| g.click_action))
+        .unwrap_or(ClickAction::Menu)
 }
 
 /// 菜单点击事件路由（注册到 `Builder::on_menu_event`）。
@@ -340,8 +395,14 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::Men
     }
     match id.as_str() {
         ITEM_OPEN_WINDOW => show_main(app),
-        ITEM_TOGGLE_NOTIFY => toggle_setting(app, true),
-        ITEM_TOGGLE_DOCK => toggle_setting(app, false),
+        ITEM_TOGGLE_NOTIFY => toggle_setting(app, ITEM_TOGGLE_NOTIFY),
+        ITEM_TOGGLE_STUCK => toggle_setting(app, ITEM_TOGGLE_STUCK),
+        ITEM_TOGGLE_FINISH => toggle_setting(app, ITEM_TOGGLE_FINISH),
+        ITEM_TOGGLE_DOCK => toggle_setting(app, ITEM_TOGGLE_DOCK),
+        ITEM_TRAY_SETTINGS => {
+            show_main(app);
+            let _ = app.emit(OPEN_TRAY_SETTINGS_EVENT, ());
+        }
         ITEM_NEW_PICK => pick_new_session(app),
         ITEM_CHECK_UPDATE => {
             show_main(app);
@@ -440,45 +501,82 @@ pub fn hide_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn toggle_setting<R: Runtime>(app: &AppHandle<R>, notify: bool) {
+/// 设置变更统一入口：改内存 → 落盘 → 应用副作用 → 重建菜单 → 发事件。
+///
+/// 落盘失败返回 `Io` 错误且不改内存中的设置（调用方决定如何反馈）。
+fn apply_settings<R: Runtime>(
+    app: &AppHandle<R>,
+    mutate: impl FnOnce(&mut Settings),
+) -> Result<Settings, AppError> {
     let Some(shared) = app.try_state::<Shared>() else {
-        return;
+        return Err(AppError::new(ErrorCode::Io, "托盘状态不可用"));
     };
-    let (notify_on, dock_on) = {
-        let mut guard = match shared.settings.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        if notify {
-            guard.notify_on_waiting = !guard.notify_on_waiting;
-        } else {
-            guard.show_dock_icon = !guard.show_dock_icon;
+    let next = {
+        let guard = shared
+            .settings
+            .lock()
+            .map_err(|_| AppError::new(ErrorCode::Io, "读取菜单栏设置失败"))?;
+        let mut next = guard.clone();
+        mutate(&mut next);
+        if next == *guard {
+            return Ok(next);
         }
-        let next = guard.clone();
-        drop(guard);
-        if settings::save(&shared.data_dir, &next).is_err() {
-            return;
-        }
-        (next.notify_on_waiting, next.show_dock_icon)
+        next
     };
+    if let Err(e) = settings::save(&shared.data_dir, &next) {
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!("保存菜单栏设置失败：{e}"),
+        ));
+    }
+    if let Ok(mut guard) = shared.settings.lock() {
+        *guard = next.clone();
+    }
     // Dock 策略立即生效（窗口可见时保持 Regular）。
     let window_visible = app
         .get_webview_window("main")
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(true);
     if !window_visible {
-        let _ = app.set_activation_policy(if dock_on {
+        let _ = app.set_activation_policy(if next.show_dock_icon {
             tauri::ActivationPolicy::Regular
         } else {
             tauri::ActivationPolicy::Accessory
         });
     }
-    // 用缓存模型立即刷新勾选态（不等下轮）。
-    let cached = shared.last_menu.lock().ok().and_then(|g| g.clone());
-    if let Some(mut model) = cached {
-        model.notify_on = notify_on;
-        model.dock_on = dock_on;
-        refresh_tray(app, &shared, &model);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_show_menu_on_left_click(next.click_action == ClickAction::Menu);
+    }
+    // 用上轮行快照立即重建菜单（不等下轮）。
+    let rows = shared
+        .last_rows
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let mut model = super::menu::build_model(rows, &next);
+    if let Ok(guard) = shared.modes.lock() {
+        model.modes = guard.clone();
+    }
+    if let Ok(guard) = shared.extras.lock() {
+        model.extras = guard.clone();
+    }
+    refresh_tray(app, &shared, &model);
+    let _ = app.emit(TRAY_SETTINGS_CHANGED_EVENT, &next);
+    Ok(next)
+}
+
+/// 原生菜单四个勾选项共用：失败只打日志（菜单无错误展示位）。
+fn toggle_setting<R: Runtime>(app: &AppHandle<R>, key: &str) {
+    let result = apply_settings(app, |s| match key {
+        ITEM_TOGGLE_NOTIFY => s.notify_on_waiting = !s.notify_on_waiting,
+        ITEM_TOGGLE_STUCK => s.notify_on_stuck = !s.notify_on_stuck,
+        ITEM_TOGGLE_FINISH => s.notify_on_finish = !s.notify_on_finish,
+        ITEM_TOGGLE_DOCK => s.show_dock_icon = !s.show_dock_icon,
+        _ => {}
+    });
+    if let Err(e) = result {
+        eprintln!("menubar: 切换设置失败：{}", e.message);
     }
 }
 
@@ -708,7 +806,9 @@ pub fn send_action<R: Runtime>(app: &AppHandle<R>, shared: &Shared, action: &Not
         NotifyAction::Waiting { session_id, .. } | NotifyAction::Stuck { session_id, .. } => {
             session_id.clone()
         }
-        NotifyAction::Summary { .. } => String::new(),
+        NotifyAction::Finished { .. }
+        | NotifyAction::Summary { .. }
+        | NotifyAction::FinishedSummary { .. } => String::new(),
     };
     eprintln!("menubar: 通知发送尝试「{title} / {body}」");
     if send_via_plugin(app, shared, &title, &body, target).is_err() {
@@ -818,18 +918,17 @@ pub fn spawn_poller<R: Runtime + 'static>(
             );
             loop {
                 let tick_start = std::time::Instant::now();
-                let (notify_on, dock_on) = app
+                let settings = app
                     .try_state::<Shared>()
-                    .and_then(|s| {
-                        s.settings
-                            .lock()
-                            .ok()
-                            .map(|g| (g.notify_on_waiting, g.show_dock_icon))
-                    })
-                    .unwrap_or((true, false));
-                let outcome = poller.poll_once(epoch_now(), notify_on, dock_on);
+                    .and_then(|s| s.settings.lock().ok().map(|g| g.clone()))
+                    .unwrap_or_default();
+                let outcome = poller.poll_once(epoch_now(), &settings);
                 if let Some(model) = outcome.menu {
                     if let Some(shared) = app.try_state::<Shared>() {
+                        // 缓存行快照（设置变更重建菜单用）。
+                        if let Ok(mut rows) = shared.last_rows.lock() {
+                            *rows = outcome.rows;
+                        }
                         // 发布聚焦表。
                         if let Ok(mut focus) = shared.focus.lock() {
                             focus.clear();
@@ -887,4 +986,124 @@ pub fn spawn_poller<R: Runtime + 'static>(
     if let Err(e) = poller {
         eprintln!("menubar: 轮询线程启动失败：{e}");
     }
+}
+
+/// 菜单栏设置页预览行的纯映射（`last_menu` → `TrayPreview`）。
+fn preview_of(model: &MenuModel, ready: bool) -> crate::model::TrayPreview {
+    use crate::model::{
+        TrayBadgeSample, TrayPreview, TrayPreviewEntry, TrayPreviewMode, TrayPreviewRow,
+    };
+    let rows = model
+        .rows
+        .iter()
+        .map(|r| TrayPreviewRow {
+            session_id: r.session_id.clone(),
+            status: r.status.key().to_string(),
+            text: r.text(),
+            enabled: r.enabled,
+        })
+        .collect();
+    let overflow = model
+        .overflow
+        .iter()
+        .map(|r| TrayPreviewRow {
+            session_id: r.session_id.clone(),
+            status: r.status.key().to_string(),
+            text: r.text(),
+            enabled: r.enabled,
+        })
+        .collect();
+    let (recent, projects, cost_text) = match &model.extras {
+        Some(e) => (
+            e.recent
+                .iter()
+                .map(|r| TrayPreviewEntry {
+                    key: r.session_id.clone(),
+                    text: r.text.clone(),
+                })
+                .collect(),
+            e.projects
+                .iter()
+                .map(|p| TrayPreviewEntry {
+                    key: p.cwd.clone(),
+                    text: p.text.clone(),
+                })
+                .collect(),
+            if model.settings.show_cost {
+                e.cost_text.clone()
+            } else {
+                None
+            },
+        ),
+        None => (Vec::new(), Vec::new(), None),
+    };
+    let modes = model.modes.as_ref().map(|ms| {
+        ms.iter()
+            .map(|m| TrayPreviewMode {
+                name: m.name.clone(),
+                active: m.active,
+                enabled: m.enabled,
+            })
+            .collect()
+    });
+    let badge_samples = badge_samples(model.settings.badge_style)
+        .into_iter()
+        .map(|(status, title)| TrayBadgeSample {
+            state: status.key().to_string(),
+            title,
+        })
+        .collect();
+    TrayPreview {
+        ready,
+        header: model.header.clone(),
+        tray_title: model.tray_title.clone(),
+        cost_text,
+        rows,
+        overflow,
+        recent,
+        projects,
+        modes,
+        badge_samples,
+    }
+}
+
+/// CONTRACT §17.10：读菜单栏设置。
+#[tauri::command]
+pub fn get_tray_settings(
+    shared: tauri::State<'_, Shared>,
+) -> Result<Settings, crate::model::AppError> {
+    shared
+        .settings
+        .lock()
+        .map(|g| g.clone())
+        .map_err(|_| crate::model::AppError::new(ErrorCode::Io, "读取菜单栏设置失败"))
+}
+
+/// CONTRACT §17.10：按补丁改菜单栏设置（成功返回完整设置）。
+#[tauri::command]
+pub fn set_tray_settings(
+    app: tauri::AppHandle,
+    patch: SettingsPatch,
+) -> Result<Settings, crate::model::AppError> {
+    apply_settings(&app, |s| patch.apply(s))
+}
+
+/// CONTRACT §17.10：菜单栏页预览（只读，由缓存模型映射）。
+#[tauri::command]
+pub fn get_tray_preview(
+    shared: tauri::State<'_, Shared>,
+) -> Result<crate::model::TrayPreview, crate::model::AppError> {
+    if let Some(model) = shared.last_menu.lock().ok().and_then(|g| g.clone()) {
+        return Ok(preview_of(&model, true));
+    }
+    let settings = shared
+        .settings
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    Ok(preview_of(
+        &super::menu::build_model(Vec::new(), &settings),
+        false,
+    ))
 }
