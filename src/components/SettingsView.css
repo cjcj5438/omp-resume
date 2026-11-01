@@ -2,7 +2,7 @@
 
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.45fr 1fr;
   gap: 16px;
   align-items: start;
   margin-bottom: 16px;
@@ -10,6 +10,13 @@
 
 .settings-grid:last-child {
   margin-bottom: 0;
+}
+
+/* 小窗断点（与 .grid-2 在 1120px 转单列同语义，R2-2）：900×600 下右列仅剩 235px，转单列防挤压。 */
+@media (max-width: 1120px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---- 主题卡片：照抄设计稿 styles.css 的 theme-choice 段 ---- */
@@ -170,13 +177,20 @@
 
 .path-table td code {
   font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--text);
+  font-size: 10px;
+  color: var(--text-muted);
   word-break: break-all;
 }
 
 .path-table td:last-child {
   text-align: right;
   padding-left: 12px;
-  width: 1%;
+}
+
+/* ---- 关于卡 ---- */
+
+.settings-about-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
 }

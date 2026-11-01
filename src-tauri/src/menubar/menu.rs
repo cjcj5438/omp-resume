@@ -77,7 +77,7 @@ impl RowModel {
 }
 
 /// 整个托盘菜单 + 图标标题的展示数据（变化检测用）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MenuModel {
     /// 头部禁用项文本。
     pub header: String,
@@ -88,7 +88,7 @@ pub struct MenuModel {
     pub tooltip: String,
     /// 构建本模型的设置快照（任一字段变化都算结构性变化）。
     pub settings: Settings,
-    /// 需要用户处理的会话数（等待输入 + 疑似卡住），Dock 角标用；0 = 无角标。
+    /// 需要用户处理的会话数（等待输入 + 可能卡住），Dock 角标用；0 = 无角标。
     pub badge_count: usize,
     /// 模型模式列表；`None` = 尚未读到或读取失败（菜单不显示「模式」子菜单）。
     pub modes: Option<Vec<ModeEntry>>,
@@ -120,9 +120,13 @@ pub struct ProjectEntry {
 }
 
 /// 60 秒慢刷新的附加数据。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Extras {
     pub cost_text: Option<String>,
+    /// 今日花费裸值（美元；与 `cost_text` 同快照，面板头部用，前端格式化）。
+    pub cost_usd: Option<f64>,
+    /// 今日请求数（assistant 条目 + model_usage，与 health.requests 同口径）。
+    pub request_count: Option<u64>,
     pub recent: Vec<RecentEntry>,
     pub projects: Vec<ProjectEntry>,
 }
@@ -130,7 +134,7 @@ pub struct Extras {
 impl MenuModel {
     /// 结构性变化检测：会话增减 / 状态 / 排序 / 标题 / 设置勾选任一变化即 false
     /// （头部与图标标题含计数，状态变化必改它们；行的形状含标题与状态文字）。
-    /// 花费行是否出现算结构变化，但其金额数字的变化不算（由 [`refresh_decision`]
+    /// 花费行是否出现算结构变化，但其金额数字/请求数的变化不算（由 [`refresh_decision`]
     /// 就地更新文字）。返回 true 时两个模型只可能差行内时长文字与花费文字。
     pub fn same_structure(&self, other: &MenuModel) -> bool {
         self.header == other.header
@@ -151,14 +155,23 @@ impl MenuModel {
                 .iter()
                 .zip(&other.overflow)
                 .all(|(a, b)| a.same_shape(b))
-            && self
-                .extras
-                .as_ref()
-                .map(|e| (&e.recent, &e.projects, e.cost_text.is_some()))
-                == other
-                    .extras
-                    .as_ref()
-                    .map(|e| (&e.recent, &e.projects, e.cost_text.is_some()))
+            && self.extras.as_ref().map(|e| {
+                (
+                    &e.recent,
+                    &e.projects,
+                    e.cost_text.is_some(),
+                    e.cost_usd.is_some(),
+                    e.request_count.is_some(),
+                )
+            }) == other.extras.as_ref().map(|e| {
+                (
+                    &e.recent,
+                    &e.projects,
+                    e.cost_text.is_some(),
+                    e.cost_usd.is_some(),
+                    e.request_count.is_some(),
+                )
+            })
     }
 }
 
@@ -224,7 +237,7 @@ pub fn tray_title(style: BadgeStyle, c: &StatusCounts) -> Option<String> {
         return None;
     }
     match style {
-        // `{在工作}·{在等我}`，在工作含疑似卡住；有卡住追加 `!`。
+        // `{在工作}·{在等我}`，在工作含可能卡住；有卡住追加 `!`。
         BadgeStyle::Count => {
             let mut t = format!("{}·{}", c.working + c.stuck, c.waiting);
             if c.stuck > 0 {
@@ -315,7 +328,7 @@ pub fn build_model(inputs: Vec<RowInput>, settings: &Settings) -> MenuModel {
     } else {
         let mut h = format!("omp 会话 · 占用 {total} · 工作中 {working} · 等待输入 {waiting}");
         if stuck > 0 {
-            h.push_str(&format!(" · 疑似卡住 {stuck}"));
+            h.push_str(&format!(" · 可能卡住 {stuck}"));
         }
         h
     };
@@ -519,7 +532,7 @@ mod tests {
         assert_eq!(ids, vec!["stuck", "wait", "work", "idle"]);
         assert_eq!(
             m.header,
-            "omp 会话 · 占用 4 · 工作中 1 · 等待输入 1 · 疑似卡住 1"
+            "omp 会话 · 占用 4 · 工作中 1 · 等待输入 1 · 可能卡住 1"
         );
         assert_eq!(m.tray_title, Some("2·1!".to_string()));
     }
@@ -743,7 +756,7 @@ mod tests {
             &Settings::default(),
         );
         assert_eq!(m.badge_count, 0);
-        // 等待输入 + 疑似卡住求和。
+        // 等待输入 + 可能卡住求和。
         let m = build_model(
             vec![
                 row("w", SessionStatus::Working),
@@ -907,6 +920,8 @@ mod tests {
         let mut old = build_model(vec![], &s);
         old.extras = Some(Extras {
             cost_text: Some("今日花费 $1.20".to_string()),
+            cost_usd: Some(1.20),
+            request_count: Some(7),
             recent: vec![],
             projects: vec![],
         });
@@ -1007,6 +1022,8 @@ mod extras_tests {
     fn extras(cost: &str) -> Extras {
         Extras {
             cost_text: Some(cost.to_string()),
+            cost_usd: Some(1.20),
+            request_count: Some(7),
             recent: vec![RecentEntry {
                 session_id: "s1".into(),
                 path: "/tmp/s1.jsonl".into(),
@@ -1017,6 +1034,22 @@ mod extras_tests {
                 text: "/tmp/proj".into(),
             }],
         }
+    }
+
+    #[test]
+    fn bare_value_change_is_not_structural() {
+        // cost_usd / request_count 只比 presence：数字变化不重建（面板走轮询）。
+        let mut old = build_model(vec![], &Settings::default());
+        old.extras = Some(extras("今日花费 $1.20"));
+        let mut new = old.clone();
+        let e = new.extras.as_mut().unwrap();
+        e.cost_usd = Some(9.99);
+        e.request_count = Some(42);
+        assert!(old.same_structure(&new));
+        // presence 翻转 → 重建（与 cost_text.is_some() 同口径）。
+        let mut gone = old.clone();
+        gone.extras.as_mut().unwrap().cost_usd = None;
+        assert!(!old.same_structure(&gone));
     }
 
     #[test]
@@ -1095,6 +1128,8 @@ mod extras_tests {
             version: Some(3),
             bad_lines: 0,
             first_user_message: None,
+            model: None,
+            tokens: None,
         };
         let e = recent_entry(&s);
         assert_eq!(e.session_id, "s1");

@@ -74,6 +74,8 @@ pub struct Shared {
     pub notify_seq: AtomicI32,
     /// 真退出进行中（菜单“退出”置位；置位后窗口 CloseRequested 不再拦截）。
     pub quitting: AtomicBool,
+    /// 上次 blur 触发隐藏的时间（toggle/blur 竞态守卫用；Esc/主动 toggle 不记）。
+    pub last_blur_hide: Mutex<Option<std::time::Instant>>,
     pub data_dir: PathBuf,
     /// 文本更新器（项 id → `set_text` 闭包）：仅文字变化时就地更新，
     /// 结构性重建时整体替换。会话行用会话 id，花费行用 `COST_ITEM_ID`。
@@ -95,6 +97,7 @@ impl Shared {
             notify_targets: Mutex::new(HashMap::new()),
             notify_seq: AtomicI32::new(1),
             quitting: AtomicBool::new(false),
+            last_blur_hide: Mutex::new(None),
             data_dir,
             row_updaters: Mutex::new(Vec::new()),
             modes: Mutex::new(None),
@@ -281,7 +284,7 @@ pub fn build_menu<R: Runtime>(
         let stuck = CheckMenuItem::with_id(
             app,
             ITEM_TOGGLE_STUCK,
-            "疑似卡住时通知",
+            "可能卡住时通知",
             true,
             model.settings.notify_on_stuck,
             None::<&str>,
@@ -348,16 +351,18 @@ pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result
         .icon_as_template(true)
         .tooltip(&model.tooltip)
         .menu(&menu)
-        .show_menu_on_left_click(model.settings.click_action == ClickAction::Menu)
+        .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
-                if click_action(tray.app_handle()) == ClickAction::Window {
-                    show_main(tray.app_handle());
+                match click_action(tray.app_handle()) {
+                    ClickAction::Panel => super::panel::toggle_panel(tray.app_handle(), rect),
+                    ClickAction::Window => show_main(tray.app_handle()),
                 }
             }
         });
@@ -367,11 +372,11 @@ pub fn create_tray<R: Runtime>(app: &App<R>, model: &MenuModel) -> tauri::Result
     builder.build(app)
 }
 
-/// 当前点击行为（读不到状态时按默认弹菜单）。
+/// 当前点击行为（读不到状态时按默认开面板）。
 fn click_action<R: Runtime>(app: &AppHandle<R>) -> ClickAction {
     app.try_state::<Shared>()
         .and_then(|s| s.settings.lock().ok().map(|g| g.click_action))
-        .unwrap_or(ClickAction::Menu)
+        .unwrap_or(ClickAction::Panel)
 }
 
 /// 菜单点击事件路由（注册到 `Builder::on_menu_event`）。
@@ -453,9 +458,11 @@ fn resume_recent<R: Runtime>(app: &AppHandle<R>, session_id: String) {
 fn new_session_in<R: Runtime>(app: &AppHandle<R>, cwd: String) {
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) =
-            crate::ops::commands::new_session_in_iterm_impl(&cwd, &crate::ops::iterm::open_tab)
-        {
+        if let Err(e) = crate::ops::commands::new_session_in_iterm_impl(
+            &cwd,
+            None,
+            &crate::ops::iterm::open_tab,
+        ) {
             send_plain(&app, "新建会话失败", &e.message);
         }
     });
@@ -466,9 +473,11 @@ fn pick_new_session<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || match crate::ops::picker::choose_directory() {
         Ok(Some(cwd)) => {
-            if let Err(e) =
-                crate::ops::commands::new_session_in_iterm_impl(&cwd, &crate::ops::iterm::open_tab)
-            {
+            if let Err(e) = crate::ops::commands::new_session_in_iterm_impl(
+                &cwd,
+                None,
+                &crate::ops::iterm::open_tab,
+            ) {
                 send_plain(&app, "新建会话失败", &e.message);
             }
         }
@@ -545,7 +554,22 @@ fn apply_settings<R: Runtime>(
         });
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_show_menu_on_left_click(next.click_action == ClickAction::Menu);
+        let _ = tray.set_show_menu_on_left_click(false);
+    }
+    // 面板可见时跟随宽度。
+    if let Some(panel) = app.get_webview_window(super::panel::PANEL_LABEL) {
+        if panel.is_visible().unwrap_or(false) {
+            let width = super::panel::panel_width(next.title_width);
+            let scale = panel.scale_factor().unwrap_or(1.0).max(1.0);
+            let height = panel
+                .outer_size()
+                .map(|s| s.height)
+                .unwrap_or((620.0 * scale) as u32);
+            let _ = panel.set_size(tauri::PhysicalSize::new(
+                (width as f64 * scale) as u32,
+                height,
+            ));
+        }
     }
     // 用上轮行快照立即重建菜单（不等下轮）。
     let rows = shared
@@ -684,7 +708,10 @@ pub fn spawn_extras_refresher<R: Runtime + 'static>(app: AppHandle<R>) {
             if let Ok(stats) =
                 crate::usage::usage_stats(&cfg, &cache, crate::model::UsageRange::Today)
             {
-                next.cost_text = Some(cost_text(stats.total.cost.total));
+                let total = stats.total.cost.total;
+                next.cost_text = Some(cost_text(total));
+                next.cost_usd = Some(total);
+                next.request_count = Some(stats.requests);
             }
             if let Ok(sessions) = crate::sessions::list::recent_sessions(&cfg, RECENT_LIMIT) {
                 next.recent = sessions.iter().map(recent_entry).collect();
@@ -708,30 +735,26 @@ pub fn spawn_extras_refresher<R: Runtime + 'static>(app: AppHandle<R>) {
 fn focus_session<R: Runtime>(app: &AppHandle<R>, session_id: String) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let tty = app.try_state::<Shared>().and_then(|s| {
-            s.focus
-                .lock()
-                .ok()
-                .and_then(|m| m.get(&session_id).cloned())
-        });
-        eprintln!("menubar: 聚焦请求 {session_id} tty={tty:?}");
-        let Some(tty) = tty else {
-            eprintln!("menubar: 聚焦失败——找不到该会话的终端映射");
-            send_plain(&app, "聚焦失败", "找不到该会话的终端");
-            return;
-        };
-        let runner = super::iterm::SystemRunner;
-        match super::iterm::focus_tty(&tty, &runner) {
-            Ok(()) => eprintln!("menubar: 聚焦成功 {tty}"),
-            Err(e) => {
-                eprintln!("menubar: 聚焦失败：{}", e.message());
-                send_plain(&app, "聚焦失败", &e.message());
-            }
+        eprintln!("menubar: 聚焦请求 {session_id}");
+        if let Err(message) = try_focus_session(&app, &session_id) {
+            eprintln!("menubar: 聚焦失败：{message}");
+            send_plain(&app, "聚焦失败", &message);
+        } else {
+            eprintln!("menubar: 聚焦成功 {session_id}");
         }
     });
 }
 
-/// Dock 角标 = 需要用户处理的会话数（等待输入 + 疑似卡住）；0 清除。
+/// 聚焦核心（同步，返回 `Result` 供 IPC 命令复用；原生菜单路径保持通知行为）。
+pub fn try_focus_session<R: Runtime>(app: &AppHandle<R>, session_id: &str) -> Result<(), String> {
+    let tty = app
+        .try_state::<Shared>()
+        .and_then(|s| s.focus.lock().ok().and_then(|m| m.get(session_id).cloned()))
+        .ok_or_else(|| "找不到该会话的终端".to_string())?;
+    super::iterm::focus_tty(&tty, &super::iterm::SystemRunner).map_err(|e| e.message())
+}
+
+/// Dock 角标 = 需要用户处理的会话数（等待输入 + 可能卡住）；0 清除。
 /// macOS 上经主窗口 `set_badge_count` 应用（应用级 NSDockTile badge）。
 pub fn apply_badge<R: Runtime>(app: &AppHandle<R>, model: &MenuModel) {
     if let Some(window) = app.get_webview_window("main") {
@@ -988,32 +1011,38 @@ pub fn spawn_poller<R: Runtime + 'static>(
     }
 }
 
-/// 菜单栏设置页预览行的纯映射（`last_menu` → `TrayPreview`）。
-fn preview_of(model: &MenuModel, ready: bool) -> crate::model::TrayPreview {
+/// 面板/菜单栏页预览的纯映射：`MenuModel`（行形状/分组/设置）按 `session_id`
+/// join `last_rows`（标题/项目/子代理/时长裸值）→ `TrayPreview`。
+///
+/// join 缺失时回退 `title = session 短 id`（防御分支：`last_rows` 与 `last_menu`
+/// 同快照更新，`apply_settings` 亦从 `last_rows` 重建，构造上不可达）。
+fn preview_of(model: &MenuModel, rows: &[RowInput], ready: bool) -> crate::model::TrayPreview {
     use crate::model::{
         TrayBadgeSample, TrayPreview, TrayPreviewEntry, TrayPreviewMode, TrayPreviewRow,
     };
-    let rows = model
-        .rows
-        .iter()
-        .map(|r| TrayPreviewRow {
+    let by_id: HashMap<&str, &RowInput> = rows.iter().map(|r| (r.session_id.as_str(), r)).collect();
+    let to_row = |r: &super::menu::RowModel| {
+        let joined = by_id.get(r.session_id.as_str());
+        TrayPreviewRow {
             session_id: r.session_id.clone(),
             status: r.status.key().to_string(),
-            text: r.text(),
+            title: joined
+                .map(|j| j.title.clone())
+                .unwrap_or_else(|| r.session_id.chars().take(8).collect::<String>()),
+            project: joined.and_then(|j| j.project.clone()),
+            subagents: joined.map(|j| j.subagents_running).unwrap_or(0),
+            elapsed_secs: joined.map(|j| j.idle_secs).unwrap_or(0),
             enabled: r.enabled,
-        })
-        .collect();
-    let overflow = model
-        .overflow
-        .iter()
-        .map(|r| TrayPreviewRow {
-            session_id: r.session_id.clone(),
-            status: r.status.key().to_string(),
-            text: r.text(),
-            enabled: r.enabled,
-        })
-        .collect();
-    let (recent, projects, cost_text) = match &model.extras {
+            disabled_reason: if r.enabled {
+                None
+            } else {
+                joined.and_then(|j| j.focus_block_reason.clone())
+            },
+        }
+    };
+    let rows: Vec<TrayPreviewRow> = model.rows.iter().map(to_row).collect();
+    let overflow: Vec<TrayPreviewRow> = model.overflow.iter().map(to_row).collect();
+    let (recent, projects, cost_usd, request_count) = match &model.extras {
         Some(e) => (
             e.recent
                 .iter()
@@ -1030,12 +1059,17 @@ fn preview_of(model: &MenuModel, ready: bool) -> crate::model::TrayPreview {
                 })
                 .collect(),
             if model.settings.show_cost {
-                e.cost_text.clone()
+                e.cost_usd
+            } else {
+                None
+            },
+            if model.settings.show_cost {
+                e.request_count
             } else {
                 None
             },
         ),
-        None => (Vec::new(), Vec::new(), None),
+        None => (Vec::new(), Vec::new(), None, None),
     };
     let modes = model.modes.as_ref().map(|ms| {
         ms.iter()
@@ -1055,9 +1089,9 @@ fn preview_of(model: &MenuModel, ready: bool) -> crate::model::TrayPreview {
         .collect();
     TrayPreview {
         ready,
-        header: model.header.clone(),
         tray_title: model.tray_title.clone(),
-        cost_text,
+        cost_usd,
+        request_count,
         rows,
         overflow,
         recent,
@@ -1088,13 +1122,19 @@ pub fn set_tray_settings(
     apply_settings(&app, |s| patch.apply(s))
 }
 
-/// CONTRACT §17.10：菜单栏页预览（只读，由缓存模型映射）。
+/// CONTRACT §17.10：面板/菜单栏页预览（只读，由缓存模型 + 行快照 join 映射）。
 #[tauri::command]
 pub fn get_tray_preview(
     shared: tauri::State<'_, Shared>,
 ) -> Result<crate::model::TrayPreview, crate::model::AppError> {
+    let rows = shared
+        .last_rows
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     if let Some(model) = shared.last_menu.lock().ok().and_then(|g| g.clone()) {
-        return Ok(preview_of(&model, true));
+        return Ok(preview_of(&model, &rows, true));
     }
     let settings = shared
         .settings
@@ -1104,6 +1144,94 @@ pub fn get_tray_preview(
         .unwrap_or_default();
     Ok(preview_of(
         &super::menu::build_model(Vec::new(), &settings),
+        &rows,
         false,
     ))
+}
+
+/// CONTRACT §17.11：面板点会话行 = 聚焦其 iTerm 标签（失败返回 `Io`，前端 toast）。
+#[tauri::command]
+pub fn tray_focus_session(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), crate::model::AppError> {
+    try_focus_session(&app, &session_id)
+        .map_err(|message| crate::model::AppError::new(ErrorCode::Io, message))
+}
+
+/// CONTRACT §17.11：面板「最近会话」恢复（与原生菜单同一路径解析 + iTerm 新 tab）。
+#[tauri::command]
+pub async fn tray_resume_recent(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), crate::model::AppError> {
+    let path = app
+        .try_state::<Shared>()
+        .and_then(|s| {
+            s.last_menu.lock().ok().and_then(|g| {
+                g.as_ref().and_then(|m| {
+                    m.extras.as_ref().and_then(|e| {
+                        e.recent
+                            .iter()
+                            .find(|r| r.session_id == session_id)
+                            .map(|r| r.path.clone())
+                    })
+                })
+            })
+        })
+        .unwrap_or_default();
+    if path.is_empty() {
+        return Err(crate::model::AppError::new(
+            ErrorCode::Io,
+            "找不到该会话的路径",
+        ));
+    }
+    crate::blocking(move || {
+        let cfg = app.state::<crate::config::Config>().inner().clone();
+        crate::ops::commands::open_in_iterm_impl(&cfg, &path, &crate::ops::iterm::open_tab)
+    })
+    .await
+}
+
+/// 主窗口路由跳转事件（`open_main_window{page}` 发出，App 订阅后 navigate）。
+pub const OPEN_MAIN_ROUTE_EVENT: &str = "open-main-route";
+
+/// CONTRACT §17.11：打开主窗口；`page` 非空时附带发出 `open-main-route` 事件。
+///
+/// payload：`{ route: Route } | { action: "new-session" }`——route 跳转由
+/// App.tsx 订阅执行，`new-session` 由 fe-sessions 的新建会话对话框订阅执行。
+#[tauri::command]
+pub fn open_main_window(
+    app: tauri::AppHandle,
+    page: Option<String>,
+) -> Result<(), crate::model::AppError> {
+    show_main(&app);
+    if let Some(page) = page.filter(|p| !p.is_empty()) {
+        let payload = if page == "new-session" {
+            serde_json::json!({ "action": "new-session" })
+        } else {
+            serde_json::json!({ "route": page })
+        };
+        let _ = app.emit(OPEN_MAIN_ROUTE_EVENT, payload);
+    }
+    Ok(())
+}
+
+/// CONTRACT §17.11：退出应用（与原生「退出」同路径：quitting 置位 + `exit(0)`）。
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) -> Result<(), crate::model::AppError> {
+    if let Some(shared) = app.try_state::<Shared>() {
+        shared.quitting.store(true, Ordering::SeqCst);
+    }
+    app.exit(0);
+    Ok(())
+}
+
+/// CONTRACT §17.11：构建信息（设置页关于卡用，前端拼展示文案）。
+#[tauri::command]
+pub fn get_build_info() -> crate::model::BuildInfo {
+    crate::model::BuildInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+    }
 }

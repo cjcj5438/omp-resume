@@ -1,22 +1,41 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { TrayPanelApp } from "./components/TrayPanelApp";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // 原生半透明材质（sidebar effect）：CSS 据此让窗口底色透明，深色主题下侧栏也透明（浅色侧栏保持实色）。
 document.documentElement.dataset.vibrancy = "on";
 
 async function boot(): Promise<void> {
-  if (
-    import.meta.env.DEV &&
-    new URLSearchParams(window.location.search).has("mock")
-  ) {
+  const params = new URLSearchParams(window.location.search);
+  if (import.meta.env.DEV && params.has("mock")) {
     // 动态 import 是刻意的：静态导入会把 DEV 夹具打进生产包（任务要求用 build+grep 验证）。
     const { installMockBackend } = await import("./dev/mockBackend");
     await installMockBackend();
   }
+  // 菜单栏面板窗口只挂轻量入口（不挂 App，避免双份轮询）；`?panel` 供 vite 预览。
+  let isPanel = params.has("panel");
+  if (!isPanel) {
+    try {
+      isPanel = getCurrentWindow().label === "tray-panel";
+    } catch {
+      isPanel = false;
+    }
+  }
   const root = document.getElementById("root");
   if (root === null) throw new Error("缺少 #root 容器");
+  if (isPanel) {
+    ReactDOM.createRoot(root).render(
+      <React.StrictMode>
+        <ErrorBoundary>
+          <TrayPanelApp />
+        </ErrorBoundary>
+      </React.StrictMode>,
+    );
+    return;
+  }
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
       <ErrorBoundary>

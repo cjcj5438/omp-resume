@@ -5,7 +5,7 @@
 
 /// “等待输入”保持多久后转为“空闲”（推断值，待校准）。
 pub const ATTENTION_IDLE_SECS: i64 = 30 * 60;
-/// “工作中”超过多久无进展 + 仍有未配对工具则判“疑似卡住”（推断值，待校准）。
+/// “工作中”超过多久无进展 + 仍有未配对工具则判“可能卡住”（推断值，待校准）。
 pub const STUCK_SECS: i64 = 10 * 60;
 /// 工具结果 / 用户消息多新算“模型正在生成”（推断值，待校准）。
 pub const RECENT_SECS: i64 = 60;
@@ -29,7 +29,7 @@ impl SessionStatus {
             SessionStatus::Working => "工作中",
             SessionStatus::WaitingInput => "等待输入",
             SessionStatus::Idle => "空闲",
-            SessionStatus::Stuck => "疑似卡住",
+            SessionStatus::Stuck => "可能卡住",
         }
     }
 
@@ -43,7 +43,7 @@ impl SessionStatus {
         }
     }
 
-    /// 菜单排序键：疑似卡住 → 等待输入 → 工作中 → 空闲。
+    /// 菜单排序键：可能卡住 → 等待输入 → 工作中 → 空闲。
     pub fn sort_rank(self) -> u8 {
         match self {
             SessionStatus::Stuck => 0,
@@ -115,7 +115,7 @@ pub fn classify(input: &ClassifyInput) -> Verdict {
     // 卡住覆盖：工作中 + 长时间无进展 + 仍有未配对工具调用 + **没有运行中的子代理**。
     //
     // 子代理运行中的父会话，其「有意义记录」天然长时间不更新（进展都写在子代理
-    // 自己的文件里），实测（2026-10-16）曾因此把正在工作的父会话误判为「疑似
+    // 自己的文件里），实测（2026-10-16）曾因此把正在工作的父会话误判为「可能
     // 卡住」；任务工具的未配对调用要等子代理返回，期间属正常等待。
     // 子代理活动即该类会话的活性信号，因此卡住覆盖只对无子代理的会话生效。
     if status == SessionStatus::Working
@@ -126,7 +126,7 @@ pub fn classify(input: &ClassifyInput) -> Verdict {
         return Verdict {
             status: SessionStatus::Stuck,
             reason: format!(
-                "疑似卡住：{}无进展且有{}个未配对工具调用",
+                "可能卡住：{}无进展且有{}个未配对工具调用",
                 format_age(age.unwrap_or(0)),
                 input.unpaired_tool_calls
             ),
@@ -207,7 +207,7 @@ fn explain(input: &ClassifyInput, status: SessionStatus, age: Option<i64>) -> St
             }
         }
         SessionStatus::Idle => format!("空闲（{age_text}无进展）"),
-        SessionStatus::Stuck => "疑似卡住".to_string(),
+        SessionStatus::Stuck => "可能卡住".to_string(),
     }
 }
 

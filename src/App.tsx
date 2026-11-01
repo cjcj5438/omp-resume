@@ -2,17 +2,17 @@
 import "./App.css";
 import "./components/shell/Shell.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, TriangleAlert } from "lucide-react";
+import { Ico } from "./components/ui";
 import {
-  appendBranchMarker,
   checkOmpUpdate,
-  chooseDirectory,
   deleteSessions,
   getMeta,
+  getBuildInfo,
   getOmpVersion,
   listSessions,
   normalizeError,
   openInIterm,
-  newSessionInIterm,
 } from "./api";
 import type {
   AppError,
@@ -24,13 +24,13 @@ import type {
 } from "./types";
 import { errorText } from "./format";
 import { useBenchMonitor } from "./modelBench";
-import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, filterGroupsByStatus, filterSessions, filterSessionsByStatus, filterSessionsByTags, retainExisting, statusCounts, type SessionFilter } from "./listUtils";
+import { applyPins, canFocusRefresh, collectTagCounts, filterByTags, filterGroups, filterGroupsByStatus, retainExisting, statusCounts, type SessionFilter } from "./listUtils";
 import { planBulkResume } from "./bulkResume";
-import { runContinueFromNode, type ContinueOutcome, type DeleteTarget } from "./flows";
+import { cleanupDialogInfo, type DeleteTarget } from "./flows";
 import { loadPins, removeSessionPins, savePins, togglePin, type PinKind, type Pins } from "./pins";
 import { loadAppPrefs, saveAppPrefs } from "./appPrefs";
 import { useAppearance } from "./useAppearance";
-import { isConfigRoute, type Route } from "./routes";
+import { isConfigRoute, ROUTE_TITLE, type Route } from "./routes";
 import { ErrorBanner } from "./components/page";
 import { Titlebar } from "./components/shell/Titlebar";
 import { NavSidebar } from "./components/shell/NavSidebar";
@@ -38,6 +38,10 @@ import { CommandPalette } from "./components/shell/CommandPalette";
 import { SessionsPage } from "./components/SessionsPage";
 import { SessionWorkspace } from "./components/SessionWorkspace";
 import { BulkResumeDialog } from "./components/BulkResumeDialog";
+import { ResumeDialog } from "./components/ResumeDialog";
+import { NewSessionDialog } from "./components/NewSessionDialog";
+import { SessionMetaDialog } from "./components/SessionMetaDialog";
+import { ForkDialog } from "./components/ForkDialog";
 import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
 import { StatsView } from "./components/StatsView";
@@ -51,7 +55,7 @@ import { TrayView } from "./components/TrayView";
 import { SettingsView } from "./components/SettingsView";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { checkForUpdate, checkForUpdateManually, onCheckAppUpdateRequest, type Update } from "./update";
-import { onOpenTraySettingsRequest } from "./traySettings";
+import { onOpenMainRouteRequest, onOpenTraySettingsRequest } from "./traySettings";
 import { getVersion } from "@tauri-apps/api/app";
 
 interface Toast {
@@ -71,6 +75,8 @@ function App() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // 工作台 tab（T7 上提：面包屑显示 tab 名；按 selectedPath 重置为概览）。
+  const [detailTab, setDetailTab] = useState<"overview" | "conv" | "tree">("overview");
   // 行内「备注」请求：seq 区分每次点击，DetailPane 消费后展开备注编辑器。
   const [metaRequest, setMetaRequest] = useState<{ path: string; seq: number } | null>(null);
   // 舞台内点侧栏会话：即使 path 没变（重复点同一行），seq 递增也会让 StageView 收到切换请求。
@@ -86,10 +92,13 @@ function App() {
   const goBack = useCallback(() => {
     setHistory((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
   }, []);
-  /** 看/选某个会话：选中并进工作台。 */
+  /** 看/选某个会话：选中并进工作台（tab 重置为概览）。 */
   const openSession = useCallback(
     (path: string) => {
-      setSelectedPath(path);
+      setSelectedPath((prev) => {
+        if (prev !== path) setDetailTab("overview");
+        return path;
+      });
       navigate("session");
     },
     [navigate],
@@ -102,7 +111,11 @@ function App() {
   // 自动更新：启动时静默检查一次，有新版本才弹窗；失败静默忽略，不阻塞列表。
   // 手动检查：侧栏「检查应用更新」/托盘「检查更新…」。
   const [update, setUpdate] = useState<Update | null>(null);
+  // 侧栏 update-row 五态用的检查结果：null = 未检查（启动静默检查不记结果）。
+  const [appCheckResult, setAppCheckResult] = useState<{ status: "ok" | "fail"; version: string | null } | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  // 构建平台（品牌副行「版本 · macOS arm64」用）；读不到就只显示版本。
+  const [buildInfo, setBuildInfo] = useState<{ os: string; arch: string } | null>(null);
   const [appChecking, setAppChecking] = useState(false);
   const appCheckingRef = useRef(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -114,6 +127,8 @@ function App() {
   const [ompVersion, setOmpVersion] = useState<string | null>(null);
   const [ompChecking, setOmpChecking] = useState(false);
   const [ompCheck, setOmpCheck] = useState<OmpUpdateCheck | null>(null);
+  // 侧栏五态：最近一次 omp 检查结论（对话框关闭后仍保留）；失败记 fail。
+  const [ompCheckResult, setOmpCheckResult] = useState<{ status: "ok" | "new" | "fail"; version: string | null } | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
   const rerun = useRef(false);
   const lastStart = useRef(0);
@@ -137,7 +152,7 @@ function App() {
     const timer = window.setTimeout(() => {
       toastTimers.current.delete(id);
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 6000);
+    }, 2800);
     toastTimers.current.set(id, timer);
   }, []);
 
@@ -225,6 +240,16 @@ function App() {
       .catch(() => {});
   }, []);
 
+  // 构建平台（品牌副行用）；mock 预览下 getVersion 失败时用 package 版本兜底显示副行。
+  useEffect(() => {
+    getBuildInfo()
+      .then(setBuildInfo)
+      .catch(() => {});
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock")) {
+      getVersion().catch(() => setAppVersion((v) => v ?? "0.5.1-mock"));
+    }
+  }, []);
+
   useEffect(() => {
     const refocus = () => {
       if (canFocusRefresh(inFlight.current !== null, lastStart.current, Date.now()))
@@ -308,8 +333,8 @@ function App() {
   // 提示词历史视图：已加载会话 id，用于判断「跳到来源会话」是否可用。
   const loadedSessionIds = useMemo(() => new Set([...byPath.values()].map((s) => s.id)), [byPath]);
 
-  // 先拆分置顶（项目上浮、会话聚合）再过滤，使过滤结果保持既有顺序。
-  const pinnedSplit = useMemo(
+  // 先整理置顶（项目/组内上浮）再过滤，使过滤结果保持既有顺序。
+  const pinnedGroups = useMemo(
     () => applyPins(list?.groups ?? [], pins),
     [list, pins],
   );
@@ -318,25 +343,11 @@ function App() {
   const groups = useMemo(
     () =>
       filterGroups(
-        filterGroupsByStatus(filterByTags(pinnedSplit.groups, activeTags, meta), statusFilter, pins),
+        filterGroupsByStatus(filterByTags(pinnedGroups, activeTags, meta), statusFilter, pins),
         query,
         meta,
       ),
-    [pinnedSplit, activeTags, statusFilter, pins, query, meta],
-  );
-  // 置顶区与分组用同一过滤口径；无匹配时整区隐藏（SessionList 按空数组处理）。
-  const pinnedSessions = useMemo(
-    () =>
-      filterSessions(
-        filterSessionsByStatus(
-          filterSessionsByTags(pinnedSplit.pinnedSessions, activeTags, meta),
-          statusFilter,
-          pins,
-        ),
-        query,
-        meta,
-      ),
-    [pinnedSplit, activeTags, statusFilter, pins, query, meta],
+    [pinnedGroups, activeTags, statusFilter, pins, query, meta],
   );
   const totalCount = useMemo(
     () =>
@@ -361,44 +372,20 @@ function App() {
   const selectedGone = selectedPath != null && selected === null;
   const selectedPinned = selected != null && pins.sessions.includes(selected.id);
 
-  const refreshAfterContinue = useCallback(async () => {
-    await load();
-    setRefreshKey((k) => k + 1);
-  }, [load]);
-
-  const handleContinue = useCallback(
-    (nodeId: string): Promise<ContinueOutcome> => {
-      if (!selectedPath) return Promise.reject({ code: "UNKNOWN", message: "未选中会话" });
-      return runContinueFromNode(
-        {
-          appendBranchMarker: async (p, n) =>
-            (await appendBranchMarker({ path: p, nodeId: n })).markerId,
-          openInIterm: (p) => openInIterm({ path: p }),
-          refresh: refreshAfterContinue,
-        },
-        selectedPath,
-        nodeId,
-      );
-    },
-    [selectedPath, refreshAfterContinue],
-  );
-
-  // 新开会话：cwd 为空时先让用户选择目录；用户取消（null）静默返回。
+  // G10：新建会话统一先弹对话框（⌘N/页头/rail +/组 +/palette/action 事件都走这里）。
+  // state 为 undefined = 关闭；null = 打开（无预填）；string = 打开（预填 cwd）。
+  const [newSessionCwd, setNewSessionCwd] = useState<string | null | undefined>(undefined);
   // 快捷键 effect 在上方声明：这里把最新回调写入 ref 供 ⌘N 使用。
   const handleNewSession = useCallback(
-    async (cwd: string | null) => {
-      try {
-        const target = cwd ?? (await chooseDirectory());
-        if (target === null) return;
-        await newSessionInIterm(target);
-        addToast("已在 iTerm 新开会话", "info");
-      } catch (e: unknown) {
-        addToast(errorText(normalizeError(e)), "error");
-      }
+    (cwd: string | null) => {
+      setNewSessionCwd(cwd);
     },
-    [addToast],
+    [],
   );
-  newSessionRef.current = handleNewSession;
+  newSessionRef.current = (cwd) => {
+    handleNewSession(cwd);
+    return Promise.resolve();
+  };
   // 提示词历史「跳到来源会话」：进工作台并选中该会话（不在列表中则无操作）。
   const handleOpenSession = useCallback(
     (sessionId: string) => {
@@ -423,7 +410,10 @@ function App() {
   /** 行内「备注」：选中会话并进工作台，DetailPane 消费 metaRequest 后展开编辑器。 */
   const handleOpenMeta = useCallback(
     (path: string) => {
-      setSelectedPath(path);
+      setSelectedPath((prev) => {
+        if (prev !== path) setDetailTab("overview");
+        return path;
+      });
       setMetaRequest((prev) => ({ path, seq: (prev?.seq ?? -1) + 1 }));
       navigate("session");
     },
@@ -488,8 +478,12 @@ function App() {
   );
 
   const handleTogglePin = useCallback(
-    (kind: PinKind, key: string) => setPins((prev) => togglePin(prev, kind, key)),
-    [],
+    (kind: PinKind, key: string) => {
+      const list = kind === "project" ? pins.projects : pins.sessions;
+      addToast(list.includes(key) ? "已取消置顶" : "已置顶", "info");
+      setPins((prev) => togglePin(prev, kind, key));
+    },
+    [addToast, pins],
   );
 
   const handleToggleTag = useCallback(
@@ -506,8 +500,17 @@ function App() {
   const handleCheckOmp = useCallback(async () => {
     setOmpChecking(true);
     try {
-      setOmpCheck(await checkOmpUpdate());
+      const check = await checkOmpUpdate();
+      setOmpCheck(check);
+      setOmpCheckResult(
+        check.latest !== null
+          ? { status: "new", version: check.latest }
+          : check.upToDate
+            ? { status: "ok", version: check.current }
+            : { status: "fail", version: null },
+      );
     } catch (e: unknown) {
+      setOmpCheckResult({ status: "fail", version: null });
       addToast(errorText(normalizeError(e)), "error");
     } finally {
       setOmpChecking(false);
@@ -522,8 +525,12 @@ function App() {
     try {
       const u = await checkForUpdateManually();
       if (u) setUpdate(u);
-      else addToast(appVersion ? `已是最新版本 ${appVersion}` : "已是最新版本", "info");
+      else {
+        setAppCheckResult({ status: "ok", version: appVersion });
+        addToast(appVersion ? `已是最新版本 ${appVersion}` : "已是最新版本", "info");
+      }
     } catch (e: unknown) {
+      setAppCheckResult({ status: "fail", version: null });
       addToast(`检查更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
     } finally {
       appCheckingRef.current = false;
@@ -565,14 +572,40 @@ function App() {
     };
   }, [navigate]);
 
-  const handleOpenIterm = useCallback(
-    (s: SessionSummary) => {
-      openInIterm({ path: s.path })
-        .then(() => addToast("已在 iTerm 打开", "info"))
-        .catch((e: unknown) => addToast(errorText(normalizeError(e)), "error"));
-    },
-    [addToast],
-  );
+  // 面板 `open_main_window{page}`：route 跳转在这里执行；
+  // `{ action: "new-session" }` 由 fe-sessions 的新建会话对话框订阅，这里忽略。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    // G10：面板 `{ action: "new-session" }` 打开新建会话对话框（fe-tray2 只发事件）。
+    onOpenMainRouteRequest((payload) => {
+      if ("action" in payload && payload.action === "new-session") {
+        setNewSessionCwd(null);
+        return;
+      }
+      if ("route" in payload && payload.route in ROUTE_TITLE) {
+        navigate(payload.route as Route);
+      }
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [navigate]);
+
+  // G8：单个恢复统一先弹确认框（App 级单 choke 点）；对话框内按最新探测决定变体。
+  const [resumeTarget, setResumeTarget] = useState<SessionSummary | null>(null);
+  // G1：备注对话框（App 级，三 tab 通用）；G11：分叉对话框（三入口统一）。
+  const [metaDialogPath, setMetaDialogPath] = useState<string | null>(null);
+  const [forkRequest, setForkRequest] = useState<{ path: string; nodeId: string } | null>(null);
+  const handleOpenIterm = useCallback((_s: SessionSummary) => {
+    setResumeTarget(_s);
+  }, []);
 
   const handleRequestDelete = useCallback(
     (paths: string[]) => {
@@ -616,6 +649,7 @@ function App() {
         onCheckOmp={handleCheckOmp}
         loadedSessionIds={loadedSessionIds}
         onOpenSession={handleOpenSession}
+        onNavigate={navigate}
       />
     );
   } else if (route === "history") {
@@ -623,7 +657,7 @@ function App() {
       <PromptHistoryView
         loadedSessionIds={loadedSessionIds}
         onOpenSession={handleOpenSession}
-        onNewSessionIn={(cwd) => void handleNewSession(cwd)}
+        onNewSessionIn={(cwd) => handleNewSession(cwd)}
         onToast={addToast}
       />
     );
@@ -634,6 +668,7 @@ function App() {
         stageTarget={stageTarget}
         selectedTitle={sessionName}
         onOpenSession={openSession}
+        onManageAgents={() => navigate("agents")}
       />
     );
   } else if (route === "cleanup") {
@@ -649,46 +684,25 @@ function App() {
     page = (
       <SessionWorkspace
         groups={groups}
-        pinnedSessions={pinnedSessions}
+        totalCount={totalCount}
         query={query}
         onQuery={setQuery}
-        loading={loading}
         listError={listError}
         onRetry={() => void load()}
-        onRefresh={() => void load()}
-        checked={checked}
-        onToggleCheck={(path, on) =>
-          setChecked((prev) => {
-            const next = new Set(prev);
-            if (on) next.add(path);
-            else next.delete(path);
-            return next;
-          })
-        }
-        onToggleChecks={(paths, on) =>
-          setChecked((prev) => {
-            const next = new Set(prev);
-            for (const p of paths) {
-              if (on) next.add(p);
-              else next.delete(p);
-            }
-            return next;
-          })
-        }
-        onClearChecks={() => setChecked(new Set())}
         selectedPath={selectedPath}
-        onSelectPath={setSelectedPath}
-        onOpenMeta={handleOpenMeta}
-        onBulkResume={(targets) => setBulkTargets(targets)}
+        onSelectPath={(path) => {
+          setSelectedPath((prev) => {
+            if (prev !== path) setDetailTab("overview");
+            return path;
+          });
+        }}
+        onNewSession={() => handleNewSession(null)}
+        onNewSessionIn={(cwd) => handleNewSession(cwd)}
         collapsed={collapsed}
         onCollapsedChange={(next) => setCollapsed(next)}
         pins={pins}
         onTogglePin={handleTogglePin}
-        onNewSessionIn={(cwd) => void handleNewSession(cwd)}
         meta={meta}
-        tagCounts={tagCounts}
-        activeTags={activeTags}
-        onToggleTag={handleToggleTag}
         onToast={addToast}
         onOpenIterm={handleOpenIterm}
         onRequestDelete={handleRequestDelete}
@@ -699,17 +713,22 @@ function App() {
         onOpenStage={handleOpenStage}
         onBack={() => navigate("sessions")}
         metaRequest={metaRequest}
+        onOpenMetaDialog={() => {
+          if (selected) setMetaDialogPath(selected.path);
+        }}
+        onForkRequest={(nodeId) => {
+          if (selected) setForkRequest({ path: selected.path, nodeId });
+        }}
         onDeleteSession={() => {
           if (selected) handleRequestDelete([selected.path]);
         }}
-        onContinue={handleContinue}
         pinned={selectedPinned}
         onToggleSessionPin={() => {
           if (selected) handleTogglePin("session", selected.id);
         }}
         metaEntry={selected ? (meta?.sessions[selected.id] ?? null) : null}
-        metaRevision={meta?.revision ?? 0}
-        metaError={metaError}
+        detailTab={detailTab}
+        onDetailTabChange={setDetailTab}
       />
     );
   } else if (route === "cheatsheet") {
@@ -737,13 +756,10 @@ function App() {
       <TrayView sessions={paletteSessions} onOpenSession={openSession} onToast={addToast} />
     );
   } else {
-    const visibleCount =
-      pinnedSessions.length + groups.reduce((n, g) => n + g.sessions.length, 0);
+    const visibleCount = groups.reduce((n, g) => n + g.sessions.length, 0);
     page = (
       <SessionsPage
         groups={groups}
-        pinnedSessions={pinnedSessions}
-        counts={counts}
         statusFilter={statusFilter}
         onStatusFilter={setStatusFilter}
         visibleCount={visibleCount}
@@ -755,9 +771,8 @@ function App() {
         loading={loading}
         listError={listError}
         onRetry={() => void load()}
-        onRefresh={() => void load()}
         onRescan={() => void load()}
-        onNewSession={() => void handleNewSession(null)}
+        onNewSession={() => handleNewSession(null)}
         checked={checked}
         onToggleCheck={(path, on) =>
           setChecked((prev) => {
@@ -786,7 +801,7 @@ function App() {
         onCollapsedChange={(next) => setCollapsed(next)}
         pins={pins}
         onTogglePin={handleTogglePin}
-        onNewSessionIn={(cwd) => void handleNewSession(cwd)}
+        onNewSessionIn={(cwd) => handleNewSession(cwd)}
         meta={meta}
         tagCounts={tagCounts}
         activeTags={activeTags}
@@ -809,6 +824,7 @@ function App() {
       <Titlebar
         route={route}
         sessionName={route === "session" ? sessionName : null}
+        sessionTab={route === "session" ? detailTab : undefined}
         collapsed={prefs.sidebarCollapsed}
         onToggleCollapse={toggleCollapse}
         onOpenPalette={() => setPaletteOpen(true)}
@@ -821,13 +837,16 @@ function App() {
           collapsed={prefs.sidebarCollapsed}
           totalCount={totalCount}
           appVersion={appVersion}
+          buildInfo={buildInfo}
           appChecking={appChecking}
+          appCheckResult={appCheckResult}
+          appUpdateVersion={update?.version ?? null}
           ompVersion={ompVersion}
           ompChecking={ompChecking}
+          ompCheckResult={ompCheckResult}
           onNavigate={navigate}
           onCheckApp={() => void handleCheckApp()}
           onCheckOmp={handleCheckOmp}
-          onToast={addToast}
         />
         <main className="main-pane">{page}</main>
       </div>
@@ -836,6 +855,9 @@ function App() {
           targets={deleteTargets}
           requestDelete={requestDelete}
           onClose={() => setDeleteTargets(null)}
+          {...(cleanupDialogInfo(deleteTargets) === null
+            ? {}
+            : { variant: "cleanup" as const, cleanup: cleanupDialogInfo(deleteTargets)! })}
         />
       ) : null}
       {bulkTargets !== null && bulkPlan !== null ? (
@@ -844,6 +866,45 @@ function App() {
           plan={bulkPlan}
           onCancel={() => setBulkTargets(null)}
           onConfirm={() => void runBulkResume(bulkPlan.open)}
+        />
+      ) : null}
+      {resumeTarget ? (
+        <ResumeDialog
+          session={resumeTarget}
+          onClose={() => setResumeTarget(null)}
+          onOpened={() => void load()}
+          onToast={addToast}
+        />
+      ) : null}
+      {newSessionCwd !== undefined ? (
+        <NewSessionDialog
+          initialCwd={newSessionCwd}
+          onClose={() => setNewSessionCwd(undefined)}
+          onToast={addToast}
+        />
+      ) : null}
+      {metaDialogPath !== null && byPath.get(metaDialogPath) ? (
+        <SessionMetaDialog
+          sessionId={byPath.get(metaDialogPath)!.id}
+          sessionTitle={byPath.get(metaDialogPath)!.title}
+          entry={meta?.sessions[byPath.get(metaDialogPath)!.id] ?? null}
+          revision={meta?.revision ?? 0}
+          loadError={metaError}
+          onSnapshot={handleMetaSnapshot}
+          onClose={() => setMetaDialogPath(null)}
+          onToast={addToast}
+        />
+      ) : null}
+      {forkRequest !== null && byPath.get(forkRequest.path) ? (
+        <ForkDialog
+          session={byPath.get(forkRequest.path)!}
+          nodeId={forkRequest.nodeId}
+          onClose={() => setForkRequest(null)}
+          onDone={() => {
+            setForkRequest(null);
+            setRefreshKey((k) => k + 1);
+          }}
+          onToast={addToast}
         />
       ) : null}
       {update ? (
@@ -870,6 +931,9 @@ function App() {
             key={t.id}
             className={t.kind === "error" ? "toast toast-error" : "toast"}
           >
+            <span className="toast-ico" aria-hidden="true">
+              <Ico icon={t.kind === "error" ? TriangleAlert : Check} size={14} />
+            </span>
             {t.text}
           </div>
         ))}
@@ -881,7 +945,7 @@ function App() {
           meta={meta}
           onNavigate={navigate}
           onOpenSession={openSession}
-          onNewSession={() => void handleNewSession(null)}
+          onNewSession={() => handleNewSession(null)}
           onRescan={() => void load()}
           onToggleTheme={toggleTheme}
           onCheckApp={() => void handleCheckApp()}

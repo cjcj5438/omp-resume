@@ -281,7 +281,7 @@ impl Poller {
                     });
                 }
             } else if status == SessionStatus::Stuck {
-                // 首次观察即「疑似卡住」也算出现一次（通知规则见 CONTRACT §17.5：
+                // 首次观察即「可能卡住」也算出现一次（通知规则见 CONTRACT §17.5：
                 // episode 内只通知一次，重复观察不再触发）。
                 transitions.push(Transition {
                     session_id: id.clone(),
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn first_sight_stuck_notifies_once() {
         let h = Harness::setup("卡住会话");
-        // 1 小时前的未配对 toolCall（超 STUCK 未超 24h 过期）：首轮即判「疑似卡住」。
+        // 1 小时前的未配对 toolCall（超 STUCK 未超 24h 过期）：首轮即判「可能卡住」。
         let ts = chrono::DateTime::from_timestamp(1_789_996_400, 0)
             .unwrap()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);

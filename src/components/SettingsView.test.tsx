@@ -24,15 +24,16 @@ const SETTINGS: TraySettings = {
   showProject: false,
   showIdle: true,
   compactRows: false,
-  clickAction: "menu",
+  clickAction: "panel",
+  showSearch: true,
   showDockIcon: false,
 };
 
 const PREVIEW: TrayPreview = {
   ready: true,
-  header: "没有运行中的 omp 会话",
   trayTitle: null,
-  costText: "今日花费 $1.20",
+  costUsd: 1.2,
+  requestCount: 7,
   rows: [],
   overflow: [],
   recent: [],
@@ -79,6 +80,7 @@ beforeEach(() => {
         ompBin: null,
       };
     }
+    if (cmd === "get_build_info") return { os: "macos", arch: "aarch64" };
     throw `no handler for ${cmd}`;
   });
 });
@@ -104,4 +106,48 @@ it("路径值为 null 时显示「未找到」", async () => {
   render(<Harness />);
   // dataDir 与 ompBin 为 null。
   expect(await screen.findAllByText("未找到")).toHaveLength(2);
+});
+
+it("关于卡显示版本/构建/遥测且无测试数", async () => {
+  render(<Harness />);
+  const about = screen.getByRole("region", { name: "关于" });
+  expect(about.textContent).toMatch("0.5.0");
+  expect(await screen.findByText("macOS arm64 · Tauri 2")).toBeInTheDocument();
+  expect(about.textContent).toMatch("关闭 · 无分析");
+  expect(about.textContent).not.toMatch("passing");
+});
+
+it("主题卡顺序为深色/浅色/跟随系统", async () => {
+  render(<Harness />);
+  const radios = await screen.findAllByRole("radio");
+  expect(radios.map((r) => r.textContent)).toEqual(["深色", "浅色", "跟随系统"]);
+});
+
+it("路径展示折叠 ~ 且标签用设计稿文案", async () => {
+  clearMocks();
+  mockIPC((cmd) => {
+    if (cmd === "get_tray_settings") return structuredClone(SETTINGS);
+    if (cmd === "get_tray_preview") return structuredClone(PREVIEW);
+    if (cmd === "get_app_paths") {
+      return {
+        sessionsDir: "/Users/demo/.omp/agent/sessions",
+        ownersDir: "/Users/demo/.omp/run/session-owners",
+        historyDb: "/tmp/history.db",
+        memoryDir: "/tmp/memory",
+        dataDir: "/tmp/data",
+        ompBin: "/Users/demo/.local/bin/omp",
+      };
+    }
+    if (cmd === "get_build_info") return { os: "macos", arch: "aarch64" };
+    throw `no handler for ${cmd}`;
+  });
+  render(<Harness />);
+  expect(await screen.findByText("~/.omp/agent/sessions")).toBeInTheDocument();
+  expect(await screen.findByText("所有权锁")).toBeInTheDocument();
+  expect(await screen.findByText("omp 二进制")).toBeInTheDocument();
+});
+it("更新卡带 Tauri updater 元信息", async () => {
+  render(<Harness />);
+  const card = await screen.findByRole("region", { name: "更新" });
+  expect(card.textContent).toContain("Tauri updater");
 });

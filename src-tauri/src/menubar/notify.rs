@@ -3,7 +3,7 @@
 //! 规则：
 //! - 仅「工作中 → 等待输入」转换发通知，且此前工作中持续 ≥ 30 秒；
 //! - 同会话 30 秒防抖；同一轮询周期 > 3 个转换 → 合并成一条汇总；
-//! - 「疑似卡住」首次出现通知一次（离开卡住态后重新计数，即按 episode 一次）；
+//! - 「可能卡住」首次出现通知一次（离开卡住态后重新计数，即按 episode 一次）；
 //! - 正文只含会话标题与状态，**不含对话内容**；可经设置关闭。
 //!
 //! 发送：优先 `tauri-plugin-notification`（`tray` 侧用 AppHandle 发送，点击
@@ -39,7 +39,7 @@ pub struct Transition {
 pub enum NotifyAction {
     /// 单个会话进入等待输入。
     Waiting { session_id: String, title: String },
-    /// 单个会话疑似卡住。
+    /// 单个会话可能卡住。
     Stuck { session_id: String, title: String },
     /// 单个会话结束。
     Finished { title: String },
@@ -168,7 +168,7 @@ fn truncate_title(title: &str) -> String {
 pub fn action_text(action: &NotifyAction) -> (String, String) {
     match action {
         NotifyAction::Waiting { title, .. } => (title.clone(), "进入等待输入".to_string()),
-        NotifyAction::Stuck { title, .. } => (title.clone(), "疑似卡住".to_string()),
+        NotifyAction::Stuck { title, .. } => (title.clone(), "可能卡住".to_string()),
         NotifyAction::Finished { title } => (title.clone(), "会话已结束".to_string()),
         NotifyAction::Summary { count } => {
             ("omp-resume".to_string(), format!("{count} 个会话在等你"))

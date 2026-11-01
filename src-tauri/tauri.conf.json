@@ -27,6 +27,18 @@
           "effects": ["sidebar"],
           "state": "followsWindowActiveState"
         }
+      },
+      {
+        "label": "tray-panel",
+        "title": "omp-resume",
+        "width": 356,
+        "height": 620,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "visible": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

@@ -56,10 +56,11 @@ impl TitleWidth {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClickAction {
-    /// 左键弹出菜单。
+    /// 左键打开面板（旧 `menu` 值反序列化迁移为此，见别名）。
     #[default]
-    Menu,
-    /// 左键打开主窗口（右键仍弹菜单）。
+    #[serde(alias = "menu")]
+    Panel,
+    /// 左键打开主窗口（右键仍弹原生菜单）。
     Window,
 }
 
@@ -73,7 +74,7 @@ pub struct Settings {
     /// 会话进入“等待输入”时发系统通知（默认开）。
     #[serde(default = "default_true")]
     pub notify_on_waiting: bool,
-    /// 会话进入“疑似卡住”时发系统通知（默认开；旧文件缺省时继承 `notify_on_waiting`）。
+    /// 会话进入“可能卡住”时发系统通知（默认开；旧文件缺省时继承 `notify_on_waiting`）。
     #[serde(default = "default_true")]
     pub notify_on_stuck: bool,
     /// 会话结束时发系统通知（默认关）。
@@ -97,9 +98,12 @@ pub struct Settings {
     /// 精简行：只保留标题、项目名与时长（默认关）。
     #[serde(default)]
     pub compact_rows: bool,
-    /// 点击托盘图标的行为（默认左键弹菜单）。
+    /// 点击托盘图标的行为（默认左键开面板）。
     #[serde(default)]
     pub click_action: ClickAction,
+    /// 面板内显示搜索框（默认开）。
+    #[serde(default = "default_true")]
+    pub show_search: bool,
     /// 在 Dock 显示图标（默认关：隐藏主窗口时 Dock 图标也隐藏）。
     #[serde(default)]
     pub show_dock_icon: bool,
@@ -121,7 +125,8 @@ impl Default for Settings {
             show_project: false,
             show_idle: true,
             compact_rows: false,
-            click_action: ClickAction::Menu,
+            click_action: ClickAction::Panel,
+            show_search: true,
             show_dock_icon: false,
         }
     }
@@ -143,6 +148,7 @@ pub struct SettingsPatch {
     pub show_idle: Option<bool>,
     pub compact_rows: Option<bool>,
     pub click_action: Option<ClickAction>,
+    pub show_search: Option<bool>,
     pub show_dock_icon: Option<bool>,
 }
 
@@ -178,6 +184,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.click_action {
             s.click_action = v;
+        }
+        if let Some(v) = self.show_search {
+            s.show_search = v;
         }
         if let Some(v) = self.show_dock_icon {
             s.show_dock_icon = v;
@@ -331,6 +340,7 @@ mod tests {
         assert_eq!(s.show_idle, d.show_idle);
         assert_eq!(s.compact_rows, d.compact_rows);
         assert_eq!(s.click_action, d.click_action);
+        assert_eq!(s.show_search, d.show_search);
         // 开着等待通知时继承开。
         std::fs::write(
             settings_path(dir.path()),
@@ -345,6 +355,36 @@ mod tests {
         )
         .unwrap();
         assert!(!load(dir.path()).notify_on_stuck);
+    }
+
+    #[test]
+    fn legacy_menu_click_action_migrates_to_panel() {
+        // 旧值 `menu` 反序列化为 Panel（serde alias）；序列化写 `panel`。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            settings_path(dir.path()),
+            r#"{"version":1,"clickAction":"menu"}"#,
+        )
+        .unwrap();
+        let s = load(dir.path());
+        assert_eq!(s.click_action, ClickAction::Panel);
+        let raw = serde_json::to_string(&s).unwrap();
+        assert!(raw.contains(r#""clickAction":"panel""#), "{raw}");
+        // 新值 roundtrip。
+        assert_eq!(
+            serde_json::from_str::<ClickAction>(r#""panel""#).unwrap(),
+            ClickAction::Panel
+        );
+        assert_eq!(
+            serde_json::from_str::<ClickAction>(r#""window""#).unwrap(),
+            ClickAction::Window
+        );
+        // showSearch 缺省开。
+        assert!(load(dir.path()).show_search);
+        let patch: SettingsPatch = serde_json::from_str(r#"{"showSearch":false}"#).unwrap();
+        let mut s = Settings::default();
+        patch.apply(&mut s);
+        assert!(!s.show_search);
     }
 
     #[test]

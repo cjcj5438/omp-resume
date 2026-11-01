@@ -153,7 +153,7 @@ fn poll_bytes(bytes: &[u8], state: &mut TailState, now: i64) {
     seed_head(bytes, state);
     // 种子：从文件头单遍解析全部行。真实数据（2026-10-16 实测）表明
     // cache-warm 心跳与大 toolResult 会把 `vibe-session-lifecycle` 配对行
-    // 挤出固定尾窗，导致子代理漏检、误判「疑似卡住」；因此种子必须看全文件
+    // 挤出固定尾窗，导致子代理漏检、误判「可能卡住」；因此种子必须看全文件
     // （仅首次见到该会话时一次），之后仍是增量读取。
     consume(bytes, len, state, now);
     state.seeded = true;

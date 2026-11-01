@@ -24,6 +24,11 @@ import type {
 export const TRAY_SETTINGS_CHANGED_EVENT = "tray-settings-changed";
 /** 「更多菜单栏设置…」请求（payload 空，主窗口收到后切到菜单栏页）。 */
 export const OPEN_TRAY_SETTINGS_EVENT = "open-tray-settings";
+/** 主窗口路由跳转（`open_main_window{page}` 发出；new-session 由新建会话对话框订阅）。 */
+export const OPEN_MAIN_ROUTE_EVENT = "open-main-route";
+
+/** `open-main-route` payload：route 跳转由 App 订阅，new-session 由 fe-sessions 订阅。 */
+export type OpenMainRoutePayload = { route: string } | { action: "new-session" };
 
 /** 预览轮询间隔（ms）：与原生托盘轮询器同频。 */
 export const TRAY_PREVIEW_INTERVAL_MS = 3000;
@@ -36,6 +41,11 @@ export function onTraySettingsChanged(cb: (settings: TraySettings) => void): Pro
 /** 订阅「打开菜单栏页」请求；返回取消订阅函数。 */
 export function onOpenTraySettingsRequest(cb: () => void): Promise<() => void> {
   return listen(OPEN_TRAY_SETTINGS_EVENT, () => cb());
+}
+
+/** 订阅主窗口路由跳转；payload 为 `OpenMainRoutePayload`。返回取消订阅函数。 */
+export function onOpenMainRouteRequest(cb: (payload: OpenMainRoutePayload) => void): Promise<() => void> {
+  return listen<OpenMainRoutePayload>(OPEN_MAIN_ROUTE_EVENT, (e) => cb(e.payload));
 }
 
 export interface TraySettingsData {

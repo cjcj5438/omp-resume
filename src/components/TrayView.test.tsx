@@ -4,7 +4,9 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { TrayPanel } from "./TrayPanel";
 import { TrayView } from "./TrayView";
+import { __resetPresetsStore } from "../modelPresets";
 import type { SessionSummary, TrayPreview, TraySettings } from "../types";
 
 vi.mock("@tauri-apps/api/event", async (orig) => ({
@@ -22,16 +24,17 @@ const SETTINGS: TraySettings = {
   showProject: false,
   showIdle: true,
   compactRows: false,
-  clickAction: "menu",
+  clickAction: "panel",
+  showSearch: true,
   showDockIcon: false,
 };
 
 const PREVIEW: TrayPreview = {
   ready: true,
-  header: "omp 会话 · 占用 1 · 工作中 1 · 等待输入 0",
   trayTitle: "1·0",
-  costText: "今日花费 $1.20",
-  rows: [{ sessionId: "s1", status: "working", text: "标题 · 工作中 · 2分", enabled: true }],
+  costUsd: 1.2,
+  requestCount: 7,
+  rows: [{ sessionId: "s1", status: "working", title: "标题", project: null, subagents: 0, elapsedSecs: 120, enabled: true, disabledReason: null }],
   overflow: [],
   recent: [],
   projects: [],
@@ -59,11 +62,14 @@ function session(): SessionSummary {
     version: 1,
     badLines: 0,
     firstUserMessage: null,
+    model: null,
+    tokens: null,
   };
 }
 
 beforeEach(() => {
   clearMocks();
+  __resetPresetsStore();
 });
 
 it("关闭「显示今日花费」后，set_tray_settings 收到补丁且界面采用返回值", async () => {
@@ -78,7 +84,7 @@ it("关闭「显示今日花费」后，set_tray_settings 收到补丁且界面�
       return structuredClone(current);
     }
     if (cmd === "get_tray_preview") {
-      return { ...structuredClone(PREVIEW), costText: current.showCost ? PREVIEW.costText : null };
+      return { ...structuredClone(PREVIEW), costUsd: current.showCost ? PREVIEW.costUsd : null, requestCount: current.showCost ? PREVIEW.requestCount : null };
     }
     throw `no handler for ${cmd}`;
   });
@@ -120,4 +126,70 @@ it("命令失败时出现错误 toast，并重调 get_tray_settings", async () =
     "aria-checked",
     "true",
   );
+});
+
+it("模型模式卡：出现模式控件并能切换", async () => {
+  const onToast = vi.fn();
+  const current = {
+    modelRoles: { default: "acme/big" },
+    agentModelOverrides: {},
+    defaultThinkingLevel: "high",
+  };
+  const presets = [
+    { name: "A", modelRoles: { default: "acme/big" }, defaultThinkingLevel: "high", agentModelOverrides: null, invalidReason: null },
+    { name: "B", modelRoles: { default: "acme/small" }, defaultThinkingLevel: "high", agentModelOverrides: null, invalidReason: null },
+  ];
+  let active = "A";
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "get_tray_settings") return structuredClone(SETTINGS);
+    if (cmd === "get_tray_preview") return structuredClone(PREVIEW);
+    if (cmd === "list_model_presets") {
+      return { presets: structuredClone(presets), active, current: structuredClone(current), rawPresets: {} };
+    }
+    if (cmd === "switch_model_preset") {
+      active = "B";
+      return { presets: structuredClone(presets), active, current: structuredClone(current), rawPresets: {} };
+    }
+    throw `no handler for ${cmd}`;
+  });
+  render(<TrayView sessions={[session()]} onOpenSession={() => {}} onToast={onToast} />);
+
+  const button = await screen.findByRole("button", { name: "模型模式" });
+  expect(button.textContent).toBe("模式：A");
+  fireEvent.click(button);
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: /^B/ }));
+  await waitFor(() => expect(onToast).toHaveBeenCalledWith("已切换到模式「B」", "info"));
+  expect(calls).toContain("switch_model_preset");
+});
+it("托盘搜索有内容时显示清除键，点击清空并聚焦输入框", () => {
+  const actions = {
+    onFocusSession: () => {},
+    onResumeRecent: () => {},
+    onNewSession: () => {},
+    onOpenMain: () => {},
+    onOpenSettings: () => {},
+    onSwitchMode: () => {},
+    onQuit: () => {},
+  };
+  render(
+    <TrayPanel
+      preview={PREVIEW}
+      settings={SETTINGS}
+      mode="preview"
+      actions={actions}
+      appVersion={null}
+      ompVersion={null}
+      switchingMode={null}
+    />,
+  );
+  const input = screen.getByLabelText("搜索会话或项目") as HTMLInputElement;
+  expect(screen.queryByRole("button", { name: "清除搜索" })).toBeNull();
+  fireEvent.change(input, { target: { value: "标题" } });
+  const clear = screen.getByRole("button", { name: "清除搜索" });
+  fireEvent.click(clear);
+  expect(input.value).toBe("");
+  expect(document.activeElement).toBe(input);
+  expect(screen.queryByRole("button", { name: "清除搜索" })).toBeNull();
 });

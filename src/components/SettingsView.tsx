@@ -1,23 +1,24 @@
-/** 外观与行为页：外观卡 + 菜单栏卡 + 更新卡 + 路径卡。 */
+/** 外观与行为页：外观卡 + 菜单栏卡 + 更新卡 + 路径卡 + 关于卡。 */
+import { Check, RefreshCw } from "lucide-react";
 import {
   ACCENT_LABEL,
   ACCENT_SWATCH,
   ACCENTS,
   THEME_MODE_LABEL,
-  THEME_MODES,
   type AccentName,
   type Appearance,
   type ThemeMode,
 } from "../appearance";
 import type { AppPrefs } from "../appPrefs";
 import type { Route } from "../routes";
-import type { AppPaths } from "../types";
-import { getAppPaths } from "../api";
+import type { BuildInfo } from "../types";
+import { getAppPaths, getBuildInfo } from "../api";
 import { copyText } from "../clipboard";
 import { openOmpChangelog } from "../format";
 import type { ToastFn } from "./useOmpOp";
 import { useTraySettings } from "../traySettings";
 import { ErrorBanner, PageHeader, Switch } from "./page";
+import { Badge, Ico } from "./ui";
 import { useAsyncData } from "./useAsyncData";
 import "./SettingsView.css";
 
@@ -37,6 +38,25 @@ interface SettingsViewProps {
   onToast: ToastFn;
 }
 
+/** 主题卡本地渲染顺序（设计稿 [深色, 浅色, 跟随系统]；不动 appearance.ts 的 THEME_MODES）。 */
+const THEME_ORDER: ThemeMode[] = ["dark", "light", "system"];
+
+/** `$HOME` → `~` 折叠（展示用；复制用完整路径）。 */
+function abbreviateHome(path: string): string {
+  // 浏览器/mock 环境：按 `/Users/<name>/` 前缀折叠。
+  const m = path.match(/^\/Users\/[^/]+\//);
+  if (m !== null) return `~/${path.slice(m[0].length)}`;
+  return path;
+}
+
+/** `BuildInfo` → 展示文案（`macOS arm64 · Tauri 2`）。 */
+function buildText(info: BuildInfo | null): string {
+  if (info === null) return "…";
+  const os = info.os === "macos" ? "macOS" : info.os;
+  const arch = info.arch === "aarch64" ? "arm64" : info.arch === "x86_64" ? "x64" : info.arch;
+  return `${os} ${arch} · Tauri 2`;
+}
+
 export function SettingsView({
   appearance,
   onSetMode,
@@ -54,22 +74,36 @@ export function SettingsView({
 }: SettingsViewProps) {
   const tray = useTraySettings(onToast);
   const paths = useAsyncData(getAppPaths, []);
+  const build = useAsyncData(getBuildInfo, []);
+
+  const copyVersion = (): void => {
+    void copyText(`omp-resume ${appVersion ?? "未知版本"}`).then((ok) =>
+      onToast(ok ? "已复制版本" : "复制失败", ok ? "info" : "error"),
+    );
+  };
 
   return (
     <div className="view">
       <PageHeader
         kicker="设置"
         title="外观与行为"
-        sub="外观偏好存于本机 WebView（开发版与 .app 不共享）；菜单栏设置写入 settings.json。"
+        sub="主题、菜单栏与路径。所有偏好只存在本机；WebView 的 localStorage 与 .app 之间不共享。"
+        actions={
+          <button type="button" className="btn btn-ghost" disabled={appChecking} onClick={onCheckApp}>
+            <Ico icon={RefreshCw} size={14} />
+            检查更新
+          </button>
+        }
       />
       <div className="settings-grid">
         <section className="panel" aria-label="外观">
           <div className="panel-head">
             <div className="panel-title">外观</div>
+            <span className="panel-meta">系统 / 深色 / 浅色</span>
           </div>
           <div className="panel-body">
             <div className="theme-choice" role="radiogroup" aria-label="主题模式">
-              {THEME_MODES.map((m) => (
+              {THEME_ORDER.map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -91,7 +125,10 @@ export function SettingsView({
                       <i className="tp-line w" />
                     </i>
                   </span>
-                  <span className="theme-name">{THEME_MODE_LABEL[m]}</span>
+                  <span className="theme-name">
+                    {THEME_MODE_LABEL[m]}
+                    {appearance.mode === m ? <Ico icon={Check} size={14} /> : null}
+                  </span>
                 </button>
               ))}
             </div>
@@ -100,6 +137,7 @@ export function SettingsView({
                 <div className="setting-label" id="settings-accent-label">
                   强调色
                 </div>
+                <div className="setting-desc">仅作用于本机 WebView，不影响原生菜单。</div>
               </div>
               <div className="accent-row" role="group" aria-labelledby="settings-accent-label">
                 {ACCENTS.map((a) => {
@@ -121,6 +159,13 @@ export function SettingsView({
                 })}
               </div>
             </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">侧边栏材质</div>
+                <div className="setting-desc">深色主题下侧栏透明，浅色主题下保持实色。</div>
+              </div>
+              <Badge tone="quiet">跟随主题</Badge>
+            </div>
           </div>
         </section>
         <section className="panel" aria-label="菜单栏">
@@ -128,41 +173,47 @@ export function SettingsView({
             <div className="panel-title">菜单栏</div>
             <span className="panel-meta">托盘图标</span>
           </div>
-          {tray.error !== null && tray.settings === null ? (
-            <div className="panel-body">
+          <div className="panel-body flush">
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">图标、面板与快捷动作</div>
+                <div className="setting-desc">徽标样式、面板宽度、状态预览与通知行为。</div>
+              </div>
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => onNavigate("tray")}>
+                打开菜单栏设计
+              </button>
+            </div>
+            {tray.error !== null && tray.settings === null ? (
               <ErrorBanner error={tray.error} onRetry={tray.reload} />
-            </div>
-          ) : tray.settings !== null ? (
-            <div className="panel-body flush">
-              <Switch
-                label="等待输入时通知"
-                checked={tray.settings.notifyOnWaiting}
-                disabled={tray.saving}
-                onChange={(v) => void tray.update({ notifyOnWaiting: v })}
-              />
-              <Switch
-                label="显示今日花费"
-                checked={tray.settings.showCost}
-                disabled={tray.saving}
-                onChange={(v) => void tray.update({ showCost: v })}
-              />
-              <Switch
-                label="在 Dock 显示图标"
-                checked={tray.settings.showDockIcon}
-                disabled={tray.saving}
-                onChange={(v) => void tray.update({ showDockIcon: v })}
-              />
-            </div>
-          ) : (
-            <div className="panel-body">
+            ) : tray.settings !== null ? (
+              <>
+                <Switch
+                  label="等待输入时通知"
+                  description="会话进入 waiting for input 状态时发送系统通知"
+                  checked={tray.settings.notifyOnWaiting}
+                  disabled={tray.saving}
+                  onChange={(v) => void tray.update({ notifyOnWaiting: v })}
+                />
+                <Switch
+                  label="显示今日花费"
+                  description="从 usage 记录汇总，不额外请求网络"
+                  checked={tray.settings.showCost}
+                  disabled={tray.saving}
+                  onChange={(v) => void tray.update({ showCost: v })}
+                />
+                <Switch
+                  label="在 Dock 显示图标"
+                  checked={tray.settings.showDockIcon}
+                  disabled={tray.saving}
+                  onChange={(v) => void tray.update({ showDockIcon: v })}
+                />
+              </>
+            ) : (
               <p className="muted">正在加载菜单栏设置…</p>
-            </div>
-          )}
+            )}
+          </div>
           <div className="panel-foot">
-            <span>徽标样式、面板宽度、状态预览与通知行为。</span>
-            <button type="button" className="btn btn-small" onClick={() => onNavigate("tray")}>
-              全部菜单栏设置
-            </button>
+            <span>托盘不会终止进程，也不会向已有标签页输入按键。</span>
           </div>
         </section>
       </div>
@@ -170,6 +221,7 @@ export function SettingsView({
         <section className="panel" aria-label="更新">
           <div className="panel-head">
             <div className="panel-title">更新</div>
+            <span className="panel-meta">Tauri updater</span>
           </div>
           <div className="panel-body flush">
             <Switch
@@ -224,6 +276,7 @@ export function SettingsView({
         <section className="panel" aria-label="路径">
           <div className="panel-head">
             <div className="panel-title">路径</div>
+            <span className="panel-meta">全部可在启动参数覆盖</span>
           </div>
           {paths.error !== null ? (
             <div className="panel-body">
@@ -242,7 +295,7 @@ export function SettingsView({
                     value={paths.data.sessionsDir}
                     onToast={onToast}
                   />
-                  <PathRow label="占用锁目录" value={paths.data.ownersDir} onToast={onToast} />
+                  <PathRow label="所有权锁" value={paths.data.ownersDir} onToast={onToast} />
                   <PathRow
                     label="提示词历史"
                     value={paths.data.historyDb}
@@ -251,7 +304,7 @@ export function SettingsView({
                   <PathRow label="记忆库" value={paths.data.memoryDir} onToast={onToast} />
                   <PathRow label="应用数据" value={paths.data.dataDir} onToast={onToast} />
                   <PathRow
-                    label="omp 可执行文件"
+                    label="omp 二进制"
                     value={paths.data.ompBin}
                     onToast={onToast}
                   />
@@ -264,6 +317,46 @@ export function SettingsView({
           </div>
         </section>
       </div>
+      <section className="panel" aria-label="关于">
+        <div className="panel-head">
+          <div className="panel-title">关于</div>
+          <span className="panel-meta">v{appVersion ?? "…"}</span>
+        </div>
+        <div className="panel-body">
+          <dl className="detail-list">
+            <div className="detail-row">
+              <dt>版本</dt>
+              <dd className="mono">{appVersion ?? "…"}</dd>
+            </div>
+            <div className="detail-row">
+              <dt>构建</dt>
+              <dd className="mono">{buildText(build.data ?? null)}</dd>
+            </div>
+            <div className="detail-row">
+              <dt>omp</dt>
+              <dd className="mono">{ompVersion ?? "…"}</dd>
+            </div>
+            <div className="detail-row">
+              <dt>遥测</dt>
+              <dd>关闭 · 无分析</dd>
+            </div>
+          </dl>
+          {build.error !== null ? <ErrorBanner error={build.error} onRetry={build.reload} /> : null}
+          <div className="settings-about-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-small"
+              disabled={appChecking}
+              onClick={onCheckApp}
+            >
+              检查更新
+            </button>
+            <button type="button" className="btn btn-quiet btn-small" onClick={copyVersion}>
+              复制版本
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -274,36 +367,38 @@ function PathRow({
   onToast,
 }: {
   label: string;
-  value: AppPaths[keyof AppPaths];
+  value: string | null;
   onToast: ToastFn;
-}) {
-  const copy = async () => {
-    if (value === null) return;
-    if (await copyText(value)) onToast("已复制路径", "info");
-    else onToast("复制失败：剪贴板不可用", "error");
-  };
+}): React.JSX.Element {
+  if (value === null) {
+    return (
+      <tr>
+        <td>{label}</td>
+        <td>
+          <span className="muted">未找到</span>
+        </td>
+      </tr>
+    );
+  }
   return (
     <tr>
       <td>{label}</td>
       <td>
-        {value === null ? (
-          <span className="muted">未找到</span>
-        ) : (
-          <code>{value}</code>
-        )}
-      </td>
-      <td>
-        {value === null ? null : (
-          <button
-            type="button"
-            className="btn btn-small"
-            aria-label={`复制${label}`}
-            onClick={() => void copy()}
-          >
-            复制
-          </button>
-        )}
+        <code title={value}>{abbreviateHome(value)}</code>
+        <button
+          type="button"
+          className="btn btn-quiet btn-small"
+          aria-label={`复制${label}`}
+          onClick={() =>
+            void copyText(value).then((ok) => onToast(ok ? "已复制" : "复制失败", ok ? "info" : "error"))
+          }
+        >
+          复制
+        </button>
       </td>
     </tr>
   );
 }
+
+/** 测试用导出。 */
+export { abbreviateHome, buildText };
