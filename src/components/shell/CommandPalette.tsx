@@ -3,7 +3,7 @@
  * ↑/↓ 循环高亮，Enter 执行，鼠标移入设为高亮。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Globe, Zap } from "lucide-react";
+import { FileText, Globe, Search, Zap } from "lucide-react";
 import type { MetaSnapshot, SessionSummary } from "../../types";
 import { paletteItems, type PaletteItem } from "../../palette";
 import { DialogFrame, Ico } from "../ui";
@@ -101,8 +101,11 @@ export function CommandPalette({
   }, [highlight]);
 
   return (
-    <DialogFrame label="全局搜索" className="palette-box" onClose={onClose}>
+    <DialogFrame label="全局搜索" className="palette-box" overlayClass="palette-overlay" onClose={onClose}>
       <div className="palette-input">
+        <span className="palette-ico" aria-hidden="true">
+          <Ico icon={Search} size={16} />
+        </span>
         <SearchInput
           label="搜索页面、会话或动作"
           placeholder="搜索页面、会话或动作"

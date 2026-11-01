@@ -3,7 +3,7 @@
  * 命令名 snake_case，参数/返回值 JSON camelCase（见 docs/CONTRACT.md）。
  */
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { AppPaths, CleanupCandidate, TrayPreview, TraySettings, TraySettingsPatch } from "./types";
+import type { AppPaths, BuildInfo, CleanupCandidate, TrayPreview, TraySettings, TraySettingsPatch } from "./types";
 import type {
   AgentDetail,
   AgentStage,
@@ -14,6 +14,7 @@ import type {
   CheckSessionRequest,
   CheckSessionResult,
   Conversation,
+  CreateAgentDefinitionResult,
   DeleteResult,
   DeleteSessionsRequest,
   ErrorCode,
@@ -22,6 +23,8 @@ import type {
   ListSessionsResult,
   McpDeleteServerRequest,
   McpGetServerRequest,
+  McpHandshakeRequest,
+  McpHandshakeResult,
   McpListRequest,
   McpListResult,
   McpSaveResult,
@@ -47,11 +50,13 @@ import type {
   DiscoverEntry,
   MetaSnapshot,
   PluginUpgradeResult,
+  PluginCheckResult,
   SessionMetaInput,
   SkillsListResult,
   TreeData,
   SessionUsage,
   MemoryBackup,
+  MemoryBackupAllResult,
   MemoryBankStatus,
   MemoryDeletePreview,
   MemoryDeleteResult,
@@ -158,10 +163,14 @@ export function appendBranchMarker(
 export function openInIterm(req: OpenInItermRequest): Promise<void> {
   return call("open_in_iterm", { path: req.path });
 }
+/** 聚焦占用会话的 iTerm 标签（在用恢复确认框用；只 activate+select）。 */
+export function focusItermTab(path: string): Promise<void> {
+  return call("focus_iterm_tab", { path });
+}
 
-/** 在 iTerm 新开 omp 会话（仅 `cd '<cwd>' && omp`，不带 prompt 或任何参数）。 */
-export function newSessionInIterm(cwd: string): Promise<void> {
-  return call("new_session_in_iterm", { cwd });
+/** 在 iTerm 新开 omp 会话（`cd '<cwd>' && omp [--model]`，不带 prompt）。 */
+export function newSessionInIterm(cwd: string, model?: string | null): Promise<void> {
+  return call("new_session_in_iterm", { cwd, model: model ?? null });
 }
 
 /** 写系统剪贴板（WebView 的 clipboard 在菜单动作里会因缺少用户激活被拒）。 */
@@ -177,6 +186,11 @@ export function getResumeCommand(path: string): Promise<string> {
 /** 在 Finder 中显示会话文件（选中该 `.jsonl`）。 */
 export function revealSessionFile(path: string): Promise<void> {
   return call("reveal_session_file", { path });
+}
+
+/** 在 Finder 中显示任意文件（选中该文件；只接受绝对路径）。 */
+export function revealFile(path: string): Promise<void> {
+  return call("reveal_file", { path });
 }
 
 /** 在 Finder 中打开项目目录。 */
@@ -235,6 +249,10 @@ export function uninstallOmpPlugin(id: string, onLine: (line: string) => void): 
 
 export function setOmpPluginEnabled(id: string, enabled: boolean, onLine: (line: string) => void): Promise<OmpOpResult> {
   return streamedCall("omp_plugin_set_enabled", onLine, { id, enabled });
+}
+
+export function checkOmpPluginUpdate(id: string | null): Promise<PluginCheckResult> {
+  return call("omp_plugin_check_update", { id });
 }
 
 export function upgradeOmpPlugins(id: string | null, onLine: (line: string) => void): Promise<PluginUpgradeResult> {
@@ -303,6 +321,14 @@ export function deleteMcpServer(req: McpDeleteServerRequest): Promise<McpSaveRes
   });
 }
 
+export function handshakeMcpServer(req: McpHandshakeRequest): Promise<McpHandshakeResult> {
+  return call("mcp_handshake", {
+    scope: req.scope,
+    project: req.project ?? null,
+    name: req.name,
+  });
+}
+
 export function getSessionUsage(req: { path: string }): Promise<SessionUsage> {
   return call("get_session_usage", { path: req.path });
 }
@@ -345,6 +371,17 @@ export function updateModelConfig(req: {
     key: req.key,
     value: req.value,
     expected: req.expected,
+  });
+}
+
+/** 新建用户 agent 定义（`~/.omp/agent/agents/<name>.md`，同名报 `INVALID_INPUT`）。 */
+export function createAgentDefinition(req: {
+  name: string;
+  description: string;
+}): Promise<CreateAgentDefinitionResult> {
+  return call("create_agent_definition", {
+    name: req.name,
+    description: req.description,
   });
 }
 
@@ -425,6 +462,11 @@ export function memoryBackups(req: { bank?: string | null } = {}): Promise<Memor
   return call("memory_backups", { bank: req.bank ?? null });
 }
 
+/** 全库快照（CONTRACT §18.8.9）；逐库独立成败，无参数。 */
+export function memoryBackupAll(): Promise<MemoryBackupAllResult> {
+  return call("memory_backup_all");
+}
+
 /** 删除预览（纯只读）；ids 去重后不能为空且不超过 500。 */
 export function memoryDeletePreview(req: { bank: string; ids: string[] }): Promise<MemoryDeletePreview> {
   return call("memory_delete_preview", { bank: req.bank, ids: req.ids });
@@ -485,6 +527,16 @@ export function updateModelSpec(req: ModelSpecPatchRequest): Promise<ModelSpecUp
   });
 }
 
+/** 在已存在 provider 的 models 列表末尾追加新模型（CONTRACT §21.9）；只用 patch 的 name/contextWindow/maxTokens。 */
+export function createModelSpec(req: ModelSpecPatchRequest): Promise<ModelSpecUpdateResult> {
+  return call("create_model_spec", {
+    provider: req.provider,
+    id: req.id,
+    patch: req.patch,
+    expectedRevision: req.expectedRevision,
+  });
+}
+
 /** CONTRACT §4.57：单个会话的舞台（只读）。 */
 export function getAgentStage(path: string): Promise<AgentStage> {
   return call("get_agent_stage", { path });
@@ -510,9 +562,34 @@ export function setTraySettings(patch: TraySettingsPatch): Promise<TraySettings>
   return call("set_tray_settings", { patch });
 }
 
-/** CONTRACT §17.10：菜单栏页预览（只读，由托盘缓存模型映射）。 */
+/** CONTRACT §17.10：面板/菜单栏页预览（只读，由缓存模型 + 行快照 join 映射）。 */
 export function getTrayPreview(): Promise<TrayPreview> {
   return call("get_tray_preview");
+}
+
+/** CONTRACT §17.11：面板点会话行 = 聚焦其 iTerm 标签。 */
+export function trayFocusSession(sessionId: string): Promise<void> {
+  return call("tray_focus_session", { sessionId });
+}
+
+/** CONTRACT §17.11：面板「最近会话」恢复（iTerm 新 tab）。 */
+export function trayResumeRecent(sessionId: string): Promise<void> {
+  return call("tray_resume_recent", { sessionId });
+}
+
+/** CONTRACT §17.11：打开主窗口；`page` 非空时附带路由跳转/新建会话事件。 */
+export function openMainWindow(page?: string): Promise<void> {
+  return call("open_main_window", { page: page ?? null });
+}
+
+/** CONTRACT §17.11：退出应用。 */
+export function quitApp(): Promise<void> {
+  return call("quit_app");
+}
+
+/** CONTRACT §17.11：构建信息（设置页关于卡用）。 */
+export function getBuildInfo(): Promise<BuildInfo> {
+  return call("get_build_info");
 }
 
 /** CONTRACT §4.68：应用关键路径（只读展示）。 */

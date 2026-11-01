@@ -1,8 +1,8 @@
 /* 外壳：标题栏 + 导航 + 命令面板。照抄设计稿 styles.css 的 titlebar(142-210) /
  * shell-sidebar(254-342) / 折叠段(1410-1422) / palette(1237-1248)，变量按下表映射：
  * --chrome/--sidebar→--bg-sidebar，--surface→--bg-card，--surface-2→--bg-inset，
- * --surface-3→--bg-hover，--surface-4→--border-strong，--line/--line-2→--border/--border-strong，
- * --fg/--fg-2→--text，--muted→--text-muted，--meta→--text-faint，--accent-text→--accent。 */
+ * --surface-3→--bg-raised，--surface-4→--bg-overlay，--line/--line-2→--border/--border-strong，
+ * --fg→--text，--fg-2→--text-secondary，--muted→--text-muted，--meta→--text-faint，--accent-text→--accent。 */
 
 .app {
   height: 100vh;
@@ -25,6 +25,33 @@
   position: relative;
   z-index: 30;
 }
+/* ?mock 装饰灯在流内占位，真机原生红绿灯不占流内空间故保留 84px（T1）。 */
+.titlebar.has-lights { padding-left: var(--sp-5); }
+
+.lights {
+  display: flex;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: block;
+}
+
+.light.red {
+  background: #ff5f57;
+}
+
+.light.yellow {
+  background: #febc2e;
+}
+
+.light.green {
+  background: #28c840;
+}
 
 .tb-left {
   display: flex;
@@ -37,13 +64,13 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: var(--fs-md);
+  font-size: 12.5px;
   color: var(--text-muted);
   min-width: 0;
 }
 
 .tb-app {
-  color: var(--text);
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
@@ -73,9 +100,9 @@
   min-width: 220px;
   background: var(--bg-inset);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-faint);
-  font-size: var(--fs-md);
+  font-size: 12.5px;
   cursor: pointer;
 }
 
@@ -105,7 +132,7 @@ kbd {
   height: 30px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
@@ -113,7 +140,7 @@ kbd {
 }
 
 .icon-btn:hover {
-  background: var(--bg-hover);
+  background: var(--bg-raised);
   color: var(--text);
 }
 
@@ -124,15 +151,30 @@ kbd {
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
 
 .sidebar-toggle:hover {
-  background: var(--bg-hover);
+  background: var(--bg-raised);
   color: var(--text);
+}
+
+.sidebar-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sidebar-toggle .st-arrow {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.shell-collapsed .sidebar-toggle .st-arrow {
+  transform: rotate(180deg);
 }
 
 /* ---- 外壳网格 ---- */
@@ -174,9 +216,13 @@ kbd {
   display: grid;
   place-items: center;
   color: var(--text);
-  font-size: 17px;
-  background: var(--bg-hover);
+  background: var(--bg-raised);
   border: 1px solid var(--border);
+}
+
+.brand-mark svg {
+  width: 19px;
+  height: 19px;
 }
 
 .brand-text {
@@ -245,7 +291,7 @@ kbd {
 }
 
 .nav-item.is-active {
-  background: var(--bg-hover);
+  background: var(--bg-raised);
   color: var(--text);
 }
 
@@ -260,6 +306,11 @@ kbd {
   place-items: center;
   color: var(--text-faint);
   flex: none;
+}
+
+.nav-ico svg {
+  width: 15px;
+  height: 15px;
 }
 
 .nav-text {
@@ -281,7 +332,7 @@ kbd {
 
 .nav-item.is-active .nav-count {
   color: var(--text);
-  background: var(--border-strong);
+  background: var(--bg-overlay);
   border-color: transparent;
 }
 
@@ -291,6 +342,128 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.update-row:hover:not(:disabled) {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.update-row:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+/* update-row 五态文案色（N3）：最新绿/新版琥珀/失败红；检查中与未检查沿用行色。 */
+.update-row .ver-ok {
+  color: var(--ok);
+}
+
+.update-row .ver-new {
+  color: var(--warn);
+}
+
+.update-row .ver-fail {
+  color: var(--danger);
+}
+
+.meta-dot {
+  color: var(--text-faint);
+}
+
+.foot-note {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding-left: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.foot-note .changelog-link {
+  margin-left: 0;
+}
+
+
+/* 折叠态底部：居中状态点，点击检查更新（N7）。 */
+.update-dot {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.update-dot:hover:not(:disabled) {
+  background: var(--bg-inset);
+}
+
+.update-dot:disabled {
+  cursor: default;
+}
+
+/* 折叠导航锚定式 flyout（设计稿 nav-flyout，N6）。 */
+.nav-flyout {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+
+.nav-flyout::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.nav-flyout-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  padding: 1px 5px;
 }
 
 /* 折叠态（设计稿 body.sidebar-collapsed 段，用 .shell-collapsed 作用域代替）。 */
@@ -315,12 +488,24 @@ kbd {
   gap: 0;
 }
 
+.shell-collapsed .nav-text,
+.shell-collapsed .nav-count {
+  display: none;
+}
+
 .shell-collapsed .sidebar-foot {
   align-items: center;
   padding: 10px 6px;
 }
 
 /* ---- 命令面板 ---- */
+/* 命令面板专用遮罩：顶部 12vh + 无模糊（设计稿 .palette，C1/C2）。 */
+.modal-overlay.palette-overlay {
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: none;
+}
 
 .palette-box {
   width: 560px;
@@ -344,18 +529,24 @@ kbd {
   border-bottom: 1px solid var(--border);
 }
 
+.palette-input .palette-ico {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-faint);
+}
+
 .palette-input .filter-input {
   border: 0;
   background: transparent;
   font-size: 14px;
   height: auto;
   padding: 0;
+  border-radius: 0;
 }
 
 .palette-input .filter-input:focus {
   box-shadow: none;
 }
-
 .palette-list {
   max-height: 52vh;
   overflow-y: auto;

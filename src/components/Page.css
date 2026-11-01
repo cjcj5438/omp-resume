@@ -57,6 +57,25 @@
   padding-bottom: 2px;
 }
 
+/* 小窗：页头纵向堆叠（设计稿 styles.css @media 860px 段；窗口最小 900px，侧栏 244 + 内容约 600，断点取 1120px 与 grid-2 对齐）。 */
+@media (max-width: 1120px) {
+  .page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-actions {
+    width: 100%;
+    padding-bottom: 0;
+  }
+
+  /* X1：小窗 toolbar 搜索框占满整行，计数/chips 整齐换行（设计稿同规则）。 */
+  .toolbar .search-box {
+    width: 100%;
+  }
+}
+
 .panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -72,6 +91,7 @@
   padding: 13px 16px;
   border-bottom: 1px solid var(--border);
   min-height: 46px;
+  flex-wrap: wrap;
 }
 
 .panel-title {
@@ -81,6 +101,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: none;
+  white-space: nowrap;
 }
 
 .panel-meta {
@@ -189,7 +211,7 @@
   min-width: 0;
 }
 
-.kpi-label {
+.kpi .kpi-label {
   font-size: 11px;
   color: var(--text-faint);
   display: flex;
@@ -197,7 +219,7 @@
   gap: 6px;
 }
 
-.kpi-value {
+.kpi .kpi-value {
   font-size: 26px;
   font-weight: 600;
   line-height: 1.1;
@@ -205,7 +227,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.kpi-value small {
+.kpi .kpi-value small {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-muted);
@@ -213,7 +235,7 @@
   letter-spacing: 0;
 }
 
-.kpi-foot {
+.kpi .kpi-foot {
   font-size: 11px;
   color: var(--text-faint);
   display: flex;
@@ -223,7 +245,571 @@
 }
 
 .seg-count {
-  margin-left: 6px;
-  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--bg-raised);
   color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.seg .btn[aria-pressed="true"] .seg-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---- 跨页通用原语（照抄设计稿，变量按文件头映射表；surface-3→--bg-raised 等） ---- */
+
+.section-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.grid-2-even {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 304px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1120px) {
+  .grid-2,
+  .grid-2-even,
+  .split {
+    grid-template-columns: 1fr;
+  }
+  .grid-3 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .grid-4 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* KPI 网格：gap 12px（设计稿 grid-4）。 */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 1120px) {
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* 趋势：up 绿 / down 红 / flat 弱（设计稿 .trend）。 */
+.trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.trend.up {
+  color: var(--ok);
+}
+
+.trend.down {
+  color: var(--danger);
+}
+
+.trend.flat {
+  color: var(--text-muted);
+}
+
+.trend .ico {
+  width: 11px;
+  height: 11px;
+}
+
+/* 通用表格（设计稿 .tbl）。数字列右对齐用 .r，居中用 .c，强调用 .strong，副行用 .sub。 */
+.tbl-wrap {
+  overflow-x: auto;
+}
+
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tbl th {
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--bg-inset);
+  position: sticky;
+  top: 0;
+}
+
+.tbl td {
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  vertical-align: middle;
+}
+/* 数字/mono 列不换行（全局；cleanup 单页版已并入此处）。 */
+.tbl td.mono { white-space: nowrap; }
+
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tbl tbody tr {
+  transition: background var(--motion-fast);
+}
+
+.tbl tbody tr:hover {
+  background: var(--bg-inset);
+}
+
+.tbl tbody tr.is-click {
+  cursor: pointer;
+}
+
+.tbl .r {
+  text-align: right;
+}
+
+.tbl .c {
+  text-align: center;
+}
+
+.tbl .strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.tbl .sub {
+  display: block;
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+/* kv 明细（设计稿 .detail-list：dt 左弱 label，dd 右对齐值）。 */
+.detail-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 11.5px;
+}
+
+.detail-row:last-child {
+  border-bottom: 0;
+}
+
+.detail-row dt {
+  color: var(--text-faint);
+  flex: none;
+}
+
+.detail-row dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-row dd.mono {
+  font-size: 10.5px;
+}
+
+/* 对话框内 kv 盒（设计稿 .dlg-kv）。 */
+.dlg-kv {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.dlg-kv div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 11px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dlg-kv div:last-child {
+  border-bottom: 0;
+}
+
+.dlg-kv span:first-child {
+  color: var(--text-faint);
+}
+
+.dlg-kv span:last-child {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text);
+  text-align: right;
+}
+
+/* 行内说明（设计稿 .inline-note；.warn 为警告变体）。 */
+.inline-note {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.inline-note.warn {
+  border-color: color-mix(in srgb, var(--warn) 32%, transparent);
+  background: var(--warn-soft);
+  color: color-mix(in srgb, var(--warn) 82%, var(--text));
+}
+
+.inline-note .ico {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* 状态 pill（设计稿 .state-pill：stage 状态词专用）。 */
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  font-size: 9.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.state-pill.running {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.state-pill.idle {
+  color: var(--text-muted);
+  background: var(--bg-raised);
+}
+
+.state-pill.queued {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.state-pill.done {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.state-pill.failed {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.state-pill.lost {
+  color: var(--text-faint);
+  background: var(--bg-raised);
+}
+
+/* 圆点（设计稿 .dot：ok/warn/bad/live/state-*）。 */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-faint);
+  display: inline-block;
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+
+.dot.warn {
+  background: var(--warn);
+}
+
+.dot.bad {
+  background: var(--danger);
+}
+
+.dot.live {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 状态点（tray 判定口径：live/working 绿、waiting 黄、idle 灰、stuck 红）。 */
+.tray-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  background: var(--text-faint);
+}
+
+.tray-state-dot.live,
+.tray-state-dot.working {
+  background: var(--ok);
+}
+
+.tray-state-dot.waiting {
+  background: var(--warn);
+}
+
+.tray-state-dot.idle {
+  background: var(--text-faint);
+}
+
+.tray-state-dot.stuck {
+  background: var(--danger);
+}
+
+/* 筛选 chips（设计稿 .chip：24px pill，反白选中，.dot 为 5px 状态点）。 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip.is-on {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+.chip .dot {
+  width: 5px;
+  height: 5px;
+}
+
+/* 带图标搜索框（设计稿 .search-box：h30 w250 + 图标 + 12.5px input）。 */
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  width: 250px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--text-faint);
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 0;
+  height: auto;
+}
+
+.search-box input::placeholder {
+  color: var(--text-faint);
+}
+
+/* 返回文字链（设计稿 .back-link：12px muted，hover 淡底）。 */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 8px 4px 2px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.back-link:hover {
+  color: var(--text);
+  background: var(--bg-inset);
+}
+
+/* 常显选择框（设计稿 .sel-box：15px 圆角 4，选中 accent 底白钩）。 */
+.sel-box {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  display: inline-grid;
+  place-items: center;
+  color: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sel-box:hover {
+  border-color: var(--accent);
+}
+
+.sel-box.is-on {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
+}
+
+.sel-box:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.sel-box svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* 面板内纵向动作组（设计稿 .side-actions：顶边线 + 纵向按钮）。 */
+.side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* 表单字段（设计稿 .fld：label 大写 10.5px + 32px input/select + help）。 */
+.fld {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fld > label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.fld input,
+.fld select,
+.fld textarea {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.fld textarea {
+  height: 64px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.fld input:focus,
+.fld select:focus,
+.fld textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.fld .help {
+  font-size: 10px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.fld-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }

@@ -13,7 +13,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
-import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, CreateAgentDefinitionResult, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
 import type { ModelPreset, ModelPresetSnapshot, ModelPresetsState } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry, UsageRange } from "../types";
@@ -66,6 +66,7 @@ interface McpMockFile {
   path: string;
   document: McpObject | null;
   revision: string;
+  modifiedAt: string | null;
 }
 
 function mcpObject(value: unknown): value is McpObject {
@@ -83,6 +84,7 @@ function mcpTransport(config: McpObject): McpTransport {
     const type = config["type"];
     return type === "stdio" || type === "http" || type === "sse" ? type : "unknown";
   }
+  // 与后端 transport() 同口径：有 command 键 → stdio，有 url 键 → http。
   if (Object.hasOwn(config, "command")) return "stdio";
   return Object.hasOwn(config, "url") ? "http" : "unknown";
 }
@@ -91,8 +93,11 @@ function mcpConfig(config: unknown): asserts config is McpObject {
   if (!mcpObject(config)) throw err("INVALID_INPUT", "服务器配置必须是 JSON 对象");
   if (Object.hasOwn(config, "command") && Object.hasOwn(config, "url")) throw err("INVALID_INPUT", "command 与 url 不能同时设置");
   const type = mcpTransport(config);
-  if (Object.hasOwn(config, "type") && type === "unknown") throw err("INVALID_INPUT", "type 仅支持 stdio、http 或 sse");
-  const key = type === "http" || type === "sse" ? "url" : "command";
+  // 与后端 validate_config() 同口径：unknown + 无 type 键 → 回落 stdio（自动推断）；
+  // unknown + 有 type 键（含空串）→ 拒绝。
+  const kind = type === "unknown" && !Object.hasOwn(config, "type") ? "stdio" : type;
+  if (kind === "unknown") throw err("INVALID_INPUT", "type 仅支持 stdio、http 或 sse");
+  const key = kind === "http" || kind === "sse" ? "url" : "command";
   const required = config[key];
   if (typeof required !== "string" || !required.trim()) throw err("INVALID_INPUT", `${key} 必须是非空字符串`);
   if (Object.hasOwn(config, "args") && (!Array.isArray(config["args"]) || !config["args"].every((arg: unknown) => typeof arg === "string"))) throw err("INVALID_INPUT", "args 必须是字符串数组");
@@ -153,7 +158,7 @@ function createMcpMock() {
   function userFile(): Promise<McpMockFile> {
     if (!user) {
       const document = structuredClone(userDocument);
-      user = hash(document).then((revision) => ({ scope: "user", path: `${home}/.omp/agent/mcp.json`, document, revision }));
+      user = hash(document).then((revision) => ({ scope: "user", path: `${home}/.omp/agent/mcp.json`, document, revision, modifiedAt: "2026-10-31T10:00:00.000Z" }));
     }
     return user;
   }
@@ -164,7 +169,7 @@ function createMcpMock() {
       const document = project === "/Users/demo/my/omp-resume"
         ? { $schema: schema, mcpServers: { shared: { type: "http", url: "https://example.test/project-mcp" } } }
         : null;
-      file = hash(document).then((revision) => ({ scope: "project", path: `${project}/.omp/mcp.json`, document, revision }));
+      file = hash(document).then((revision) => ({ scope: "project", path: `${project}/.omp/mcp.json`, document, revision, modifiedAt: document === null ? null : "2026-10-30T10:00:00.000Z" }));
       projects.set(project, file);
     }
     return file;
@@ -210,6 +215,7 @@ function createMcpMock() {
     return {
       files: files.map((file): McpFileInfo => ({
         scope: file.scope, path: file.path, exists: file.document !== null, readError: null, revision: file.revision,
+        modifiedAt: file.modifiedAt,
         disabledServers: file.scope === "user" ? [...disabled] : [],
         enabledServers: file.scope === "user" ? [...allowed] : [],
       })),
@@ -225,6 +231,20 @@ function createMcpMock() {
       const servers = serverMap(file.document);
       if (!Object.hasOwn(servers, args["name"])) throw err("NOT_FOUND", "MCP 服务器不存在");
       return { config: structuredClone(servers[args["name"]]), revision: file.revision };
+    }
+    if (cmd === "mcp_handshake") {
+      // 不做真实握手：按 fixture transport 给固定答案（只读，不占 pending 串行）。
+      mcpName(args["name"]);
+      const file = await selected(args);
+      const servers = serverMap(file.document);
+      if (!Object.hasOwn(servers, args["name"])) throw err("NOT_FOUND", "MCP 服务器不存在");
+      const raw = servers[args["name"]];
+      const config: McpObject = mcpObject(raw) ? raw : {};
+      const transport = mcpTransport(config);
+      if (transport === "unknown") throw err("INVALID_INPUT", "type 仅支持 stdio、http 或 sse");
+      if (transport === "sse") return { ok: true, tools: null, ms: 120, error: null };
+      if (args["name"] === "blocked") return { ok: false, tools: null, ms: 233, error: "无法连接到服务器" };
+      return { ok: true, tools: transport === "http" ? 4 : 9, ms: transport === "http" ? 180 : 95, error: null };
     }
     const operation = pending.then(async () => {
       if (args["expectedRevision"] === "unreadable") throw err("IO", "配置文件无法读取，请先修复读取权限并刷新");
@@ -393,6 +413,32 @@ function createModelMock(forceConflict: boolean, fallbackOff: boolean) {
         retryStatus: structuredClone(retryStatus),
       } satisfies ModelConfig;
     }
+    if (cmd === "create_agent_definition") {
+      const name = args["name"];
+      const description = args["description"];
+      if (typeof name !== "string" || !/^[a-z0-9-_]{1,64}$/.test(name)) {
+        throw err("INVALID_INPUT", "agent 名称须为 1–64 个小写字母、数字、下划线或连字符");
+      }
+      const trimmed = typeof description === "string" ? description.trim() : "";
+      if (trimmed.length < 1 || trimmed.length > 500) {
+        throw err("INVALID_INPUT", "agent 描述须为 1–500 字符");
+      }
+      if (/[\u0000-\u001F\u007F]/.test(trimmed)) {
+        throw err("INVALID_INPUT", "agent 描述不能包含控制字符");
+      }
+      // 只对用户文件判重：内置同名（如 scout）允许建同名 .md，走 §16.4 覆盖（同源合并为一行，source 仍为 builtin）。
+      const existing = MOCK_AGENTS.findIndex((agent) => agent.name === name);
+      if (existing >= 0 && MOCK_AGENTS[existing].source === "user") {
+        throw err("INVALID_INPUT", `agent 定义已存在：${name}`);
+      }
+      const row = { name, description: trimmed, source: "user" as const, defaultModel: [] as string[], defaultThinkingLevel: null as string | null };
+      if (existing >= 0) {
+        MOCK_AGENTS[existing] = { ...MOCK_AGENTS[existing], description: trimmed };
+      } else {
+        MOCK_AGENTS.push(row);
+      }
+      return { name, path: `~/.omp/agent/agents/${name}.md` } satisfies CreateAgentDefinitionResult;
+    }
     const key = args["key"];
     if (typeof key !== "string" || !Object.hasOwn(state, key)) {
       throw err("INVALID_KEY", `不支持的配置键：${String(key)}`);
@@ -537,8 +583,79 @@ function createSpecsMock(forceConflict: boolean) {
     specs: structuredClone(specs),
     error: null,
   });
+  const createSpec = (args: Record<string, unknown>): ModelSpecUpdateResult => {
+    const provider = args["provider"];
+    const id = args["id"];
+    const expectedRevision = args["expectedRevision"];
+    // 与 Rust validate_target 同口径。
+    for (const [label, value] of [["provider", provider], ["模型 id", id]] as const) {
+      if (typeof value !== "string" || value.trim() === "") throw err("INVALID_INPUT", `${label}不能为空`);
+      if (value.length > 200) throw err("INVALID_INPUT", `${label}过长（最多 200 个字符）`);
+      if (value.includes("\n") || value.includes("\r")) throw err("INVALID_INPUT", `${label}不能换行`);
+    }
+    const providerStr = provider as string;
+    const idStr = id as string;
+    if (providerStr.includes("/") || idStr.includes("/")) {
+      throw err("INVALID_INPUT", "provider 与模型 id 不能包含 /");
+    }
+    // provider 必须已存在（mock 以首个同 provider 规格为据，不新建 provider）。
+    if (!specs.some((spec) => spec.provider === providerStr)) {
+      throw err("INVALID_INPUT", "未找到指定的 provider");
+    }
+    if (specs.some((spec) => spec.provider === providerStr && spec.id === idStr)) {
+      throw err("INVALID_INPUT", `模型 ${providerStr}/${idStr} 已存在，请换个 id 或直接修改它`);
+    }
+    if (typeof expectedRevision !== "string" || expectedRevision.trim() === "") {
+      throw err("INVALID_INPUT", "缺少 revision，请刷新后重试");
+    }
+    if (expectedRevision === "absent" || expectedRevision === "unreadable") {
+      throw err("INVALID_INPUT", "模型规格文件不可写，请刷新后重试");
+    }
+    if (forceConflict || expectedRevision !== `mock-rev-${revision}`) {
+      throw err("CONFLICT", "模型规格文件已被外部修改，请刷新后重试");
+    }
+    const patch = (args["patch"] ?? {}) as ModelSpecPatch;
+    // 只用 name/contextWindow/maxTokens（与 Rust create 侧一致，其余字段忽略）。
+    if (patch.name !== undefined) {
+      if (typeof patch.name !== "string" || patch.name.trim() === "") throw err("INVALID_INPUT", "模型名称不能为空");
+      if ([...patch.name].length > 200) throw err("INVALID_INPUT", "模型名称过长（最多 200 个字符）");
+      if (patch.name.includes("\n") || patch.name.includes("\r")) throw err("INVALID_INPUT", "模型名称不能换行");
+      if (/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(patch.name)) {
+        throw err("INVALID_INPUT", "模型名称包含非法字符");
+      }
+    }
+    for (const [label, value] of [["上下文窗口", patch.contextWindow], ["最大输出", patch.maxTokens]] as const) {
+      if (value === undefined) continue;
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+        throw err("INVALID_INPUT", `${label}必须大于 0`);
+      }
+    }
+    const created: ModelSpec = {
+      provider: providerStr,
+      id: idStr,
+      selector: `${providerStr}/${idStr}`,
+      name: patch.name ?? idStr,
+      contextWindow: patch.contextWindow ?? null,
+      maxTokens: patch.maxTokens ?? null,
+      reasoning: null,
+      input: null,
+      costInput: null,
+      costOutput: null,
+      costCacheRead: null,
+      costCacheWrite: null,
+      costTiered: false,
+    };
+    specs.push(created);
+    revision += 1;
+    return {
+      revision: `mock-rev-${revision}`,
+      spec: structuredClone(created),
+      backupPath: `/mock/.omp/agent/models.yml.omp-resume.mock-${revision}.bak`,
+    };
+  };
   return (cmd: string, args: Record<string, unknown>) => {
     if (cmd === "get_model_specs") return snapshot();
+    if (cmd === "create_model_spec") return createSpec(args);
     const provider = args["provider"];
     const id = args["id"];
     const expectedRevision = args["expectedRevision"];
@@ -718,18 +835,12 @@ function createBenchMock() {
   };
 }
 
-// ---- 菜单栏预览 mock（CONTRACT §17.10） ----
+// ---- 菜单栏预览 mock（CONTRACT §17.10–17.11） ----
 
-const TRAY_STATUS_TEXT: Record<string, string> = {
-  working: "工作中",
-  waiting: "等待输入",
-  idle: "空闲",
-  stuck: "疑似卡住",
-};
+// 状态中文名前端按 key 映射（见 TrayView `STATUS_NAME`）。
 
 /** 用夹具会话按设置生成预览（与 `list_running_sessions` 同一份夹具）。 */
 function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): TrayPreview {
-  const titleChars = settings.titleWidth === "compact" ? 20 : settings.titleWidth === "wide" ? 48 : 32;
   // 状态按位置轮换，保证四态在预览里都有机会出现；计数与行一致。
   const cycle: TrayPreviewRow["status"][] = ["working", "waiting", "stuck", "idle"];
   const running = sessions
@@ -739,10 +850,6 @@ function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): Tr
   const waiting = running.filter((r) => r.status === "waiting").length;
   const stuck = running.filter((r) => r.status === "stuck").length;
   const total = running.length;
-  const header =
-    total === 0
-      ? "没有运行中的 omp 会话"
-      : `omp 会话 · 占用 ${total} · 工作中 ${working} · 等待输入 ${waiting}${stuck > 0 ? ` · 疑似卡住 ${stuck}` : ""}`;
   const trayTitle =
     total === 0 || settings.badgeStyle === "icon"
       ? null
@@ -756,17 +863,17 @@ function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): Tr
     .sort((a, b) => rank[a.status] - rank[b.status])
     .filter((r) => settings.showIdle || r.status !== "idle");
   const toRow = ({ s, status }: { s: FixtureSession; status: TrayPreviewRow["status"] }): TrayPreviewRow => {
-    const chars = [...s.summary.title];
-    const title = chars.length <= titleChars ? s.summary.title : `${chars.slice(0, titleChars - 1).join("")}…`;
-    let prefix = title;
-    if (settings.showProject) {
-      const segs = s.summary.cwd.split("/").filter(Boolean);
-      if (segs.length > 0) prefix += ` · ${segs[segs.length - 1]}`;
-    }
-    const text = settings.compactRows
-      ? `${prefix} · 2分`
-      : `${prefix} · ${TRAY_STATUS_TEXT[status]} · 2分`;
-    return { sessionId: s.summary.id, status, text, enabled: true };
+    const segs = s.summary.cwd.split("/").filter(Boolean);
+    return {
+      sessionId: s.summary.id,
+      status,
+      title: s.summary.title,
+      project: segs.length > 0 ? segs[segs.length - 1] : null,
+      subagents: status === "working" ? 1 : 0,
+      elapsedSecs: 120,
+      enabled: true,
+      disabledReason: null,
+    };
   };
   const rows = visible.slice(0, 8).map(toRow);
   const overflow = visible.slice(8).map(toRow);
@@ -797,9 +904,9 @@ function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): Tr
   }));
   return {
     ready: true,
-    header,
     trayTitle,
-    costText: settings.showCost ? "今日花费 $1.20" : null,
+    costUsd: settings.showCost ? 1.2 : null,
+    requestCount: settings.showCost ? 7 : null,
     rows,
     overflow,
     recent,
@@ -830,8 +937,33 @@ const PHASES: { main: StageActorState; actors: Record<string, StageActorState> }
   { main: "running", actors: { api: "failed", tests: "done", docs: "done", lint: "lost", advisor: "idle" } },
   { main: "idle", actors: { api: "failed", tests: "done", docs: "done", lint: "lost", advisor: "idle" } },
 ];
-
 const TOOL_CYCLE = ["read", "edit", "bash", "task"];
+
+/** 各角色工具活动文案：首条含反引号（覆盖 code pill），次条纯文本。 */
+const TOOL_BRIEFS: [string, string][] = [
+  ["分派 `tree_layout.rs` 给 tree-builder", "读取子任务返回并合并结论"],
+  ["运行 `cargo test api::` 等待编译", "修复校验失败的边界分支"],
+  ["补齐 `session_roundtrip` 端到端断言", "确认失败用例已恢复通过"],
+  ["更新 `contract.md` 的接口小节", "核对示例与实现一致"],
+  ["跑 `cargo clippy` 收敛告警", "格式化改动文件"],
+  ["复审本轮改动并记录结论", "汇总 token 与成本写入备注"],
+];
+const REPLY_BRIEFS = [
+  "本轮改动已收尾，等待下一轮输入",
+  "已把结论写回会话，继续观察",
+  "上下文压缩前保存检查点",
+  "排队中：等待主会话释放写锁",
+];
+
+/** provenance 真实形态（derive.rs 实际标签）：running 按后端口径为 null。 */
+const PROVENANCE: Record<StageActorState, string | null> = {
+  running: null,
+  idle: "lifecycle:turn-settled",
+  queued: "spawn + lifecycle",
+  done: "session_exit:normal",
+  failed: "tail: last assistant error",
+  lost: "parent gone, dirty tail",
+};
 
 const ACTOR_META: Record<string, { name: string; kind: StageActorKind; agent: string | null; brief: string }> = {
   api: { name: "api", kind: "subagent", agent: "task", brief: "实现 REST 端点与校验" },
@@ -862,13 +994,15 @@ function stageActor(
   const closedAt = new Date(t0 + 20000 + index * 4000).toISOString();
   const tool = TOOL_CYCLE[index % TOOL_CYCLE.length];
   const calls = state === "queued" ? 0 : 6 + index * 3;
+  const briefs = TOOL_BRIEFS[index % TOOL_BRIEFS.length];
   const recent: StageActivity[] = [];
   for (let i = 0; i < 4; i += 1) {
+    const even = i % 2 === 0;
     recent.push({
       at: new Date(t0 + index * 1000 + i * 1500).toISOString(),
-      kind: i % 2 === 0 ? "tool" : "thinking",
-      tool: i % 2 === 0 ? TOOL_CYCLE[(index + i) % TOOL_CYCLE.length] : null,
-      text: i % 2 === 0 ? meta.brief : "",
+      kind: even ? "tool" : "reply",
+      tool: even ? TOOL_CYCLE[(index + i) % TOOL_CYCLE.length] : null,
+      text: even ? briefs[i >> 1] : REPLY_BRIEFS[(index + i) % REPLY_BRIEFS.length],
     });
   }
   return {
@@ -886,6 +1020,7 @@ function stageActor(
     model: "amr-link/deepseek-v4.1-flash",
     contextTokens: state === "queued" ? 0 : 12000 + index * 3400,
     cost: state === "queued" ? 0 : 0.0012 * (index + 1),
+    provenance: PROVENANCE[state],
     toolCalls: calls,
     current:
       state === "running"
@@ -1040,8 +1175,8 @@ export async function installMockBackend(): Promise<MockHandle> {
   });
   const metadata = { installedAt: "2026-10-16T00:00:00.000Z", lastUpdated: "2026-10-16T00:00:00.000Z", installPath: null };
   let plugins: PluginSummary[] = [
-    { ...metadata, id: "hello-plugin@probe-mkt", name: "hello-plugin", marketplace: "probe-mkt", version: "1.0.0", enabled: true },
-    { ...metadata, id: "formatter@community", name: "formatter", marketplace: "community", version: "1.0.0", enabled: false },
+    { ...metadata, id: "hello-plugin@probe-mkt", name: "hello-plugin", marketplace: "probe-mkt", version: "1.0.0", description: "示例插件", enabled: true },
+    { ...metadata, id: "formatter@community", name: "formatter", marketplace: "community", version: "1.0.0", description: null, enabled: false },
   ];
   let marketplaces: MarketplaceSummary[] = [
     { name: "probe-mkt", source: "/tmp/omp-mkt" },
@@ -1073,7 +1208,8 @@ export async function installMockBackend(): Promise<MockHandle> {
     showProject: false,
     showIdle: true,
     compactRows: false,
-    clickAction: "menu",
+    clickAction: "panel",
+    showSearch: true,
     showDockIcon: false,
   };
 
@@ -1140,6 +1276,7 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "mcp_save_server":
       case "mcp_set_enabled":
       case "mcp_delete_server":
+      case "mcp_handshake":
         return mcp(cmd, args);
       case "list_cleanup_candidates": {
         const olderThanDays = Number(args["olderThanDays"]);
@@ -1312,9 +1449,25 @@ export async function installMockBackend(): Promise<MockHandle> {
         itermCalls.push(s.summary.path);
         return null;
       }
+      case "focus_iterm_tab": {
+        const s = find(args["path"] as string);
+        if (!s) throw err("NOT_FOUND", "会话文件不存在");
+        if (!s.summary.probeOk) throw err("PROBE_FAILED", "占用探测失败，不敢聚焦");
+        if (!s.summary.inUse) throw err("INVALID_INPUT", "该会话当前未被占用，无需聚焦");
+        if (s.summary.occupant?.app !== "iTerm2") throw err("ITERM_FAILED", "仅 iTerm 中的会话可聚焦");
+        return null;
+      }
       case "new_session_in_iterm": {
         const cwd = args["cwd"];
         if (typeof cwd !== "string" || !cwd.startsWith("/")) throw err("CWD_MISSING", "目录不存在或不是目录");
+        const model = args["model"];
+        if (model !== null && model !== undefined && String(model).trim() !== "") {
+          const m = String(model).trim();
+          // 与真后端同口径：≤256 字、无控制字符、不以 `-` 开头。
+          // eslint-disable-next-line no-control-regex
+          if (m.length > 256 || /[\u0000-\u001F\u007F]/.test(m)) throw err("INVALID_INPUT", "模型名不合法（≤256 字、无控制字符）");
+          if (m.startsWith("-")) throw err("INVALID_INPUT", "模型名不能以 `-` 开头");
+        }
         newSessionCalls.push(cwd);
         return null;
       }
@@ -1335,6 +1488,13 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (!find(args["path"] as string)) throw err("NOT_FOUND", "会话文件不存在");
         return null;
       }
+      case "reveal_file": {
+        // 口径同真后端 §4.72（绝对路径+无控制字符；存在性由真后端校验），不调 Finder。
+        const path = args["path"];
+        if (typeof path !== "string" || !path.startsWith("/")) throw err("INVALID_INPUT", "只能在 Finder 中显示绝对路径");
+        if (/[\0-\x1F\x7F]/.test(path)) throw err("INVALID_INPUT", "路径含控制字符，拒绝在 Finder 中显示");
+        return null;
+      }
       case "open_project_dir": {
         // 校验口径同 new_session_in_iterm（CONTRACT §25.5），不调 Finder。
         const cwd = args["cwd"];
@@ -1352,11 +1512,11 @@ export async function installMockBackend(): Promise<MockHandle> {
         const q = (typeof args["query"] === "string" ? args["query"] : "").trim().toLowerCase();
         const first = sessions[0]?.summary;
         const entries: PromptHistoryEntry[] = [
-          { id: 3, prompt: "给 Sidebar 加一个新会话按钮，点击后先选目录", cwd: first?.cwd ?? null, sessionId: first?.id ?? null, createdAt: "2026-10-16T01:00:00.000Z", useCount: 3 },
-          { id: 2, prompt: "帮我看看 100% 的 CPU 占用", cwd: null, sessionId: "gone-session-id", createdAt: "2026-10-15T08:00:00.000Z", useCount: 1 },
-          { id: 1, prompt: "fix README.md typo", cwd: "/Users/demo/my/other", sessionId: null, createdAt: "2026-10-14T03:00:00.000Z", useCount: 2 },
+          { id: 3, prompt: "给 Sidebar 加一个新会话按钮，点击后先选目录", cwd: first?.cwd ?? null, sessionId: first?.id ?? null, createdAt: "2026-10-16T01:00:00.000Z", useCount: 3, sessionTitle: "侧栏新会话入口" },
+          { id: 2, prompt: "帮我看看 100% 的 CPU 占用", cwd: null, sessionId: "gone-session-id", createdAt: "2026-10-15T08:00:00.000Z", useCount: 1, sessionTitle: null },
+          { id: 1, prompt: "fix README.md typo", cwd: "/Users/demo/my/other", sessionId: null, createdAt: "2026-10-14T03:00:00.000Z", useCount: 2, sessionTitle: null },
         ];
-        return entries.filter((e) => q === "" || e.prompt.toLowerCase().includes(q));
+        return entries.filter((e) => q === "" || e.prompt.toLowerCase().includes(q) || (e.cwd ?? "").toLowerCase().includes(q) || (e.sessionTitle ?? "").toLowerCase().includes(q));
       }
       case "omp_version":
         return { version: "18.11.1", path: "/Users/demo/.local/bin/omp" };
@@ -1401,7 +1561,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id)) throw err("INVALID_INPUT", "插件标识必须为 name@marketplace");
         const [name, marketplace] = id.split("@");
         if (!marketplaces.some((entry) => entry.name === marketplace)) throw err("OMP_FAILED", "marketplace 不存在");
-        if (!plugins.some((entry) => entry.id === id)) plugins.push({ ...metadata, id, name, marketplace, version: availableVersions.get(marketplace) ?? "1.0.0", enabled: true });
+        if (!plugins.some((entry) => entry.id === id)) plugins.push({ ...metadata, id, name, marketplace, version: availableVersions.get(marketplace) ?? "1.0.0", description: null, enabled: true });
         return streamedOutput(args, `✔ Installed ${id}\n`);
       }
       case "omp_plugin_uninstall":
@@ -1411,6 +1571,22 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (cmd === "omp_plugin_uninstall") plugins = plugins.filter((entry) => entry.id !== plugin.id);
         else plugin.enabled = args["enabled"] === true;
         return streamedOutput(args, `✔ ${cmd === "omp_plugin_uninstall" ? "Uninstalled" : plugin.enabled ? "Enabled" : "Disabled"} ${plugin.id}\n`);
+      }
+      case "omp_plugin_check_update": {
+        // 只读预检：判 availableVersions 与当前 version 差集，不改夹具。
+        const id = args["id"];
+        const targets = id == null ? plugins : plugins.filter((entry) => entry.id === id);
+        if (id != null && targets.length === 0) throw err("OMP_FAILED", "插件不存在");
+        const changes: PluginUpgradeChange[] = [];
+        for (const plugin of targets) {
+          const to = availableVersions.get(plugin.marketplace) ?? plugin.version;
+          if (to && plugin.version !== to) changes.push({ id: plugin.id, scope: "user", from: plugin.version, to });
+        }
+        const upToDate = changes.length === 0;
+        const output = upToDate
+          ? "[dry-run] All marketplace plugins are up to date\n"
+          : `[dry-run]\n${changes.map((change) => `  ${change.id} (user): ${change.from ?? "unknown"} -> ${change.to}`).join("\n")}\n`;
+        return { upToDate, changes, output };
       }
       case "omp_plugin_upgrade": {
         const id = args["id"];
@@ -1461,6 +1637,7 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "list_agent_details":
       case "get_model_config":
       case "update_model_config":
+      case "create_agent_definition":
         return model(cmd, args);
       case "list_model_presets":
       case "save_model_preset":
@@ -1469,6 +1646,7 @@ export async function installMockBackend(): Promise<MockHandle> {
         return presets(cmd, args);
       case "get_model_specs":
       case "update_model_spec":
+      case "create_model_spec":
         return specs(cmd, args);
       case "model_bench_run":
       case "model_bench_history":
@@ -1486,6 +1664,7 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "memory_delete_bank":
       case "memory_restore":
       case "memory_delete_backup":
+      case "memory_backup_all":
         return memory(cmd, args);
       case "get_tray_settings":
         return structuredClone(traySettings);
@@ -1503,6 +1682,32 @@ export async function installMockBackend(): Promise<MockHandle> {
       }
       case "get_tray_preview":
         return mockTrayPreview(sessions, traySettings);
+      case "tray_focus_session": {
+        const sessionId = args["sessionId"];
+        if (typeof sessionId !== "string" || sessionId.length === 0) {
+          throw err("INVALID_INPUT", "sessionId 必须为非空字符串");
+        }
+        if (!sessions.some((s) => s.summary.id === sessionId && s.summary.inUse)) {
+          throw err("IO", "找不到该会话的终端");
+        }
+        return undefined;
+      }
+      case "tray_resume_recent": {
+        const sessionId = args["sessionId"];
+        if (typeof sessionId !== "string" || sessionId.length === 0) {
+          throw err("INVALID_INPUT", "sessionId 必须为非空字符串");
+        }
+        if (!sessions.some((s) => s.summary.id === sessionId)) {
+          throw err("IO", "找不到该会话的路径");
+        }
+        return undefined;
+      }
+      case "open_main_window":
+        return undefined;
+      case "quit_app":
+        return undefined;
+      case "get_build_info":
+        return { os: "macos", arch: "aarch64" };
       case "get_app_paths":
         return {
           sessionsDir: "/Users/demo/.omp/agent/sessions",

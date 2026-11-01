@@ -105,7 +105,7 @@ export function formatTps(value: number | null): string {
 
 export function formatMs(value: number | null): string {
   if (value === null) return "—";
-  return value < 1000 ? `${Math.round(value)}ms` : `${(value / 1000).toFixed(1)}s`;
+  return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
 }
 
 /** USD 人话：≥$0.01 两位小数，更小显示 4 位（bench 单轮常不足 1 分钱）。 */

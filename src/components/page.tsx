@@ -3,8 +3,11 @@
  * 各页面用 PageHeader 取代手写的 header.detail-head + 返回按钮。
  */
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import { Search } from "lucide-react";
 import type { AppError } from "../types";
 import { errorText } from "../format";
+import { Ico } from "./ui";
 import "./Page.css";
 
 interface PageHeaderProps {
@@ -77,20 +80,29 @@ interface SearchInputProps {
   value: string;
   onChange: (v: string) => void;
   autoFocus?: boolean;
+  /** 左侧搜索图标版本（设计稿 .search-box）。默认裸 input（命令面板等用）。 */
+  icon?: boolean;
 }
 
-/** 搜索框：全应用同一形态（input[type=search].filter-input）。 */
-export function SearchInput({ label, placeholder, value, onChange, autoFocus = false }: SearchInputProps) {
-  return (
+/** 搜索框：全应用同一形态（input[type=search].filter-input），可选图标版。 */
+export function SearchInput({ label, placeholder, value, onChange, autoFocus = false, icon = false }: SearchInputProps) {
+  const input = (
     <input
       type="search"
-      className="filter-input"
+      className={icon ? undefined : "filter-input"}
       aria-label={label}
       placeholder={placeholder}
       value={value}
       autoFocus={autoFocus}
       onChange={(e) => onChange(e.target.value)}
     />
+  );
+  if (!icon) return input;
+  return (
+    <span className="search-box">
+      <Ico icon={Search} size={14} />
+      {input}
+    </span>
   );
 }
 
@@ -139,5 +151,74 @@ export function Switch({ label, description, checked, disabled = false, onChange
         onClick={() => onChange(!checked)}
       />
     </div>
+  );
+}
+
+interface PanelProps {
+  title: ReactNode;
+  icon?: LucideIcon;
+  /** 右侧 meta（11px，设计稿 .panel-meta）。 */
+  meta?: ReactNode;
+  /** 右侧动作组（与 meta 同行，meta 之后）。 */
+  actions?: ReactNode;
+  foot?: ReactNode;
+  /** body 形态：默认 padding 16；flush 无 padding；tight 10px。 */
+  body?: "default" | "flush" | "tight";
+  className?: string;
+  children: ReactNode;
+}
+
+/** 卡片面板：head（底边框 + 12.5px 标题 + 右侧 meta）/ body / foot。 */
+export function Panel({ title, icon: Icon, meta, actions, foot, body = "default", className, children }: PanelProps) {
+  const hasHead = title !== null && title !== undefined && title !== "";
+  return (
+    <section className={className ? `panel ${className}` : "panel"}>
+      {hasHead || meta !== undefined || actions !== undefined ? (
+        <div className="panel-head">
+          <div className="panel-title">
+            {Icon !== undefined ? <Ico icon={Icon} size={14} /> : null}
+            {title}
+          </div>
+          {meta !== undefined || actions !== undefined ? (
+            <div className="panel-meta">
+              {meta}
+              {actions}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div className={body === "default" ? "panel-body" : `panel-body ${body}`}>{children}</div>
+      {foot !== undefined ? <div className="panel-foot">{foot}</div> : null}
+    </section>
+  );
+}
+
+interface KpiProps {
+  label: ReactNode;
+  value: ReactNode;
+  foot?: ReactNode;
+  className?: string;
+}
+
+/** KPI 卡：label 11px / value 26px / foot 11px（设计稿 .kpi，用 .grid-4/.kpi-grid 排）。 */
+export function Kpi({ label, value, foot, className }: KpiProps) {
+  return (
+    <div className={className ? `kpi ${className}` : "kpi"}>
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{value}</div>
+      {foot !== undefined ? <div className="kpi-foot">{foot}</div> : null}
+    </div>
+  );
+}
+
+type StatePillState = "running" | "idle" | "queued" | "done" | "failed" | "lost";
+
+/** 状态 pill：stage 状态词专用（running/idle/queued/done/failed/lost）。 */
+export function StatePill({ state, children }: { state: StatePillState; children: ReactNode }) {
+  return (
+    <span className={`state-pill ${state}`}>
+      <span className="dot" style={{ background: "currentColor" }} aria-hidden="true" />
+      {children}
+    </span>
   );
 }

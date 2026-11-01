@@ -1,6 +1,7 @@
 import type {
   ErrorKind,
   SessionUsage,
+  UsageActivityPoint,
   UsageHealth,
   UsageHealthTimelinePoint,
   UsageRange,
@@ -107,15 +108,22 @@ function dayActivity(i: number, sparse: boolean): number {
   return v;
 }
 
-/** 近 182 天（26 周）稠密日点：与真后端一致，所有范围共用，不受范围影响。 */
-export function mockActivity(): UsageTrendPoint[] {
+/** 近 364 天（52 周）稠密日点：与真后端一致，所有范围共用，不受范围影响。 */
+export function mockActivity(): UsageActivityPoint[] {
   const now = new Date();
-  const points: UsageTrendPoint[] = [];
-  for (let i = 181; i >= 0; i -= 1) {
+  const points: UsageActivityPoint[] = [];
+  for (let i = 363; i >= 0; i -= 1) {
     const d = new Date(now.getTime() - i * 86400000);
-    const idx = 181 - i;
+    const idx = 363 - i;
     const cost = weight(idx, 17) < 0.3 ? 0 : Math.round(dayActivity(idx, false) * 4 * 10000 + Number.EPSILON) / 10000;
-    points.push({ key: dayKey(d), cost, tokens: tokensForCost(cost) });
+    const requests = cost === 0 ? 0 : Math.max(1, Math.round(cost * 24 * (0.5 + weight(idx, 19))));
+    points.push({
+      key: dayKey(d),
+      cost,
+      tokens: tokensForCost(cost),
+      requests,
+      topProject: cost === 0 ? null : weight(idx, 23) < 0.68 ? "/Users/demo/my/omp-resume" : "/Users/demo/my/api-service",
+    });
   }
   return points;
 }
@@ -196,6 +204,8 @@ export function mockUsageStats(range: UsageRange): UsageStats {
     const cost = Math.round(totalCost * share * 10000) / 10000;
     return { id: `mock-s${n}`, path: `/mock/s${n}.jsonl`, cwd: cwds[n % cwds.length], cost, tokens: tokensForCost(cost).total, calls: 20 + n * 7, lastMs: Date.now() - n * 3600000 };
   });
+  const requests = byModel.reduce((a, m) => a + m.messages, 0);
+  const hourly = splitTotal(requests, Array.from({ length: 24 }, (_, h) => hourActivity(h, 29)));
   return {
     total,
     byProject: [
@@ -205,9 +215,16 @@ export function mockUsageStats(range: UsageRange): UsageStats {
     byModel,
     trend: { unit: window.unit, points },
     sessions: 8,
-    timing: { waitMs: Math.round(totalCost * 60000), genMs: Math.round(totalCost * 90000), toolMs: Math.round(totalCost * 50000), toolCalls: Math.round(totalCost * 12), calls: Math.round(totalCost * 9), tps: 142.6 },
+    timing: { waitMs: Math.round(totalCost * 60000), genMs: Math.round(totalCost * 90000), toolMs: Math.round(totalCost * 50000), toolCalls: Math.round(totalCost * 12), calls: Math.round(totalCost * 9), tps: 142.6, maxDurationMs: 972000 },
     topSessions,
     activity: mockActivity(),
+    requests,
+    hourly,
+    prev: range === "all" ? null : {
+      cost: Math.round(totalCost * 0.88 * 10000) / 10000,
+      tokens: Math.round(totalTokens.total * 0.88),
+      requests: Math.round(requests * 0.88),
+    },
   };
 }
 
@@ -224,9 +241,12 @@ export function mockEmptyUsageStats(range: UsageRange): UsageStats {
       points: range === "all" ? [] : window.keys.map((key) => ({ key, cost: 0, tokens: zeroTokens() })),
     },
     sessions: 0,
-    timing: { waitMs: 0, genMs: 0, toolMs: 0, toolCalls: 0, calls: 0, tps: null },
+    timing: { waitMs: 0, genMs: 0, toolMs: 0, toolCalls: 0, calls: 0, tps: null, maxDurationMs: null },
     topSessions: [],
-    activity: Array.from({ length: 182 }, (_, idx) => ({ key: dayKey(new Date(now.getTime() - (181 - idx) * 86400000)), cost: 0, tokens: zeroTokens() })),
+    activity: Array.from({ length: 364 }, (_, idx) => ({ key: dayKey(new Date(now.getTime() - (363 - idx) * 86400000)), cost: 0, tokens: zeroTokens(), requests: 0, topProject: null })),
+    requests: 0,
+    hourly: Array.from({ length: 24 }, () => 0),
+    prev: range === "all" ? null : { cost: 0, tokens: 0, requests: 0 },
   };
 }
 
@@ -296,6 +316,7 @@ export function mockUsageHealth(range: UsageRange): UsageHealth {
       model: m.model,
       kind,
       message: KIND_MESSAGE[kind],
+      retry: i % 4 === 3 ? null : i % 2 === 0 ? "已重试恢复" : `重试 ${2 + (i % 3)} 次后恢复`,
     };
   });
 
@@ -331,6 +352,7 @@ export function mockUsageHealth(range: UsageRange): UsageHealth {
       ],
     },
     timeline: { unit: window.unit, points },
+    latencyMs: { p50: 1900, p95: 6400 },
   };
 }
 
@@ -345,5 +367,6 @@ export function mockEmptyUsageHealth(range: UsageRange): UsageHealth {
       unit: window.unit,
       points: range === "all" ? [] : window.keys.map((key) => ({ key, requests: 0, errors: 0, fallbacks: 0, cacheRead: 0, promptTokens: 0 })),
     },
+    latencyMs: null,
   };
 }

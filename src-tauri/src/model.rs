@@ -155,6 +155,11 @@ pub struct SessionSummary {
     pub bad_lines: u64,
     /// active 路径上最早 user 消息（截断至 200 字）；无则为 null。
     pub first_user_message: Option<String>,
+    /// 主模型：active leaf 向上最近 assistant 条目的裸模型名；无则为 null。
+    pub model: Option<String>,
+    /// 主会话 token：全文件 assistant `usage.totalTokens` 求和（仅顶层文件，
+    /// 不含子代理、不做 fork 去重，与 `SessionUsage` 口径不同）；无 usage 行 → null。
+    pub tokens: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +185,8 @@ pub struct Conversation {
     /// 实际使用的目标节点（请求 nodeId 或 leaf）。
     pub target_id: String,
     pub items: Vec<ConversationItem>,
+    /// 分支点：active 路径上第一个有兄弟的节点 id；无分支 → null。
+    pub branch_point_id: Option<String>,
 }
 
 /// 会话条目（判别联合，以 `kind` 区分）。
@@ -193,11 +200,16 @@ pub enum ConversationItem {
     Compaction(CompactionItem),
     BranchSummary(BranchSummaryItem),
     Other(OtherItem),
+    Usage(UsageItem),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     /// text 块拼接（`\n` 连接，image 块记为 `[图片]`）。
     pub text: String,
 }
@@ -205,6 +217,10 @@ pub struct UserItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub blocks: Vec<AssistantBlock>,
 }
 
@@ -222,23 +238,38 @@ pub enum AssistantBlock {
         id: String,
         name: String,
         args: serde_json::Value,
+        /// 同文件无对应 toolResult → true（调用尚在运行中）。
+        pending: bool,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolResultItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub tool_call_id: String,
     pub tool_name: String,
     pub is_error: bool,
     /// text 块拼接（image 块记为 `[图片]`），超 `MAX_TEXT_BYTES` 截断。
     pub text: String,
     pub truncated: bool,
+    /// 工具耗时毫秒：包络 timestamp − 配对 `tool_execution_start.startedAt`；
+    /// 无配对/不可解析/负值 → null。
+    pub duration_ms: Option<i64>,
+    /// `details.diff` 原文（仅部分工具有）；超 `OTHER_TEXT_CHARS` 截断加 `…`。
+    pub diff: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BashExecutionItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub command: String,
     /// stdout/output，超 `MAX_TEXT_BYTES` 截断。
     pub text: String,
@@ -250,12 +281,20 @@ pub struct BashExecutionItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactionItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchSummaryItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub summary: String,
 }
 
@@ -263,8 +302,31 @@ pub struct BranchSummaryItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OtherItem {
+    /// 保留条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
     pub role: String,
     pub text: String,
+}
+/// 后台用量记录（`model_usage` 行）：不进树，按文件顺序插入对话流。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageItem {
+    /// `model_usage` 条目 id。
+    pub id: String,
+    /// 包络 timestamp（ISO-8601 字符串）；缺失/非字符串 → null。
+    pub timestamp: Option<String>,
+    /// 上游用途（job-widget / memory / cache-warm …）；缺省空串。
+    pub purpose: String,
+    pub provider: String,
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    /// `usage.cost.total`；缺省 0。
+    pub cost: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +381,15 @@ pub struct TreeNode {
     pub label: Option<String>,
     pub is_compaction: bool,
     pub is_branch_summary: bool,
+    /// assistant 节点自身的裸模型名；其余/缺失 → null。
+    pub model: Option<String>,
+    /// 根 → 本节点的 assistant `usage.totalTokens` 累计（不含其他分支，
+    /// 与 `SessionSummary.tokens` 全文件口径不同）；链上无 usage → null。
+    pub tokens: Option<u64>,
+    /// 失败语义：toolResult.isError ‖ bash 非零/取消 ‖ assistant stopReason=error。
+    pub is_error: bool,
+    /// toolResult 节点的工具名；其余 → null。
+    pub tool_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +515,8 @@ pub struct McpFileInfo {
     pub exists: bool,
     pub read_error: Option<String>,
     pub revision: String,
+    /// 文件 mtime（ISO 8601 UTC，None = 不存在/不可读/取不到）。
+    pub modified_at: Option<String>,
     pub disabled_servers: Vec<String>,
     pub enabled_servers: Vec<String>,
 }
@@ -548,6 +621,25 @@ pub struct McpSetEnabledRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpHandshakeRequest {
+    pub scope: McpScope,
+    pub project: Option<String>,
+    pub name: String,
+}
+
+/// 握手结果：ok 时 tools 为工具数（sse 只验连通则为 None）；失败时 ok=false + error 中文原因（已脱敏）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpHandshakeResult {
+    pub ok: bool,
+    pub tools: Option<u32>,
+    /// 握手耗时毫秒。
+    pub ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpDeleteServerRequest {
     pub scope: McpScope,
     pub project: Option<String>,
@@ -569,6 +661,8 @@ pub struct PluginSummary {
     pub name: String,
     pub marketplace: String,
     pub version: Option<String>,
+    /// `plugin list --json` 条目描述（entry/item 两级 best-effort 透传，无则 None）。
+    pub description: Option<String>,
     pub enabled: bool,
     pub installed_at: Option<String>,
     pub last_updated: Option<String>,
@@ -623,6 +717,16 @@ pub struct PluginUpgradeResult {
     pub changes: Vec<PluginUpgradeChange>,
 }
 
+/// 只读预检结果（§4.71）：`upToDate` 判 `/up to date/i`；`changes` 尽力解析，
+/// 干跑输出形状未经实测时以 `output` 原文为准。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCheckResult {
+    pub up_to_date: bool,
+    pub changes: Vec<PluginUpgradeChange>,
+    pub output: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSummary {
@@ -656,6 +760,8 @@ pub struct PromptHistoryEntry {
     /// ISO-8601 UTC 毫秒（由 history 的秒级 epoch 转换）。
     pub created_at: String,
     pub use_count: i64,
+    /// 会话标题（history.db session_titles 表 LEFT JOIN；缺表/缺行时为 null，前端降级 session 短码）。
+    pub session_title: Option<String>,
 }
 // 会话别名 / 标签 / 备注（应用侧 meta.json，不碰会话文件）
 // ---------------------------------------------------------------------------
@@ -838,6 +944,14 @@ pub struct UpdateModelConfigResult {
     pub value: serde_json::Value,
 }
 
+/// `create_agent_definition` 返回：新建的用户 agent 名与写入路径（绝对路径）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAgentDefinitionResult {
+    pub name: String,
+    pub path: String,
+}
+
 // ---------------------------------------------------------------------------
 // 模型模式（omp `modelPresets`）
 // ---------------------------------------------------------------------------
@@ -941,7 +1055,7 @@ pub struct StageActor {
     /// 触发该子代理的父会话 toolCall intent（≤60 字符，已脱敏）。
     pub brief: Option<String>,
     pub state: StageActorState,
-    /// 人话状态（「等待输入」/「疑似卡住」/「待命」/退出原因）。
+    /// 人话状态（「等待输入」/「可能卡住」/「待命」/退出原因）。
     pub status_text: Option<String>,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
@@ -952,6 +1066,9 @@ pub struct StageActor {
     pub context_tokens: u64,
     /// Σ assistant `usage.cost.total`。
     pub cost: f64,
+    /// 状态判定依据（CONTRACT §23.3）：分支标签如 "lifecycle:turn-started" /
+    /// "session_exit:normal" / "parent gone, clean tail"，None 表运行中默认分支。
+    pub provenance: Option<String>,
     pub tool_calls: u64,
     pub current: Option<StageActivity>,
     /// 旧→新，≤30 条。
@@ -1007,11 +1124,15 @@ mod tests {
     #[test]
     fn conversation_item_tagged_by_kind() {
         let item = ConversationItem::ToolResult(ToolResultItem {
+            id: "e32d3fa5".into(),
+            timestamp: Some("2026-10-26T08:11:51.128Z".into()),
             tool_call_id: "call_1".into(),
             tool_name: "read".into(),
             is_error: false,
             text: "ok".into(),
             truncated: false,
+            duration_ms: Some(7),
+            diff: None,
         });
         let v = serde_json::to_value(&item).unwrap();
         assert_eq!(v["kind"], "toolResult");
@@ -1373,11 +1494,34 @@ pub struct UsageTrendPoint {
     pub tokens: UsageTokens,
 }
 
+/// 热力图日点（仅 `UsageStats.activity` 用；`trend.points` 仍用 `UsageTrendPoint`）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageActivityPoint {
+    pub key: String,
+    pub cost: f64,
+    pub tokens: UsageTokens,
+    /// 当日请求数（assistant 条目 + model_usage，含 error/aborted）。
+    pub requests: u64,
+    /// 当日花费最高的顶层 owner header.cwd；零成本日为 null。
+    pub top_project: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageTrend {
     pub unit: TrendUnit,
     pub points: Vec<UsageTrendPoint>,
+}
+
+/// 等长上一窗口对比（CONTRACT §12.1）：today→昨天、24h→前 24h、7d/30d→前 7/30 天；
+/// `all` 无上一周期为 null。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsagePrevWindow {
+    pub cost: f64,
+    pub tokens: u64,
+    pub requests: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1390,7 +1534,13 @@ pub struct UsageStats {
     pub sessions: u64,
     pub timing: UsageTiming,
     pub top_sessions: Vec<UsageSession>,
-    pub activity: Vec<UsageTrendPoint>,
+    pub activity: Vec<UsageActivityPoint>,
+    /// 范围内请求数（assistant 条目 + model_usage，与 health.requests 同口径）。
+    pub requests: u64,
+    /// 本地时区 24 小时请求分布（跟随 range），下标为小时。
+    pub hourly: [u64; 24],
+    /// 等长上一窗口（同一次扫描累加）；`all` 时为 null。
+    pub prev: Option<UsagePrevWindow>,
 }
 
 /// 仅主对话：子代理与主对话并行，累加会超过挂钟时间。
@@ -1403,6 +1553,8 @@ pub struct UsageTiming {
     pub tool_calls: u64,
     pub calls: u64,
     pub tps: Option<f64>,
+    /// 范围内最长单次（仅主对话、有自报 duration 的 assistant 样本最大值；无样本为 null）。
+    pub max_duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1447,6 +1599,9 @@ pub struct ErrorRecent {
     pub model: String,
     pub kind: ErrorKind,
     pub message: String,
+    /// 重试处置（CONTRACT §12.3）：recovered→「已重试恢复」/「重试 N 次后恢复」；
+    /// superseded→「被新请求取代」；无 retryRecovery 时为 null。
+    pub retry: Option<String>,
 }
 
 /// 错误统计：total 只计 stopReason=="error"；aborted（用户中断）单独计，不含在内。
@@ -1538,6 +1693,16 @@ pub struct UsageHealth {
     pub fallbacks: UsageFallbacks,
     pub cache: UsageCacheStats,
     pub timeline: UsageTimeline,
+    /// 范围内延迟分位（有自报 duration 的 assistant 样本，含 error/aborted；无样本 null）。
+    pub latency_ms: Option<UsageLatency>,
+}
+
+/// 延迟分位（毫秒）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageLatency {
+    pub p50: u64,
+    pub p95: u64,
 }
 // ---------------------------------------------------------------------------
 // 记忆库（CONTRACT §18：浏览 + 写操作）
@@ -1721,13 +1886,15 @@ pub struct MemoryGraph {
 // 记忆库写操作（CONTRACT §18.8）
 // ---------------------------------------------------------------------------
 
-/// 备份种类（JSON：`"before-delete"` | `"before-restore"` | `"bank-removed"`）。
+/// 备份种类（JSON：`"before-delete"` | `"before-restore"` | `"bank-removed"` | `"manual"`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MemoryBackupKind {
     BeforeDelete,
     BeforeRestore,
     BankRemoved,
+    /// 用户手动「立即备份」（§4.74）：独立分组保留，不挤占删除前快照。
+    Manual,
 }
 
 /// 单个备份条目（`id` 为 `{bank}@{dirname}` 不透明 token，见 §18.8.2）。
@@ -1827,6 +1994,23 @@ pub struct MemoryRestoreResult {
     pub restored_from: MemoryBackup,
     pub safety_backup: Option<MemoryBackup>,
 }
+
+/// `memory_backup_all` 单库失败项（中文非敏感原因，不含记忆正文）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBackupAllError {
+    pub bank: String,
+    pub reason: String,
+}
+
+/// `memory_backup_all` 返回：逐库独立成败（见 CONTRACT §18.8.9）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryBackupAllResult {
+    pub backups: Vec<MemoryBackup>,
+    pub errors: Vec<MemoryBackupAllError>,
+}
+
 // ---------------------------------------------------------------------------
 // model_bench (CONTRACT §20)
 // ---------------------------------------------------------------------------
@@ -1950,19 +2134,20 @@ pub struct ModelSpecUpdateResult {
 }
 
 // ---------------------------------------------------------------------------
-// 菜单栏设置（CONTRACT §17.10）：托盘菜单的只读预览 + 设置读写。
+// 菜单栏（CONTRACT §17.10–17.11）：面板/设置页的只读预览 + 设置读写。
 // ---------------------------------------------------------------------------
 
-/// 菜单栏页预览（由托盘缓存模型映射，前端不重算文案）。
+/// 面板/菜单栏页预览（由托盘缓存模型 + 行快照 join 映射；头部计数/分组前端派生）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrayPreview {
     /// 首轮检测是否已完成（false 时 rows 为空，前端显示提示）。
     pub ready: bool,
-    pub header: String,
     pub tray_title: Option<String>,
-    /// 仅 `show_cost` 为真时有值。
-    pub cost_text: Option<String>,
+    /// 今日花费裸值（美元；仅 `show_cost` 为真且已统计时有值，前端格式化）。
+    pub cost_usd: Option<f64>,
+    /// 今日请求数（assistant 条目 + model_usage；与 `cost_usd` 同门控）。
+    pub request_count: Option<u64>,
     pub rows: Vec<TrayPreviewRow>,
     pub overflow: Vec<TrayPreviewRow>,
     pub recent: Vec<TrayPreviewEntry>,
@@ -1972,16 +2157,22 @@ pub struct TrayPreview {
     pub badge_samples: Vec<TrayBadgeSample>,
 }
 
-/// 预览里的会话行。
+/// 预览里的会话行（裸值，前端格式化；`title/project` 来自 `last_rows` join）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrayPreviewRow {
     pub session_id: String,
     /// `SessionStatus::key()`：working/waiting/idle/stuck。
     pub status: String,
-    /// 完整行文本（与原生菜单一致）。
-    pub text: String,
+    pub title: String,
+    /// 项目名（cwd 末个非空段；未知时 None）。
+    pub project: Option<String>,
+    pub subagents: u32,
+    /// 距最后活动秒数（前端格式化为 刚刚/X 分钟/X 小时/X 天）。
+    pub elapsed_secs: i64,
     pub enabled: bool,
+    /// 不可聚焦的原因（`enabled == false` 时展示，如“仅 iTerm 可聚焦”）。
+    pub disabled_reason: Option<String>,
 }
 
 /// 预览里的最近会话 / 项目条目（key 为会话 id 或 cwd）。
@@ -2007,6 +2198,16 @@ pub struct TrayPreviewMode {
 pub struct TrayBadgeSample {
     pub state: String,
     pub title: Option<String>,
+}
+
+/// 构建信息（`get_build_info` 返回；前端拼 `macOS arm64 · Tauri 2` 类文案）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildInfo {
+    /// `std::env::consts::OS`（如 `macos`）。
+    pub os: String,
+    /// `std::env::consts::ARCH`（如 `aarch64`）。
+    pub arch: String,
 }
 
 /// 应用关键路径（CONTRACT §4.68，只读展示）。

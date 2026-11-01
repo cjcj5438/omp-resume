@@ -7,6 +7,8 @@ import type { SessionSummary } from "../types";
 
 interface ModalProps {
   title: string;
+  /** 副标题（设计稿 dlg-sub：11.5px muted，标题下方 6px 间距）。 */
+  sub?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer: ReactNode;
@@ -22,20 +24,22 @@ interface DialogFrameProps {
   className: string;
   onClose: () => void;
   children: ReactNode;
+  /** 遮罩额外类名（如命令面板的 palette-overlay 定位变体）。 */
+  overlayClass?: string;
 }
 
 /**
  * 对话框框架：遮罩（点击关闭）+ 焦点管理（[data-autofocus] 优先）+ 焦点陷阱 + Esc 关闭。
  * 遮罩类名固定为 `modal-overlay`：App 的 Esc 返回守卫靠它判断是否有对话框打开。
  */
-export function DialogFrame({ label, className, onClose, children }: DialogFrameProps) {
+export function DialogFrame({ label, className, onClose, children, overlayClass }: DialogFrameProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const auto = boxRef.current?.querySelector<HTMLElement>("[data-autofocus]");
     (auto ?? boxRef.current)?.focus();
   }, []);
   return (
-    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className={overlayClass ? `modal-overlay ${overlayClass}` : "modal-overlay"} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         className={className}
         role="dialog"
@@ -69,10 +73,11 @@ export function DialogFrame({ label, className, onClose, children }: DialogFrame
   );
 }
 
-export function Modal({ title, onClose, children, footer, wide = false }: ModalProps) {
+export function Modal({ title, sub, onClose, children, footer, wide = false }: ModalProps) {
   return (
     <DialogFrame label={title} className={wide ? "modal modal-wide" : "modal"} onClose={onClose}>
       <h2 className="modal-title">{title}</h2>
+      {sub !== undefined ? <p className="modal-sub">{sub}</p> : null}
       <div className="modal-body">{children}</div>
       <div className="modal-footer">{footer}</div>
     </DialogFrame>
@@ -108,7 +113,7 @@ export function Disclosure({
 }
 
 interface BadgeProps {
-  tone: "accent" | "grey" | "fork" | "branch" | "danger";
+  tone: "accent" | "grey" | "fork" | "branch" | "danger" | "ok" | "warn" | "info" | "quiet" | "tag" | "label" | "leaf";
   title?: string;
   children: ReactNode;
 }

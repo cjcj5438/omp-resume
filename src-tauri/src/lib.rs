@@ -174,10 +174,26 @@ async fn open_in_iterm(
     blocking(move || ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab)).await
 }
 
-/// 在 iTerm 新开 omp 会话（`cd '<cwd>' && omp`，无参数、不带 prompt）。
+/// 聚焦占用会话的 iTerm 标签（在用恢复确认框用；只 activate+select）。
 #[tauri::command]
-async fn new_session_in_iterm(cwd: String) -> Result<(), model::AppError> {
-    blocking(move || ops::commands::new_session_in_iterm_impl(&cwd, &ops::iterm::open_tab)).await
+async fn focus_iterm_tab(
+    cfg: tauri::State<'_, config::Config>,
+    path: String,
+) -> Result<(), model::AppError> {
+    let cfg = cfg.inner().clone();
+    blocking(move || {
+        ops::commands::focus_iterm_tab_impl(&cfg, &path, &menubar::iterm::SystemRunner)
+    })
+    .await
+}
+
+/// 在 iTerm 新开 omp 会话（`cd '<cwd>' && omp [--model '<model>']`，不带 prompt）。
+#[tauri::command]
+async fn new_session_in_iterm(cwd: String, model: Option<String>) -> Result<(), model::AppError> {
+    blocking(move || {
+        ops::commands::new_session_in_iterm_impl(&cwd, model.as_deref(), &ops::iterm::open_tab)
+    })
+    .await
 }
 
 /// 写系统剪贴板（WebView 的 `navigator.clipboard` 在菜单动作丢失用户激活后会拒绝，
@@ -236,6 +252,12 @@ async fn reveal_session_file(
         ops::commands::reveal_session_file_impl(&cfg, &path, &menubar::iterm::SystemRunner)
     })
     .await
+}
+
+/// 通用「在 Finder 中显示文件」（§4.72）。
+#[tauri::command]
+async fn reveal_file(path: String) -> Result<(), model::AppError> {
+    blocking(move || ops::commands::reveal_file_impl(&path, &menubar::iterm::SystemRunner)).await
 }
 
 /// 在 Finder 中打开项目目录。
@@ -372,7 +394,25 @@ pub fn run() {
         })
         .on_menu_event(menubar::tray::handle_menu_event)
         .on_window_event(|window, event| {
+            // 面板窗口：关闭请求只隐藏；失焦隐藏并记时间戳（toggle 守卫用）。
+            if window.label() == menubar::panel::PANEL_LABEL {
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                    tauri::WindowEvent::Focused(false) => {
+                        let _ = window.hide();
+                        menubar::panel::note_blur_hide(window.app_handle());
+                    }
+                    _ => {}
+                }
+                return;
+            }
             // 关闭主窗口 = 隐藏并驻留菜单栏；真退出（菜单“退出”/⌘Q/关机）不拦截。
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let quitting = window
                     .app_handle()
@@ -399,9 +439,11 @@ pub fn run() {
             list_cleanup_candidates,
             append_branch_marker,
             open_in_iterm,
+            focus_iterm_tab,
             copy_text,
             resume_command_for,
             reveal_session_file,
+            reveal_file,
             open_project_dir,
             new_session_in_iterm,
             choose_directory,
@@ -415,6 +457,7 @@ pub fn run() {
             mcp_config::mcp_save_server,
             mcp_config::mcp_set_enabled,
             mcp_config::mcp_delete_server,
+            mcp_config::mcp_handshake,
             meta::get_meta,
             meta::set_session_meta,
             omp_plugins::omp_plugins_list,
@@ -423,6 +466,7 @@ pub fn run() {
             omp_plugins::omp_plugin_uninstall,
             omp_plugins::omp_plugin_set_enabled,
             omp_plugins::omp_plugin_upgrade,
+            omp_plugins::omp_plugin_check_update,
             omp_plugins::omp_marketplace_update,
             omp_plugins::omp_marketplace_add,
             omp_plugins::omp_marketplace_remove,
@@ -432,6 +476,7 @@ pub fn run() {
             omp_models::get_model_config,
             omp_models::list_agent_details,
             omp_models::update_model_config,
+            omp_models::create_agent_definition,
             model_presets::list_model_presets,
             model_presets::save_model_preset,
             model_presets::switch_model_preset,
@@ -442,6 +487,7 @@ pub fn run() {
             model_bench::model_perf_list,
             model_specs::get_model_specs,
             model_specs::update_model_spec,
+            model_specs::create_model_spec,
             memory::memory_overview,
             memory::memory_list,
             memory::memory_detail,
@@ -453,9 +499,15 @@ pub fn run() {
             memory::memory_delete_bank,
             memory::memory_restore,
             memory::memory_delete_backup,
+            memory::memory_backup_all,
             menubar::tray::get_tray_settings,
             menubar::tray::set_tray_settings,
             menubar::tray::get_tray_preview,
+            menubar::tray::tray_focus_session,
+            menubar::tray::tray_resume_recent,
+            menubar::tray::open_main_window,
+            menubar::tray::quit_app,
+            menubar::tray::get_build_info,
             get_app_paths
         ])
         .build(tauri::generate_context!())

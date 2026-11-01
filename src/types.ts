@@ -71,6 +71,8 @@ export interface SessionSummary {
   version: number | null;
   badLines: number;
   firstUserMessage: string | null;
+  model: string | null;
+  tokens: number | null;
 }
 
 export interface GetConversationRequest {
@@ -83,35 +85,55 @@ export interface Conversation {
   leafId: string | null;
   targetId: string;
   items: ConversationItem[];
+  branchPointId: string | null;
 }
 
 export type ConversationItem =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; blocks: AssistantBlock[] }
+  | { kind: "user"; id: string; timestamp: string | null; text: string }
+  | { kind: "assistant"; id: string; timestamp: string | null; blocks: AssistantBlock[] }
   | {
       kind: "toolResult";
+      id: string;
+      timestamp: string | null;
       toolCallId: string;
       toolName: string;
       isError: boolean;
       text: string;
       truncated: boolean;
+      durationMs: number | null;
+      diff: string | null;
     }
   | {
       kind: "bashExecution";
+      id: string;
+      timestamp: string | null;
       command: string;
       text: string;
       truncated: boolean;
       exitCode: number | null;
       cancelled: boolean;
     }
-  | { kind: "compaction"; summary: string }
-  | { kind: "branchSummary"; summary: string }
-  | { kind: "other"; role: string; text: string };
+  | { kind: "compaction"; id: string; timestamp: string | null; summary: string }
+  | { kind: "branchSummary"; id: string; timestamp: string | null; summary: string }
+  | { kind: "other"; id: string; timestamp: string | null; role: string; text: string }
+  | {
+      kind: "usage";
+      id: string;
+      timestamp: string | null;
+      purpose: string;
+      provider: string;
+      model: string;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      cost: number;
+    };
 
 export type AssistantBlock =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
-  | { kind: "toolCall"; id: string; name: string; args: unknown };
+  | { kind: "toolCall"; id: string; name: string; args: unknown; pending: boolean };
 
 export interface GetTreeRequest {
   path: string;
@@ -138,6 +160,10 @@ export interface TreeNode {
   label: string | null;
   isCompaction: boolean;
   isBranchSummary: boolean;
+  model: string | null;
+  tokens: number | null;
+  isError: boolean;
+  toolName: string | null;
 }
 
 export interface CheckSessionRequest {
@@ -200,6 +226,8 @@ export interface PromptHistoryEntry {
   /** ISO-8601 UTC 毫秒。 */
   createdAt: string;
   useCount: number;
+  /** 会话标题（session_titles 表 LEFT JOIN；缺表/缺行时为 null，前端降级 session 短码）。 */
+  sessionTitle: string | null;
 }
 
 export interface OmpVersion {
@@ -233,6 +261,8 @@ export interface McpFileInfo {
   readError: string | null;
   /** 不存在："absent"；bytes 不可读："unreadable"（禁止变更）；否则原始 bytes 的 hex SHA-256，解析失败仍用真实 hash。 */
   revision: string;
+  /** 文件 mtime（ISO 8601 UTC；不存在/不可读时为 null）。 */
+  modifiedAt: string | null;
   disabledServers: string[];
   enabledServers: string[];
 }
@@ -301,6 +331,21 @@ export interface McpDeleteServerRequest {
   expectedRevision: string;
 }
 
+export interface McpHandshakeRequest {
+  scope: McpScope;
+  project?: string | null;
+  name: string;
+}
+
+/** 握手结果：ok 时 tools 为工具数（sse 只验连通则为 null）；失败时 ok=false + error 中文原因（已脱敏）。 */
+export interface McpHandshakeResult {
+  ok: boolean;
+  tools: number | null;
+  /** 握手耗时毫秒。 */
+  ms: number;
+  error: string | null;
+}
+
 export interface OmpOpResult {
   output: string;
 }
@@ -310,6 +355,8 @@ export interface PluginSummary {
   name: string;
   marketplace: string;
   version: string | null;
+  /** `plugin list --json` 条目描述（entry/item 两级 best-effort 透传，无则 null）。 */
+  description: string | null;
   enabled: boolean;
   installedAt: string | null;
   lastUpdated: string | null;
@@ -349,6 +396,13 @@ export interface PluginUpgradeChange {
 export interface PluginUpgradeResult {
   output: string;
   changes: PluginUpgradeChange[];
+}
+
+/** 只读预检结果（§4.71）：干跑输出形状未经实测时以 output 原文为准。 */
+export interface PluginCheckResult {
+  upToDate: boolean;
+  changes: PluginUpgradeChange[];
+  output: string;
 }
 
 export interface SkillSummary {
@@ -410,9 +464,27 @@ export interface UsageTrendPoint {
   tokens: UsageTokens;
 }
 
+/** 热力图日点（仅 UsageStats.activity 用；trend.points 仍用 UsageTrendPoint）。 */
+export interface UsageActivityPoint {
+  key: string;
+  cost: number;
+  tokens: UsageTokens;
+  /** 当日请求数（assistant 条目 + model_usage，含 error/aborted）。 */
+  requests: number;
+  /** 当日花费最高的顶层 owner header.cwd；零成本日为 null。 */
+  topProject: string | null;
+}
+
 export interface UsageTrend {
   unit: UsageTrendUnit;
   points: UsageTrendPoint[];
+}
+
+/** 等长上一窗口对比（CONTRACT §12.1）；all 时 UsageStats.prev 为 null。 */
+export interface UsagePrevWindow {
+  cost: number;
+  tokens: number;
+  requests: number;
 }
 
 export interface UsageTiming {
@@ -422,6 +494,8 @@ export interface UsageTiming {
   toolCalls: number;
   calls: number;
   tps: number | null;
+  /** 范围内最长单次（仅主对话、有自报 duration 的 assistant 样本最大值；无样本为 null）。 */
+  maxDurationMs: number | null;
 }
 
 export interface UsageSession {
@@ -442,7 +516,13 @@ export interface UsageStats {
   sessions: number;
   timing: UsageTiming;
   topSessions: UsageSession[];
-  activity: UsageTrendPoint[];
+  activity: UsageActivityPoint[];
+  /** 范围内请求数（assistant 条目 + model_usage，与 health.requests 同口径）。 */
+  requests: number;
+  /** 本地时区 24 小时请求分布（跟随 range），下标为小时。 */
+  hourly: number[];
+  /** 等长上一窗口（同一次扫描累加）；all 时为 null。 */
+  prev: UsagePrevWindow | null;
 }
 
 /** 运行看板错误类型。 */
@@ -454,6 +534,8 @@ export interface UsageHealthError {
   model: string;
   kind: ErrorKind;
   message: string;
+  /** 重试处置（CONTRACT §12.3）；无 retryRecovery 时为 null。 */
+  retry: string | null;
 }
 
 export interface UsageHealthFallback {
@@ -495,6 +577,8 @@ export interface UsageHealth {
     byModel: { provider: string; model: string; requests: number; hitRate: number | null }[];
   };
   timeline: { unit: UsageTrendUnit; points: UsageHealthTimelinePoint[] };
+  /** 范围内延迟分位（毫秒；无样本为 null）。 */
+  latencyMs: { p50: number; p95: number } | null;
 }
 
 // 会话别名 / 标签 / 备注（应用侧 meta.json，以会话 id 为键）。
@@ -577,6 +661,12 @@ export interface ModelConfig {
 export interface UpdateModelConfigResult {
   key: string;
   value: unknown;
+}
+
+/** `create_agent_definition` 返回：新建的用户 agent 名与写入路径（绝对路径）。 */
+export interface CreateAgentDefinitionResult {
+  name: string;
+  path: string;
 }
 
 // 模型模式（omp `modelPresets`）：整套模型配置的快照与切换。
@@ -795,7 +885,7 @@ export interface MemoryGraph {
 
 // 记忆库写操作（CONTRACT §18.8）：备份/删除/恢复，JSON camelCase。
 
-export type MemoryBackupKind = "before-delete" | "before-restore" | "bank-removed";
+export type MemoryBackupKind = "before-delete" | "before-restore" | "bank-removed" | "manual";
 
 export interface MemoryBackupHolder {
   pid: number;
@@ -847,6 +937,16 @@ export interface MemoryRestoreResult {
   bank: string;
   restoredFrom: MemoryBackup;
   safetyBackup: MemoryBackup | null;
+}
+
+export interface MemoryBackupAllError {
+  bank: string;
+  reason: string;
+}
+
+export interface MemoryBackupAllResult {
+  backups: MemoryBackup[];
+  errors: MemoryBackupAllError[];
 }
 
 // 模型测试器（CONTRACT §20）：omp bench 测速结果 + omp 日常实测记录。
@@ -906,6 +1006,8 @@ export interface StageActor {
   model: string | null;
   contextTokens: number;
   cost: number;
+  /** 状态判定依据分支标签（CONTRACT §23.3）；运行中默认分支为 null。 */
+  provenance: string | null;
   toolCalls: number;
   current: StageActivity | null;
   recent: StageActivity[];
@@ -936,16 +1038,16 @@ export interface RunningSession {
   app: string | null;
 }
 
-// 菜单栏设置（CONTRACT §17.10）：与 Rust `menubar::settings::Settings` 逐字段对应。
+// 菜单栏（CONTRACT §17.10–17.11）：与 Rust `menubar::settings::Settings` / `model.rs` 逐字段对应。
 
 /** 托盘徽标样式：计数 / 圆点 / 仅图标。 */
 export type TrayBadgeStyle = "count" | "dot" | "icon";
 
-/** 菜单会话标题截断宽度：紧凑 20 字 / 标准 32 字 / 宽 48 字。 */
+/** 标题宽度：原生菜单截断 20/32/48 字；面板逻辑宽 316/356/396px（一设两用）。 */
 export type TrayTitleWidth = "compact" | "standard" | "wide";
 
-/** 点击托盘图标：弹菜单 / 打开主窗口（右键仍弹菜单）。 */
-export type TrayClickAction = "menu" | "window";
+/** 点击托盘图标：打开面板 / 打开主窗口（右键仍弹原生菜单）。 */
+export type TrayClickAction = "panel" | "window";
 
 /** 菜单栏设置（`get_tray_settings` 返回、`set_tray_settings` 补丁目标）。 */
 export interface TraySettings {
@@ -959,18 +1061,23 @@ export interface TraySettings {
   showIdle: boolean;
   compactRows: boolean;
   clickAction: TrayClickAction;
+  showSearch: boolean;
   showDockIcon: boolean;
 }
 
 /** 设置补丁：缺席字段不触碰；未知键后端直接拒绝。 */
 export type TraySettingsPatch = Partial<TraySettings>;
 
-/** 预览里的会话行。 */
+/** 预览里的会话行（裸值，前端格式化）。 */
 export interface TrayPreviewRow {
   sessionId: string;
   status: "working" | "waiting" | "idle" | "stuck";
-  text: string;
+  title: string;
+  project: string | null;
+  subagents: number;
+  elapsedSecs: number;
   enabled: boolean;
+  disabledReason: string | null;
 }
 
 /** 预览里的最近会话 / 项目条目（key 为会话 id 或 cwd）。 */
@@ -992,18 +1099,24 @@ export interface TrayBadgeSample {
   title: string | null;
 }
 
-/** 菜单栏页预览（`get_tray_preview` 返回，前端不重算文案）。 */
+/** 面板/菜单栏页预览（`get_tray_preview` 返回；头部计数/分组前端派生）。 */
 export interface TrayPreview {
   ready: boolean;
-  header: string;
   trayTitle: string | null;
-  costText: string | null;
+  costUsd: number | null;
+  requestCount: number | null;
   rows: TrayPreviewRow[];
   overflow: TrayPreviewRow[];
   recent: TrayPreviewEntry[];
   projects: TrayPreviewEntry[];
   modes: TrayPreviewMode[] | null;
   badgeSamples: TrayBadgeSample[];
+}
+
+/** 构建信息（`get_build_info` 返回；前端拼展示文案）。 */
+export interface BuildInfo {
+  os: string;
+  arch: string;
 }
 
 /** 应用关键路径（CONTRACT §4.68，只读展示）。 */

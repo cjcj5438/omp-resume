@@ -5,21 +5,21 @@
  */
 import {
   Activity,
-  BookOpen,
+  Book,
   Bot,
   Brain,
   ChartColumn,
   Cpu,
-  Eraser,
   FlaskConical,
   History,
   MessagesSquare,
-  PanelTop,
+  Monitor,
   Plug,
   Server,
   Settings,
   Sparkles,
   Theater,
+  Broom,
   type LucideIcon,
 } from "lucide-react";
 
@@ -67,7 +67,7 @@ export const NAV_GROUPS: {
     items: [
       { route: "usage", label: "用量", icon: ChartColumn },
       { route: "health", label: "运行健康", icon: Activity },
-      { route: "cleanup", label: "清理候选", icon: Eraser },
+      { route: "cleanup", label: "清理候选", icon: Broom },
       { route: "history", label: "提示词历史", icon: History },
     ],
   },
@@ -76,7 +76,7 @@ export const NAV_GROUPS: {
     label: "环境配置",
     items: [
       { route: "models", label: "模型", icon: Cpu },
-      { route: "agents", label: "Agent", icon: Bot },
+      { route: "agents", label: "Agent 组织", icon: Bot },
       { route: "plugins", label: "插件", icon: Plug },
       { route: "skills", label: "技能", icon: Sparkles },
       { route: "mcp", label: "MCP", icon: Server },
@@ -87,14 +87,14 @@ export const NAV_GROUPS: {
     label: "工具",
     items: [
       { route: "bench", label: "模型测试", icon: FlaskConical },
-      { route: "cheatsheet", label: "速查表", icon: BookOpen },
+      { route: "cheatsheet", label: "速查表", icon: Book },
     ],
   },
   {
     label: "设置",
     items: [
       { route: "settings", label: "外观与行为", icon: Settings },
-      { route: "tray", label: "菜单栏", icon: PanelTop },
+      { route: "tray", label: "菜单栏", icon: Monitor },
     ],
   },
 ];
@@ -110,7 +110,7 @@ export const ROUTE_TITLE: Record<Route, string> = {
   stage: "像素办公室",
   models: "模型",
   bench: "模型测试",
-  agents: "Agent",
+  agents: "Agent 组织",
   plugins: "插件",
   skills: "技能",
   mcp: "MCP 服务器",

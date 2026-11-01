@@ -41,6 +41,8 @@ function baseSummary(over: Partial<SessionSummary> & Pick<SessionSummary, "id" |
     version: 3,
     badLines: 0,
     firstUserMessage: null,
+    model: "deepseek-v4.1-flash",
+    tokens: 421600,
     ...over,
   };
 }
@@ -66,6 +68,10 @@ function tn(
     label: null,
     isCompaction: false,
     isBranchSummary: false,
+    model: null,
+    tokens: null,
+    isError: false,
+    toolName: null,
     ...extra,
   };
 }
@@ -88,7 +94,8 @@ function linearTree(
   );
   const itemsByNode: Record<string, ConversationItem[]> = {};
   texts.forEach((t, i) => {
-    itemsByNode[`${tag}-n${i}`] = [t.item];
+    const nodeId = `${tag}-n${i}`;
+    itemsByNode[nodeId] = [{ ...t.item, id: nodeId, timestamp: iso(300 - i * 7) }];
   });
   const leafId = nodes.length > 0 ? nodes[nodes.length - 1].id : null;
   return {
@@ -103,9 +110,11 @@ function linearTree(
   };
 }
 
-const U = (text: string): ConversationItem => ({ kind: "user", text });
-const A = (text: string): ConversationItem => ({
+const U = (text: string, id = "u0", timestamp: string | null = null): ConversationItem => ({ kind: "user", id, timestamp, text });
+const A = (text: string, id = "a0", timestamp: string | null = null): ConversationItem => ({
   kind: "assistant",
+  id,
+  timestamp,
   blocks: [{ kind: "text", text }],
 });
 
@@ -140,6 +149,8 @@ const s1lin = linearTree("s1", [
     preview: "我先看一下目录结构，然后给方案",
     item: {
       kind: "assistant",
+      id: "a0",
+      timestamp: null,
       blocks: [
         { kind: "thinking", text: "用户要做桌面应用，先看目录再定技术方案。" },
         {
@@ -147,6 +158,7 @@ const s1lin = linearTree("s1", [
           id: "call_9f21",
           name: "read",
           args: { path: "src-tauri/tauri.conf.json", i: "读 Tauri 配置" },
+          pending: false,
         },
         { kind: "text", text: "我先看一下目录结构，然后给方案。" },
       ],
@@ -157,11 +169,15 @@ const s1lin = linearTree("s1", [
     preview: "tauri.conf.json 内容…",
     item: {
       kind: "toolResult",
+      id: "t0",
+      timestamp: null,
       toolCallId: "call_9f21",
       toolName: "read",
       isError: false,
       text: '{"productName": "omp-resume"}\n{"windows": [{"width": 1200}]}',
       truncated: false,
+      durationMs: 42,
+      diff: null,
     },
   },
   {
@@ -181,6 +197,8 @@ const s1: FixtureSession = withPath(
       sizeBytes: 1218560,
       modifiedAt: iso(3),
       firstUserMessage: "给 omp 加一个可视化配置桌面应用",
+      model: "claude-opus-4.6",
+      tokens: 2418000,
     }),
     ...s1lin,
   },
@@ -207,6 +225,8 @@ const s2: FixtureSession = withPath(
       sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
       modifiedAt: iso(1),
       firstUserMessage: "修复示例代理连接失败",
+      model: "gpt-5.4-codex",
+      tokens: 168200,
     }),
     ...s2lin,
   },
@@ -223,6 +243,8 @@ const s3lin = linearTree("s3", [
     preview: "cargo test auth && echo done",
     item: {
       kind: "bashExecution",
+      id: "b0",
+      timestamp: null,
       command: "cargo test auth",
       text: "running 12 tests\ntest result: ok. 12 passed",
       truncated: false,
@@ -242,6 +264,8 @@ const s3: FixtureSession = withPath(
       messageCount: 6,
       modifiedAt: iso(42),
       firstUserMessage: "把鉴权中间件重构成洋葱模型",
+      model: "claude-sonnet-4.6",
+      tokens: 386100,
     }),
     ...s3lin,
   },
@@ -266,6 +290,8 @@ const s4: FixtureSession = withPath(
       messageCount: 12,
       modifiedAt: iso(60 * 30),
       firstUserMessage: "用 DEMO3 跑本地模型总结笔记",
+      model: "llama3.3-70b",
+      tokens: 76500,
     }),
     ...s4lin,
   },
@@ -276,26 +302,29 @@ const s4: FixtureSession = withPath(
 const s5id = "01a12eaa-12ab-34cd-56ef-8d528fc1dd04";
 const s5path = sessPath("-my-notes-app", "2026-10-12T09-15-20-200Z", s5id);
 const s5nodes: TreeNode[] = [
-  tn("bx-r1", null, ["bx-m1"], "message", "user", "帮我看看这个项目的结构", 900),
-  tn("bx-m1", "bx-r1", ["bx-m2"], "message", "assistant", "我先看一下目录结构…", 890),
-  tn("bx-m2", "bx-m1", ["bx-F"], "message", "toolResult", "package.json 内容…", 880),
-  tn("bx-F", "bx-m2", ["bx-c1", "bx-d1"], "message", "assistant", "同时读了 auth.ts 和 router.ts", 870),
-  tn("bx-c1", "bx-F", ["bx-c2"], "message", "user", "那把鉴权加上，支持 OAuth", 860),
-  tn("bx-c2", "bx-c1", ["bx-c3"], "message", "assistant", "方案A：中间件实现…", 850, { label: "重要" }),
-  tn("bx-c3", "bx-c2", ["bx-e1", "bx-e2"], "message", "assistant", "两种实现各有优劣…", 840),
-  tn("bx-e1", "bx-c3", ["bx-L"], "message", "user", "用第一种，开始写吧", 830),
-  tn("bx-L", "bx-e1", [], "message", "assistant", "已完成 ✅ 中间件代码如下", 820),
+  tn("bx-r1", null, ["bx-m1"], "message", "user", "帮我看看这个项目的结构", 900, { tokens: 0 }),
+  tn("bx-m1", "bx-r1", ["bx-m2"], "message", "assistant", "我先看一下目录结构…", 890, { model: "claude-opus-4.6", tokens: 21843 }),
+  tn("bx-m2", "bx-m1", ["bx-F"], "message", "toolResult", "package.json 内容…", 880, { tokens: 21843, toolName: "read" }),
+  tn("bx-F", "bx-m2", ["bx-c1", "bx-d1"], "message", "assistant", "同时读了 auth.ts 和 router.ts", 870, { model: "claude-opus-4.6", tokens: 36400 }),
+  tn("bx-c1", "bx-F", ["bx-c2"], "message", "user", "那把鉴权加上，支持 OAuth", 860, { tokens: 36400 }),
+  tn("bx-c2", "bx-c1", ["bx-c3"], "message", "assistant", "方案A：中间件实现…", 850, { label: "重要", model: "claude-opus-4.6", tokens: 44600 }),
+  tn("bx-c3", "bx-c2", ["bx-e1", "bx-e2"], "message", "assistant", "两种实现各有优劣…", 840, { model: "claude-sonnet-4.6", tokens: 52800 }),
+  tn("bx-e1", "bx-c3", ["bx-L"], "message", "user", "用第一种，开始写吧", 830, { tokens: 52800 }),
+  tn("bx-L", "bx-e1", [], "message", "assistant", "已完成 ✅ 中间件代码如下", 820, { model: "claude-sonnet-4.6", tokens: 68400 }),
   tn("bx-d1", "bx-F", ["bx-d2"], "compaction", null, "已压缩：项目结构与鉴权方案…", 865, {
     isCompaction: true,
+    tokens: 36400,
   }),
-  tn("bx-d2", "bx-d1", [], "message", "toolResult", "glob 结果：42 个文件…", 855),
-  tn("bx-e2", "bx-c3", [], "message", "assistant", "备选：用现成 auth 库…", 825),
+  tn("bx-d2", "bx-d1", [], "message", "toolResult", "edit 结果：+1 行…", 855, { tokens: 36400, isError: true, toolName: "edit" }),
+  tn("bx-e2", "bx-c3", [], "message", "assistant", "备选：用现成 auth 库…", 825, { model: "claude-opus-4.6", tokens: 55100 }),
 ];
 const s5items: Record<string, ConversationItem[]> = {
-  "bx-r1": [U("帮我看看这个项目的结构，重点是鉴权相关的代码。")],
+  "bx-r1": [{ kind: "user", id: "bx-r1", timestamp: iso(900), text: "帮我看看这个项目的结构，重点是鉴权相关的代码。" }],
   "bx-m1": [
     {
       kind: "assistant",
+      id: "bx-m1",
+      timestamp: iso(890),
       blocks: [
         { kind: "thinking", text: "先看目录结构，定位鉴权模块。目录可能很大，只读顶层。" },
         { kind: "text", text: "我先看一下**目录结构**，然后定位鉴权模块。" },
@@ -305,16 +334,22 @@ const s5items: Record<string, ConversationItem[]> = {
   "bx-m2": [
     {
       kind: "toolResult",
-      toolCallId: "call_list",
+      id: "bx-m2",
+      timestamp: iso(880),
+      toolCallId: "call_m2",
       toolName: "read",
       isError: false,
       text: "src/auth.ts\nsrc/router.ts\nsrc/main.ts",
       truncated: false,
+      durationMs: 118,
+      diff: null,
     },
   ],
   "bx-F": [
     {
       kind: "assistant",
+      id: "bx-F",
+      timestamp: iso(870),
       blocks: [
         { kind: "thinking", text: "两个文件都很关键，并行读取省时间。" },
         {
@@ -322,36 +357,56 @@ const s5items: Record<string, ConversationItem[]> = {
           id: "call_a1",
           name: "read",
           args: { path: "src/auth.ts", i: "读鉴权实现" },
+          pending: false,
         },
         {
           kind: "toolCall",
           id: "call_a2",
           name: "read",
           args: { path: "src/router.ts" },
+          pending: true,
         },
         { kind: "text", text: "我同时读了 `auth.ts` 和 `router.ts`。" },
       ],
     },
+    {
+      kind: "usage",
+      id: "bx-F-u1",
+      timestamp: iso(870),
+      purpose: "job-widget",
+      provider: "opencode-zen",
+      model: "deepseek-v4.1-flash",
+      input: 1445,
+      output: 247,
+      cacheRead: 2688,
+      cacheWrite: 0,
+      cost: 0.001,
+    },
   ],
-  "bx-c1": [U("那把鉴权加上，要求支持 OAuth 和本地登录。")],
-  "bx-c2": [A("方案A：中间件实现。\n\n```ts\napp.use(auth())\n```")],
-  "bx-c3": [A("两种实现各有优劣：中间件更通用，装饰器更显式。")],
-  "bx-e1": [U("用第一种，开始写吧。")],
+  "bx-c1": [{ kind: "user", id: "bx-c1", timestamp: iso(860), text: "那把鉴权加上，要求支持 OAuth 和本地登录。" }],
+  "bx-c2": [{ kind: "assistant", id: "bx-c2", timestamp: iso(850), blocks: [{ kind: "text", text: "方案A：中间件实现。\n\n```ts\napp.use(auth())\n```" }] }],
+  "bx-c3": [{ kind: "assistant", id: "bx-c3", timestamp: iso(840), blocks: [{ kind: "text", text: "两种实现各有优劣：中间件更通用，装饰器更显式。" }] }],
+  "bx-e1": [{ kind: "user", id: "bx-e1", timestamp: iso(830), text: "用第一种，开始写吧。" }],
   "bx-L": [
-    A("已完成 ✅\n\n## 变更\n\n- 新增 `authMiddleware`\n- 接入 OAuth 回调\n\n```ts\nexport function auth() {}\n```\n\n链接不跳转：[ والعربية ](https://example.invalid)，纯文本展示。"),
+    { kind: "assistant", id: "bx-L", timestamp: iso(820), blocks: [{ kind: "text", text: "已完成 ✅\n\n## 变更\n\n- 新增 `authMiddleware`\n- 接入 OAuth 回调\n\n```ts\nexport function auth() {}\n```\n\n链接不跳转：[ والعربية ](https://example.invalid)，纯文本展示。" }] },
   ],
-  "bx-d1": [{ kind: "compaction", summary: "此前讨论了项目结构、鉴权方案A/B，决定用中间件。" }],
+  "bx-d1": [{ kind: "compaction", id: "bx-d1", timestamp: iso(865), summary: "此前讨论了项目结构、鉴权方案A/B，决定用中间件。" }],
   "bx-d2": [
     {
       kind: "toolResult",
-      toolCallId: "call_g1",
-      toolName: "glob",
+      id: "bx-d2",
+      timestamp: iso(855),
+      // 与 bx-F 的 call_a1 配对（跨分支配对只为演示配对卡；真实数据同路径配对）。
+      toolCallId: "call_a1",
+      toolName: "edit",
       isError: true,
       text: "Error: pattern too broad\nsrc/**/*.ts",
       truncated: true,
+      durationMs: 8400,
+      diff: " 20|## Approach\n 34| 旧行内容\n+35| 新行内容",
     },
   ],
-  "bx-e2": [{ kind: "other", role: "developer", text: "<system-reminder>备选：用现成 auth 库也可以。</system-reminder>" }],
+  "bx-e2": [{ kind: "other", id: "bx-e2", timestamp: iso(825), role: "developer", text: "<system-reminder>备选：用现成 auth 库也可以。</system-reminder>" }],
 };
 const s5: FixtureSession = {
   summary: baseSummary({
@@ -364,6 +419,8 @@ const s5: FixtureSession = {
     sizeBytes: 6 * 1024 * 1024,   // 含附件后 ≥5 MiB（mock 用于 large 候选）
     modifiedAt: iso(60 * 20),
     firstUserMessage: "帮我看看这个项目的结构",
+    model: "claude-sonnet-4.6",
+    tokens: 742800,
   }),
   tree: {
     path: s5path,
@@ -392,6 +449,9 @@ const s6: FixtureSession = {
     modifiedAt: iso(60 * 24 * 70),
     createdAt: iso(60 * 24 * 75),
     firstUserMessage: null,
+    // 非 v3 恒 null（后端 §4.2 口径）：覆盖「—」渲染路径。
+    model: null,
+    tokens: null,
   }),
   tree: { path: s6path, leafId: null, rootIds: [], activePathIds: [], nodes: [] },
   itemsByNode: {},
@@ -415,6 +475,8 @@ const s7: FixtureSession = withPath(
       messageCount: 4,
       modifiedAt: iso(60 * 49),
       firstUserMessage: "删库前先备份",
+      model: "deepseek-v4.1-flash",
+      tokens: 92400,
     }),
     ...s7lin,
   },
@@ -433,6 +495,8 @@ const s8lin = linearTree("s8", [
     preview: "$ echo hello && sleep 0",
     item: {
       kind: "bashExecution",
+      id: "b0",
+      timestamp: null,
       command: "echo hello",
       text: "hello\n".repeat(50),
       truncated: true,
@@ -453,6 +517,8 @@ const s8: FixtureSession = withPath(
       modifiedAt: iso(60 * 50),
       badLines: 3,
       firstUserMessage: "标题很长",
+      model: null,
+      tokens: 154300,
     }),
     ...s8lin,
   },
@@ -470,11 +536,15 @@ const s9lin = linearTree("s9", [
     preview: "ls: Permission denied…",
     item: {
       kind: "toolResult",
+      id: "t0",
+      timestamp: null,
       toolCallId: "call_ls",
       toolName: "bash",
       isError: true,
       text: "ls: Permission denied",
       truncated: false,
+      durationMs: 96,
+      diff: null,
     },
   },
 ]);
@@ -490,6 +560,8 @@ const s9: FixtureSession = withPath(
       messageCount: 7,
       modifiedAt: iso(60 * 55),
       firstUserMessage: "权限问题排查",
+      model: "gpt-5.4-codex",
+      tokens: null,
     }),
     ...s9lin,
   },
@@ -514,6 +586,8 @@ const s10: FixtureSession = withPath(
       sizeBytes: 2048,
       modifiedAt: iso(8),
       firstUserMessage: "hi",
+      model: "deepseek-v4.1-flash",
+      tokens: 1830,
     }),
     ...s10lin,
   },
@@ -536,6 +610,8 @@ const s11: FixtureSession = withPath(
       sizeBytes: 65536,
       modifiedAt: iso(90),
       firstUserMessage: null,
+      model: null,
+      tokens: null,
     }),
     ...s11lin,
   },
@@ -572,7 +648,7 @@ export function conversationForPath(
   const chain: string[] = [];
   if (s.tree.nodes.length === 0 || s.tree.leafId == null) {
     if (nodeId) throw { code: "INVALID_NODE", message: "节点不存在" };
-    return { path: s.summary.path, leafId: null, targetId: "", items: [] };
+    return { path: s.summary.path, leafId: null, targetId: "", branchPointId: null, items: [] };
   }
   const target = nodeId ?? s.tree.leafId;
   const byId = new Map(s.tree.nodes.map((n) => [n.id, n]));
@@ -584,10 +660,30 @@ export function conversationForPath(
     chain.unshift(cur);
     cur = byId.get(cur)?.parentId ?? null;
   }
+  // 分支点：active 路径（leaf→根）上第一个有兄弟的节点（与后端 branch_point 同口径）。
+  let branchPointId: string | null = null;
+  if (s.tree.leafId != null) {
+    const active: string[] = [];
+    let c: string | null = s.tree.leafId;
+    const seen2 = new Set<string>();
+    while (c && !seen2.has(c) && byId.has(c)) {
+      seen2.add(c);
+      active.unshift(c);
+      c = byId.get(c)?.parentId ?? null;
+    }
+    for (const id of active) {
+      const parent = byId.get(id)?.parentId;
+      if (parent != null && (byId.get(parent)?.childIds.length ?? 0) > 1) {
+        branchPointId = id;
+        break;
+      }
+    }
+  }
   return {
     path: s.summary.path,
     leafId: s.tree.leafId,
     targetId: target,
+    branchPointId,
     items: chain.flatMap((id) => s.itemsByNode[id] ?? []),
   };
 }
@@ -596,15 +692,19 @@ export function conversationForPath(
 export function generateLargeConversation(n = 3000): Conversation {
   const items: ConversationItem[] = [];
   for (let i = 0; i < n; i++) {
+    const id = `lg-n${i}`;
     if (i % 2 === 0) {
-      items.push(U(`第 ${i / 2 + 1} 个问题：这段代码是什么意思？请解释一下。`));
+      items.push({ kind: "user", id, timestamp: null, text: `第 ${i / 2 + 1} 个问题：这段代码是什么意思？请解释一下。` });
     } else {
       items.push(
-        A(
-          `这是第 ${(i - 1) / 2 + 1} 个回答：\n\n- 要点 **一**：先看调用栈\n- 要点二：再看 \`error\` 字段\n\n\`\`\`ts\nconst x: number = ${(i - 1) / 2};\n\`\`\``,
-        ),
+        {
+          kind: "assistant",
+          id,
+          timestamp: null,
+          blocks: [{ kind: "text", text: `这是第 ${(i - 1) / 2 + 1} 个回答：\n\n- 要点 **一**：先看调用栈\n- 要点二：再看 \`error\` 字段\n\n\`\`\`ts\nconst x: number = ${(i - 1) / 2};\n\`\`\`` }],
+        },
       );
     }
   }
-  return { path: "large", leafId: null, targetId: "", items };
+  return { path: "large", leafId: null, targetId: "", branchPointId: null, items };
 }

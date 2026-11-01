@@ -2,6 +2,7 @@
 /** 参数：`?memory=off`（不可用）、`?memoryBackend=<名>`、`?memoryInUse=<bank>`（写报 IN_USE）、`?memoryProbe=fail`（写报 PROBE_FAILED）、`?memoryBanks=N`（批量库）。 */
 import type {
   MemoryBackup,
+  MemoryBackupAllResult,
   MemoryBankStatus,
   MemoryBankSummary,
   MemoryDeletePreview,
@@ -417,7 +418,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
 
   const utcStamp = (ms: number): string => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 
-  /** 整库快照：before-delete / before-restore 只留最新 5 份，bank-removed 永不剪。 */
+  /** 整库快照：before-delete / before-restore / manual 各自独立分组只留最新 5 份，bank-removed 永不剪。 */
   function takeBackup(store: BankStore, kind: MemoryBackup["kind"]): MemoryBackup {
     backupSeq += 1;
     const at = Date.now() + backupSeq * 1000;
@@ -507,7 +508,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     const bank = at < 0 ? "" : raw.slice(0, at);
     const dirname = at < 0 ? "" : raw.slice(at + 1);
     const badShape = bank === "" || bank === "." || bank === ".." || bank.includes("/") || bank.includes("\\") || bank.includes("\0");
-    if (badShape || !/^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed)$/.test(dirname)) throw err("OUTSIDE_ROOT", "备份标识非法");
+    if (badShape || !/^\d{8}T\d{6}Z-(before-delete|before-restore|bank-removed|manual)$/.test(dirname)) throw err("OUTSIDE_ROOT", "备份标识非法");
     const found = backups.find((b) => b.record.id === raw);
     if (!found) throw err("NOT_FOUND", "备份不存在");
     return found;
@@ -549,6 +550,22 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
     return null;
   }
 
+  /** 全库快照：逐库独立成败，无门禁；不可读库进 errors。 */
+  function backupAll(): MemoryBackupAllResult {
+    const result: MemoryBackupAllResult = { backups: [], errors: [] };
+    for (const store of [...byBank.values()].sort((a, b) => a.bank.localeCompare(b.bank))) {
+      if (!store.readable) {
+        result.errors.push({ bank: store.bank, reason: store.error ?? "项目库不可读" });
+        continue;
+      }
+      result.backups.push(takeBackup(store, "manual"));
+    }
+    return result;
+  }
+
+  // 初始夹具：一条手动备份（列表/恢复对话框有 manual 行可看）。
+  takeBackup(byBank.get("notes-app")!, "manual");
+
   return (cmd: string, args: Record<string, unknown>): unknown => {
     switch (cmd) {
       case "memory_overview": return structuredClone(overview());
@@ -567,6 +584,7 @@ export function createMemoryMock(opts: MemoryMockOptions): (cmd: string, args: R
       case "memory_delete_bank": return structuredClone(deleteBank(args));
       case "memory_restore": return structuredClone(restore(args));
       case "memory_delete_backup": return structuredClone(deleteBackup(args));
+      case "memory_backup_all": return structuredClone(backupAll());
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }
