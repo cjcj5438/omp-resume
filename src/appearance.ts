@@ -138,3 +138,12 @@ export async function syncNativeTheme(mode: ThemeMode): Promise<void> {
     // 非 Tauri 环境或权限缺失：原生标题栏保持系统行为，不影响页面主题。
   }
 }
+/** 各强调色的示意色块（预设身份色，不随主题变；与 App.css 的 accent-fill 一致）。 */
+export const ACCENT_SWATCH: Record<AccentName, string> = {
+  blue: "#0071e3",
+  purple: "#6d28d9",
+  green: "#15803d",
+  orange: "#b45309",
+  pink: "#be185d",
+  grey: "#4b5058",
+};

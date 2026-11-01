@@ -2,8 +2,7 @@ import { Fragment } from "react";
 import type { CSSProperties } from "react";
 import type { UsageTrendPoint } from "../types";
 import { usageMoney, usageNumber } from "../format";
-import { heatGrid, heatLevels } from "./usageFormat";
-import "./Usage.css";
+import { heatGrid, heatLevels, type HeatMetric } from "./usageFormat";
 
 /** 格子边长上限 18px：行宽富余时整组居中，网格与汇总作为整体左右均分空间。 */
 const HEAT_CELL_MAX = 18;
@@ -13,8 +12,16 @@ const HEAT_LABEL_COL = 18;
 
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
-export function UsageHeatmap({ days }: { days: UsageTrendPoint[] }) {
-  const levels = heatLevels(days.map((d) => d.cost));
+interface UsageHeatmapProps {
+  days: UsageTrendPoint[];
+  metric: HeatMetric;
+  selectedKey: string | null;
+  onSelect: (key: string) => void;
+}
+
+export function UsageHeatmap({ days, metric, selectedKey, onSelect }: UsageHeatmapProps) {
+  const values = days.map((d) => (metric === "cost" ? d.cost : d.tokens.total));
+  const levels = heatLevels(values);
   const cols = heatGrid(days.map((d, i) => ({ key: d.key, cost: d.cost, tokens: d.tokens.total, level: levels[i] })));
   const active = days.filter((d) => d.cost > 0).length;
   const monthOf = cols.map((col) => {
@@ -33,7 +40,7 @@ export function UsageHeatmap({ days }: { days: UsageTrendPoint[] }) {
   };
   return (
     <div className="heat-wrap" style={wrapStyle}>
-      <div className="heat-grid" style={gridStyle} role="img" aria-label={`活跃度热力图：近 26 周，${active} 天有用量`}>
+      <div className="heat-grid" style={gridStyle} role="group" aria-label={`活跃度热力图：近 26 周，${active} 天有用量`}>
         <span className="heat-corner" aria-hidden="true" />
         {cols.map((_, ci) => (
           <span key={`m-${ci}`} className="heat-month" aria-hidden="true">{showMonth[ci] ? `${monthOf[ci]}月` : null}</span>
@@ -43,14 +50,20 @@ export function UsageHeatmap({ days }: { days: UsageTrendPoint[] }) {
             <span className="heat-weekday" aria-hidden="true">{label}</span>
             {cols.map((col, ci) => {
               const cell = col[ri];
-              return cell === null ? (
-                <span key={`${ci}-${ri}`} className="heat-empty" aria-hidden="true" />
-              ) : (
-                <span
+              if (cell === null) {
+                return <span key={`${ci}-${ri}`} className="heat-empty" aria-hidden="true" />;
+              }
+              const valueText = metric === "cost" ? `花费 ${usageMoney(cell.cost)}` : `Token ${usageNumber(cell.tokens)}`;
+              return (
+                <button
                   key={`${ci}-${ri}`}
+                  type="button"
                   className="heat-cell"
                   data-level={cell.level}
+                  aria-pressed={cell.key === selectedKey}
+                  aria-label={`${cell.key} ${cell.level === 0 ? "无用量" : valueText}`}
                   data-tip={cell.level === 0 ? `${cell.key}\n无用量` : `${cell.key}\n花费 ${usageMoney(cell.cost)} · Token ${usageNumber(cell.tokens)}`}
+                  onClick={() => onSelect(cell.key)}
                 />
               );
             })}

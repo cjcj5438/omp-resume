@@ -1,0 +1,219 @@
+/* 菜单栏页：两栏（预览 + 状态判定 | 三张设置卡）+ 原生菜单模拟。 */
+
+.tray-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.tray-left,
+.tray-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.tray-notice {
+  margin: 0 0 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ---- 原生菜单模拟 ---- */
+
+.tray-mock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tray-menubar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+
+.tray-brand-mark {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tray-mock-title {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tray-menu {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  font-size: var(--fs-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.tray-menu-header {
+  padding: 4px 8px;
+  color: var(--text-faint);
+}
+
+.tray-menu-cost {
+  padding: 4px 8px;
+  color: var(--text-muted);
+}
+
+.tray-sep {
+  height: 1px;
+  margin: 6px 2px;
+  background: var(--border);
+}
+
+.tray-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: inherit;
+  text-align: left;
+}
+
+button.tray-menu-row:not(:disabled) {
+  cursor: pointer;
+}
+
+button.tray-menu-row:not(:disabled):hover {
+  background: var(--bg-hover);
+}
+
+.tray-menu-row.is-disabled {
+  color: var(--text-faint);
+}
+
+.tray-menu-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tray-menu-more {
+  padding: 4px 8px;
+  color: var(--text-muted);
+}
+
+.tray-menu-item {
+  padding: 4px 8px;
+  color: var(--text);
+}
+
+.tray-menu-item.is-disabled {
+  color: var(--text-faint);
+}
+
+.tray-sub summary {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.tray-sub summary::-webkit-details-marker {
+  display: none;
+}
+
+.tray-sub summary:hover {
+  background: var(--bg-hover);
+}
+
+.tray-sub-body {
+  padding-left: 12px;
+}
+
+/* ---- 状态圆点：与原生菜单状态图标同色 ---- */
+
+.tray-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.tray-dot-working {
+  background: var(--ok);
+}
+
+.tray-dot-waiting {
+  background: var(--warn);
+}
+
+.tray-dot-stuck {
+  background: var(--danger);
+}
+
+.tray-dot-idle {
+  background: var(--text-faint);
+}
+
+/* ---- 状态判定图例 ---- */
+
+.tray-legend {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tray-legend-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tray-legend-row dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tray-legend-row dd {
+  margin: 0 0 0 16px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* ---- 徽标样例 ---- */
+
+.tray-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tray-sample-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}

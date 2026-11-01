@@ -1,7 +1,7 @@
-/** Sidebar 别名/标签行内展示与标签过滤条单测。 */
+/** SessionList 别名/标签行内展示与标签过滤条单测。 */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Sidebar } from "./Sidebar";
+import { SessionList } from "./SessionList";
 import { FIXTURE_SESSIONS } from "../dev/fixtures";
 import { buildListResult } from "../dev/fixtures";
 import type { MetaSnapshot } from "../types";
@@ -16,44 +16,29 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
   ];
   const onToggleTag = vi.fn<(tag: string) => void>();
   render(
-    <Sidebar
+    <SessionList
+      variant="page"
       groups={list.groups}
       pinnedSessions={[]}
-      totalCount={10}
-      hiddenEmpty={0}
       query=""
       onQuery={noop}
       loading={false}
       listError={null}
       onRetry={noop}
       onRefresh={noop}
-      onOpenCheatSheet={noop}
-      manageActive={false}
-      onToggleManage={noop}
-      statsActive={false}
-      onToggleStats={noop}
-      stageActive={false}
-      onToggleStage={noop}
-      cleanupActive={false}
-      onToggleCleanup={noop}
-      onNewSession={noop}
       onNewSessionIn={noop}
-      historyActive={false}
-      onToggleHistory={noop}
       checked={new Set()}
       onToggleCheck={noop}
       onToggleChecks={noop}
       onClearChecks={noop}
       selectedPath={null}
-      onSelect={noop}
+      onOpenSession={noop}
+      onOpenMeta={noop}
+      onBulkResume={noop}
+      collapsed={new Set<string>()}
+      onCollapsedChange={noop}
       pins={{ projects: [], sessions: [] }}
       onTogglePin={noop}
-      ompVersion={null}
-      ompChecking={false}
-      onCheckOmp={noop}
-      appVersion={null}
-      appChecking={false}
-      onCheckApp={noop}
       meta={meta}
       tagCounts={meta ? tagCounts : []}
       activeTags={activeTags}
@@ -67,7 +52,7 @@ function renderSidebar(meta: MetaSnapshot | null, activeTags: string[] = []) {
   return { onToggleTag };
 }
 
-describe("Sidebar 别名行内展示", () => {
+describe("SessionList 别名行内展示", () => {
   it("有别名时别名作主标题、原标题小号灰字附后", () => {
     const s1 = FIXTURE_SESSIONS[0].summary;
     const meta: MetaSnapshot = {
@@ -94,7 +79,7 @@ describe("Sidebar 别名行内展示", () => {
     expect(document.querySelector(".row-title-orig")).toBeNull();
   });
 });
-describe("Sidebar 标签过滤条", () => {
+describe("SessionList 标签过滤条", () => {
   it("列出标签及计数，点击切换", () => {
     const meta: MetaSnapshot = { revision: 0, sessions: {} };
     const { onToggleTag } = renderSidebar(meta, ["bug"]);

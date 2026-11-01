@@ -4,6 +4,8 @@
  * omp 操作，用 fieldset 在忙时禁用其内部按钮（结构保持不变，不重挂载）。
  */
 import { useState, type ReactNode } from "react";
+import { PageHeader } from "./page";
+import { ROUTE_TITLE, type ConfigRoute } from "../routes";
 import {
   checkOmpUpdate,
   normalizeError,
@@ -32,15 +34,13 @@ export interface ManageProject {
 interface ManageViewProps {
   projects: ManageProject[];
   onToast: ToastFn;
-  onBack: () => void;
-  /** 与侧栏「检查 omp 更新」同一回调：有新版时打开更新对话框。 */
+  tab: ConfigRoute;
+  /** 与导航「检查 omp 更新」同一回调：有新版时打开更新对话框。 */
   onCheckOmp: () => void;
   /** 当前列表已加载的会话 id：记忆库「查看来源会话」据此判断可用性。 */
   loadedSessionIds: ReadonlySet<string>;
   onOpenSession: (sessionId: string) => void;
 }
-
-type ManageTab = "models" | "agents" | "plugins" | "skills" | "mcp" | "memory";
 
 interface UpdateAllStep {
   name: string;
@@ -48,20 +48,10 @@ interface UpdateAllStep {
   detail: string;
 }
 
-const TABS: { key: ManageTab; label: string }[] = [
-  { key: "models", label: "模型" },
-  { key: "agents", label: "Agent" },
-  { key: "plugins", label: "插件" },
-  { key: "skills", label: "Skills" },
-  { key: "mcp", label: "MCP" },
-  { key: "memory", label: "记忆库" },
-];
-
-export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessionIds, onOpenSession }: ManageViewProps) {
+export function ManageView({ projects, onToast, tab, onCheckOmp, loadedSessionIds, onOpenSession }: ManageViewProps) {
   const op = useOmpOp();
   const draftLoad = useModelDraft(onToast);
   const alive = useAlive();
-  const [tab, setTab] = useState<ManageTab>("models");
   const [refreshToken, setRefreshToken] = useState(0);
   const [summary, setSummary] = useState<UpdateAllStep[] | null>(null);
   const busy = op.running !== null;
@@ -156,28 +146,34 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
       </div></div>)
     : render(draftLoad.state);
 
+  const COPY: Record<ConfigRoute, { kicker: string; sub: string }> = {
+    models: { kicker: "环境配置 · models.yml", sub: "模型库 → 测试 → 角色分配，一页闭环；写入前校验并携带 revision。" },
+    bench: { kicker: "工具 · omp bench", sub: "同 models 页，进入后滚动到「测试」区。" },
+    agents: { kicker: "环境配置 · Agent 定义", sub: "主 Agent 角色分配与子 Agent 模型覆盖。" },
+    plugins: { kicker: "环境配置 · Marketplace", sub: "安装、启停与升级；市场来源单独管理。" },
+    skills: { kicker: "环境配置 · 技能", sub: "已安装技能与更新检查。" },
+    mcp: { kicker: "环境配置 · MCP", sub: "用户与项目作用域；写入经字段白名单校验并携带 revision。" },
+    memory: { kicker: "环境配置 · Mnemopi 记忆库", sub: "记忆库概览、召回图、备份与维护；删除前先备份。" },
+  };
+  const copy = COPY[tab];
   return (
-    <main className="detail manage">
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h1 className="detail-title">管理</h1>
-          {busy ? <span className="detail-head-note">正在执行：{op.running}…</span> : null}
-          <span className="detail-actions">
-            <button
-              type="button"
-              className="btn btn-accent"
-              disabled={busy}
-              onClick={() => void updateAll()}
-            >
-              {busy ? <span className="spinner" aria-hidden="true" /> : null}
-              全部更新
-            </button>
-            <button type="button" className="btn" onClick={onBack}>
-              返回
-            </button>
-          </span>
-        </div>
-      </header>
+    <div className="view manage">
+      <PageHeader
+        kicker={copy.kicker}
+        title={ROUTE_TITLE[tab]}
+        sub={busy ? `${copy.sub}正在执行：${op.running}…` : copy.sub}
+        actions={
+          <button
+            type="button"
+            className="btn btn-accent"
+            disabled={busy}
+            onClick={() => void updateAll()}
+          >
+            {busy ? <span className="spinner" aria-hidden="true" /> : null}
+            全部更新
+          </button>
+        }
+      />
       {summary !== null ? (
         <ul className="manage-summary" aria-label="全部更新结果">
           {summary.map((s) => (
@@ -187,32 +183,11 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
           ))}
         </ul>
       ) : null}
-      <div className="tabs" role="tablist" aria-label="管理视图">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            id={`tab-manage-${t.key}`}
-            aria-selected={tab === t.key}
-            aria-controls={`panel-manage-${t.key}`}
-            className={tab === t.key ? "tab tab-active" : "tab"}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div
-        role="tabpanel"
-        id={`panel-manage-${tab}`}
-        aria-labelledby={`tab-manage-${tab}`}
-        className="panel"
-      >
-        {tab === "models" ? (
+      <div className="page-body">
+        {tab === "models" || tab === "bench" ? (
           <fieldset disabled={busy} className="manage-fieldset">
             {/* 忙时整页禁用是故意的：bench 虽不占单写锁，但全部更新期间避免一切中途编辑。 */}
-            {draftPanel((s) => <ModelsTab onToast={onToast} state={s} />)}
+            {draftPanel((s) => <ModelsTab onToast={onToast} state={s} focus={tab === "bench" ? "bench" : undefined} />)}
           </fieldset>
         ) : tab === "agents" ? (
           <fieldset disabled={busy} className="manage-fieldset">
@@ -242,7 +217,7 @@ export function ManageView({ projects, onToast, onBack, onCheckOmp, loadedSessio
           </pre>
         </section>
       ) : null}
-    </main>
+    </div>
   );
 }
 

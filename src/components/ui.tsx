@@ -17,7 +17,18 @@ interface ModalProps {
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ title, onClose, children, footer, wide = false }: ModalProps) {
+interface DialogFrameProps {
+  label: string;
+  className: string;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+/**
+ * 对话框框架：遮罩（点击关闭）+ 焦点管理（[data-autofocus] 优先）+ 焦点陷阱 + Esc 关闭。
+ * 遮罩类名固定为 `modal-overlay`：App 的 Esc 返回守卫靠它判断是否有对话框打开。
+ */
+export function DialogFrame({ label, className, onClose, children }: DialogFrameProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const auto = boxRef.current?.querySelector<HTMLElement>("[data-autofocus]");
@@ -26,10 +37,10 @@ export function Modal({ title, onClose, children, footer, wide = false }: ModalP
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
-        className={wide ? "modal modal-wide" : "modal"}
+        className={className}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-label={label}
         tabIndex={-1}
         ref={boxRef}
         onKeyDown={(e) => {
@@ -52,11 +63,19 @@ export function Modal({ title, onClose, children, footer, wide = false }: ModalP
           }
         }}
       >
-        <h2 className="modal-title">{title}</h2>
-        <div className="modal-body">{children}</div>
-        <div className="modal-footer">{footer}</div>
+        {children}
       </div>
     </div>
+  );
+}
+
+export function Modal({ title, onClose, children, footer, wide = false }: ModalProps) {
+  return (
+    <DialogFrame label={title} className={wide ? "modal modal-wide" : "modal"} onClose={onClose}>
+      <h2 className="modal-title">{title}</h2>
+      <div className="modal-body">{children}</div>
+      <div className="modal-footer">{footer}</div>
+    </DialogFrame>
   );
 }
 
@@ -121,6 +140,11 @@ export function SessionBadges({ s }: { s: SessionSummary }) {
       {!s.cwdExists ? (
         <Badge tone="danger" title="记录的项目目录不存在">
           目录不存在
+        </Badge>
+      ) : null}
+      {s.badLines > 0 ? (
+        <Badge tone="danger" title={`宽容解析跳过了 ${s.badLines} 行`}>
+          {s.badLines} 行损坏
         </Badge>
       ) : null}
     </>

@@ -65,3 +65,12 @@ describe("sortCandidates", () => {
     expect(LIST.map((c) => c.path)).toEqual(["/a", "/busy", "/unknown", "/b"]);
   });
 });
+
+it("reasonCounts：多原因候选在每个原因下各计一次", async () => {
+  const { reasonCounts } = await import("./cleanup");
+  const mk = (path: string, reasons: ("empty" | "cwd_missing" | "large" | "stale")[]) =>
+    ({ path, reasons }) as unknown as Parameters<typeof reasonCounts>[0][number];
+  expect(
+    reasonCounts([mk("/p/a.jsonl", ["empty", "stale"]), mk("/p/b.jsonl", ["large"])]),
+  ).toEqual({ empty: 1, cwd_missing: 0, large: 1, stale: 1 });
+});

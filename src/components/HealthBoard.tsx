@@ -1,8 +1,10 @@
-import type { UsageHealth } from "../types";
+import { useEffect, useState } from "react";
+import type { ErrorKind, UsageHealth } from "../types";
 import { formatClock, usageNumber } from "../format";
 import { Kpi } from "./UsageCards";
 import { CacheHitChart, RequestsChart } from "./UsageCharts";
 import { ERROR_KIND_NAME, cacheHitSeries, formatErrorRate, formatHitRate } from "./usageFormat";
+import { Seg } from "./page";
 import "./Usage.css";
 
 function modelName(provider: string, model: string): string {
@@ -13,6 +15,12 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
   const cacheValid = cacheHitSeries(data.timeline.points).some((v) => v !== null);
   const maxKind = Math.max(0, ...data.errors.byKind.map((k) => k.count));
   const maxTarget = Math.max(0, ...data.fallbacks.byTarget.map((t) => t.count));
+  const [kind, setKind] = useState<ErrorKind | "all">("all");
+  // data 变化后当前 kind 已不在其中：重置为 all。
+  useEffect(() => {
+    if (kind !== "all" && !data.errors.byKind.some((k) => k.kind === kind)) setKind("all");
+  }, [data, kind]);
+  const filtered = kind === "all" ? data.errors.recent : data.errors.recent.filter((e) => e.kind === kind);
   return (
     <>
       <section className="kpi-grid" aria-label="关键指标">
@@ -111,10 +119,25 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
       </div>
 
       <section className="health-card" aria-label="最近错误">
-        <h2>最近错误</h2>
-        {data.errors.recent.length > 0 ? (
+        <div className="card-head">
+          <h2>最近错误 <span className="usage-muted">{filtered.length}/{data.errors.recent.length} 条</span></h2>
+          <Seg
+            label="错误类型筛选"
+            value={kind}
+            onChange={setKind}
+            options={[
+              { value: "all", label: "全部" },
+              ...data.errors.byKind.map((k) => ({
+                value: k.kind as ErrorKind | "all",
+                label: ERROR_KIND_NAME[k.kind],
+                count: k.count,
+              })),
+            ]}
+          />
+        </div>
+        {filtered.length > 0 ? (
           <ol className="err-list">
-            {data.errors.recent.map((e, i) => (
+            {filtered.map((e, i) => (
               <li key={`${e.time}-${e.provider}-${e.model}-${e.message}-${i}`} className="err-row" data-tip={`${ERROR_KIND_NAME[e.kind] ?? "其他"} · ${modelName(e.provider, e.model)}\n${formatClock(e.time)} ${e.message}`}>
                 <span className="usage-muted err-time">{formatClock(e.time)}</span>
                 <span className="err-model">{modelName(e.provider, e.model)}</span>
@@ -123,8 +146,10 @@ export function HealthBoard({ data }: { data: UsageHealth }) {
               </li>
             ))}
           </ol>
-        ) : (
+        ) : kind === "all" ? (
           <div className="pane-note">此范围内还没有错误</div>
+        ) : (
+          <div className="pane-note">没有此类错误</div>
         )}
       </section>
 

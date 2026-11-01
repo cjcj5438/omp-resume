@@ -23,9 +23,11 @@ describe("DetailPane 占用者行", () => {
       <DetailPane
         session={s2}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={noop}
@@ -49,9 +51,11 @@ describe("DetailPane 占用者行", () => {
       <DetailPane
         session={s1}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={noop}
@@ -89,9 +93,11 @@ describe("复制会话 ID", () => {
       <DetailPane
         session={s1}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={onToast}
@@ -110,7 +116,7 @@ describe("复制会话 ID", () => {
     expect(writeText).toHaveBeenCalledWith(s1.id);
   });
 
-  it("剪贴板写入被拒绝时提示手动复制", async () => {
+  it("剪贴板写入被拒绝时经原生 copy_text 兜底仍提示已复制", async () => {
     await installMockBackend();
     stubClipboard(() => Promise.reject(new Error("denied")));
     const onToast = vi.fn<(text: string, kind: "info" | "error") => void>();
@@ -118,9 +124,45 @@ describe("复制会话 ID", () => {
       <DetailPane
         session={FIXTURE_SESSIONS[0].summary}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
+        onDelete={noop}
+        onContinue={noContinue}
+        onToast={onToast}
+        pinned={false}
+        onTogglePin={noop}
+        metaEntry={null}
+        metaRevision={0}
+        metaError={null}
+        onMetaSnapshot={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "复制会话 ID" }));
+
+    // navigator.clipboard 被拒 → 落到原生 copy_text（mock 下成功）→ 仍提示已复制。
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("已复制会话 ID", "info"));
+  });
+
+  it("原生 copy_text 也失败时提示手动复制", async () => {
+    // 不装 mock 后端：copy_text 的 invoke 无正常 mock → 兜底抛错。
+    mockIPC(() => {
+      throw new Error("no mock");
+    });
+    stubClipboard(() => Promise.reject(new Error("denied")));
+    const onToast = vi.fn<(text: string, kind: "info" | "error") => void>();
+    render(
+      <DetailPane
+        session={FIXTURE_SESSIONS[0].summary}
+        gone={false}
+        refreshKey={0}
+        onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={onToast}
@@ -147,9 +189,11 @@ describe("快速切换会话", () => {
       <DetailPane
         session={session}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={noop}
@@ -178,9 +222,11 @@ describe("快速切换会话", () => {
       <DetailPane
         session={s2}
         gone={false}
-        checkedCount={0}
         refreshKey={0}
         onOpenIterm={noop}
+        onOpenStage={noop}
+        onBack={noop}
+        metaRequest={null}
         onDelete={noop}
         onContinue={noContinue}
         onToast={noop}

@@ -139,7 +139,8 @@ section.health-card[aria-label="最近错误"] { margin-top: var(--sp-3); }
 .heat-grid { display: grid; gap: 3px; align-items: stretch; min-width: 0; }
 .heat-month { font-size: var(--fs-xs); color: var(--text-muted); line-height: 16px; white-space: nowrap; overflow: visible; min-width: 0; }
 .heat-weekday { display: flex; align-items: center; justify-content: flex-start; font-size: var(--fs-xs); color: var(--text-muted); min-width: 0; min-height: 0; }
-.heat-cell { display: block; aspect-ratio: 1; min-width: 0; min-height: 0; border-radius: var(--radius-xs); background: var(--accent); }
+.heat-cell { display: block; aspect-ratio: 1; min-width: 0; min-height: 0; border: 0; padding: 0; border-radius: var(--radius-xs); background: var(--accent); cursor: pointer; }
+button.heat-cell[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: -2px; }
 .heat-empty { display: block; aspect-ratio: 1; min-width: 0; min-height: 0; }
 .heat-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
 .heat-summary { display: grid; grid-template-columns: repeat(2, minmax(0, max-content)); gap: 12px 18px; flex: 0 0 auto; align-content: center; align-items: start; padding-left: 16px; border-left: 1px solid var(--border); }
@@ -166,3 +167,8 @@ button.top-row:hover { background: var(--bg-hover); }
 .top-cost { font-variant-numeric: tabular-nums; }
 .top-meta { grid-column: 1 / -1; font-size: var(--fs-sm); color: var(--text-muted); }
 .top-row .usage-bar { grid-column: 1 / -1; }
+.heat-day { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+.heat-day-date { font-weight: 600; }
+button.kpi-card { border: 1px solid transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.kpi-card:hover { border-color: var(--border-strong); }
+button.kpi-card[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }

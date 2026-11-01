@@ -1,0 +1,15 @@
+/* 会话列表页：工具条与底部计数。 */
+
+.sessions-toolbar {
+  padding: 0 0 var(--sp-4);
+  border-bottom: none;
+}
+
+.sessions-toolbar .spacer {
+  flex: 1;
+}
+
+.sessions-foot {
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-xs);
+}

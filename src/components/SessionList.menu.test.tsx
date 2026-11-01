@@ -1,8 +1,8 @@
-/** Sidebar 右键菜单与行内重命名单测：右键不改选中态、批量菜单判定、别名写入参数。 */
+/** SessionList 右键菜单与行内重命名单测：右键不改选中态、批量菜单判定、别名写入参数。 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Sidebar } from "./Sidebar";
+import { SessionList } from "./SessionList";
 import { FIXTURE_SESSIONS, buildListResult } from "../dev/fixtures";
 import type { MenuSpec } from "../nativeMenu";
 import type { MetaSnapshot, ProjectGroup } from "../types";
@@ -64,48 +64,33 @@ function renderSidebar(over: {
   onSelect?: (p: string) => void;
   groups?: ProjectGroup[];
 } = {}) {
-  const onSelect = over.onSelect ?? vi.fn();
+  const onOpenSession = over.onSelect ?? vi.fn();
   const onOpenIterm = vi.fn();
   const onMetaSnapshot = vi.fn();
   const onToast = vi.fn();
   const props = {
+    variant: "page" as const,
     groups: over.groups ?? list.groups,
     pinnedSessions: [],
-    totalCount: 10,
-    hiddenEmpty: 0,
     query: "",
     onQuery: noop,
     loading: false,
     listError: null,
     onRetry: noop,
     onRefresh: noop,
-    onOpenCheatSheet: noop,
-    manageActive: false,
-    onToggleManage: noop,
-    statsActive: false,
-    onToggleStats: noop,
-    stageActive: false,
-    onToggleStage: noop,
-    cleanupActive: false,
-    onToggleCleanup: noop,
     checked: over.checked ?? new Set<string>(),
     onToggleCheck: noop,
     onToggleChecks: noop,
     onClearChecks: noop,
     selectedPath: null,
-    onSelect,
+    onOpenSession,
+    onOpenMeta: noop,
+    onBulkResume: noop,
+    collapsed: new Set<string>(),
+    onCollapsedChange: noop,
     pins: { projects: [], sessions: [] },
     onTogglePin: noop,
-    ompVersion: null,
-    ompChecking: false,
-    onCheckOmp: noop,
-    appVersion: null,
-    appChecking: false,
-    onCheckApp: noop,
-    onNewSession: noop,
     onNewSessionIn: noop,
-    historyActive: false,
-    onToggleHistory: noop,
     meta,
     tagCounts: [{ tag: "bug", count: 1 }],
     activeTags: [],
@@ -115,16 +100,16 @@ function renderSidebar(over: {
     onRequestDelete: noop,
     onMetaSnapshot,
   };
-  const view = render(<Sidebar {...props} />);
+  const view = render(<SessionList {...props} />);
   return {
-    onSelect,
+    onSelect: onOpenSession,
     onOpenIterm,
     onMetaSnapshot,
     onToast,
     view,
     /** 模拟「菜单已弹出、列表随后刷新」：换一份 groups 重渲染。 */
     rerenderWith: (next: { groups: ProjectGroup[] }) =>
-      view.rerender(<Sidebar {...props} {...next} />),
+      view.rerender(<SessionList {...props} {...next} />),
   };
 }
 
@@ -143,7 +128,7 @@ beforeEach(() => {
   clearMocks();
 });
 
-describe("Sidebar 右键菜单", () => {
+describe("SessionList 右键菜单", () => {
   it("右键未勾选的行：弹出单会话菜单且不改变选中态", async () => {
     const { onSelect } = renderSidebar();
     fireEvent.contextMenu(rowOf(first.title));

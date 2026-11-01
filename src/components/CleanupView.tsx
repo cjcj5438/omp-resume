@@ -6,24 +6,26 @@
  */
 import { useEffect, useState } from "react";
 import { listCleanupCandidates, normalizeError } from "../api";
-import { errorText, formatRelativeTime, formatSize } from "../format";
+import { formatRelativeTime, formatSize } from "../format";
 import { retainExisting } from "../listUtils";
-import type { AppError, CleanupCandidate } from "../types";
+import type { AppError, CleanupCandidate, CleanupReason } from "../types";
 import {
   REASON_LABEL,
   isSelectable,
+  reasonCounts,
   selectionTotals,
   sortCandidates,
   toDeleteTargets,
   toggleAllSelectable,
   type CleanupSortDir,
 } from "../cleanup";
+import { ErrorBanner, PageHeader, Seg } from "./page";
 import type { DeleteTarget } from "../flows";
 import { Badge, EmptyState } from "./ui";
 import { Sparkles } from "lucide-react";
+import "./Usage.css";
 
 interface CleanupViewProps {
-  onBack: () => void;
   /** 会话是否在当前已加载列表中（决定「查看」能否跳回主列表）。 */
   canView: (path: string) => boolean;
   onView: (path: string) => void;
@@ -42,7 +44,6 @@ function positiveInt(raw: string, min: number): number | null {
 }
 
 export function CleanupView({
-  onBack,
   canView,
   onView,
   onDelete,
@@ -58,6 +59,7 @@ export function CleanupView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const [sortDir, setSortDir] = useState<CleanupSortDir>("desc");
+  const [reason, setReason] = useState<CleanupReason | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -93,26 +95,64 @@ export function CleanupView({
 
   // 展示顺序完全由前端决定（后端固定体积降序），勾选集合按 path，换序不丢选中。
   const list = sortCandidates(candidates ?? [], sortDir);
-  const selectableCount = list.filter(isSelectable).length;
-  const totals = selectionTotals(list, checked);
+  const visible = reason ? list.filter((c) => c.reasons.includes(reason)) : list;
+  const counts = reasonCounts(list);
+  const selectableCount = visible.filter(isSelectable).length;
+  const totals = selectionTotals(visible, checked);
   const allSelected =
-    selectableCount > 0 && list.filter(isSelectable).every((c) => checked.has(c.path));
+    selectableCount > 0 && visible.filter(isSelectable).every((c) => checked.has(c.path));
 
+  function selectReason(next: CleanupReason | null) {
+    setReason(next);
+    // 剪掉勾选中不在新可见集里的路径，避免删除不可见的项。
+    const scope = next ? list.filter((c) => c.reasons.includes(next)) : list;
+    const allowed = new Set(scope.map((c) => c.path));
+    setChecked((prev) => new Set([...prev].filter((p) => allowed.has(p))));
+  }
+
+  const REASONS: CleanupReason[] = ["empty", "cwd_missing", "large", "stale"];
   return (
-    <main className="detail">
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h1 className="detail-title">清理</h1>
-          <span className="detail-actions">
-            <button type="button" className="btn" onClick={onBack}>
-              返回
+    <div className="view">
+      <PageHeader
+        kicker="分析 · 只读扫描"
+        title="清理候选"
+        sub="只读扫描本机会话，按规则列出候选；删除走既有永久删除流程（不进废纸篓）。"
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={loading}
+              onClick={() => setRescan((v) => v + 1)}
+            >
+              {loading ? <span className="spinner" aria-hidden="true" /> : null}
+              重新扫描
             </button>
-          </span>
-        </div>
-        <p className="detail-sub">
-          只读扫描本机会话，按规则列出候选；删除走既有永久删除流程（不进废纸篓）。
-        </p>
-      </header>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={totals.count === 0}
+              onClick={() => onDelete(toDeleteTargets(visible, checked))}
+            >
+              删除所选…
+            </button>
+          </>
+        }
+      />
+      <div className="kpi-grid kpi-grid-4" role="group" aria-label="按原因筛选">
+        {REASONS.map((r) => (
+          <button
+            key={r}
+            type="button"
+            className="kpi-card"
+            aria-pressed={reason === r}
+            onClick={() => selectReason(reason === r ? null : r)}
+          >
+            <span className="kpi-label">{REASON_LABEL[r]}</span>
+            <span className="kpi-value">{counts[r]}</span>
+          </button>
+        ))}
+      </div>
       <div className="toolbar cleanup-controls">
         <label className="cleanup-field">
           超过
@@ -146,66 +186,29 @@ export function CleanupView({
             onBlur={() => setTopNText(String(topN))}
           />
         </label>
-        <div className="seg" role="group" aria-label="排序方向">
-          <button
-            type="button"
-            className="btn"
-            aria-pressed={sortDir === "desc"}
-            onClick={() => setSortDir("desc")}
-          >
-            体积倒序
-          </button>
-          <button
-            type="button"
-            className="btn"
-            aria-pressed={sortDir === "asc"}
-            onClick={() => setSortDir("asc")}
-          >
-            体积正序
-          </button>
-        </div>
+        <Seg
+          label="排序方向"
+          value={sortDir}
+          onChange={setSortDir}
+          options={[
+            { value: "desc", label: "体积倒序" },
+            { value: "asc", label: "体积正序" },
+          ]}
+        />
         <button
           type="button"
           className="btn"
           disabled={selectableCount === 0}
-          onClick={() => setChecked(toggleAllSelectable(list, checked))}
+          onClick={() => setChecked(toggleAllSelectable(visible, checked))}
         >
           {allSelected ? "取消全选" : "全选可勾选项"}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={loading}
-          onClick={() => setRescan((v) => v + 1)}
-        >
-          {loading ? <span className="spinner" aria-hidden="true" /> : null}
-          重新扫描
         </button>
         <span className="cleanup-total" role="status">
           已选 {totals.count} 个，可释放 {formatSize(totals.bytes)}
         </span>
-        <button
-          type="button"
-          className="btn btn-danger"
-          disabled={totals.count === 0}
-          onClick={() => onDelete(toDeleteTargets(list, checked))}
-        >
-          删除所选…
-        </button>
       </div>
       <div className="cleanup-body" aria-busy={loading}>
-        {error ? (
-          <div className="banner banner-error" role="alert">
-            <span>{errorText(error)}</span>
-            <button
-              type="button"
-              className="btn btn-small"
-              onClick={() => setRescan((v) => v + 1)}
-            >
-              重试
-            </button>
-          </div>
-        ) : null}
+        {error ? <ErrorBanner error={error} onRetry={() => setRescan((v) => v + 1)} /> : null}
         {loading && list.length === 0 && !error ? (
           <div className="pane-note" role="status">
             正在扫描可清理的会话…
@@ -216,7 +219,12 @@ export function CleanupView({
             没有符合清理规则的会话（空会话 / 目录已删除 / 体积大 / 久未更新）。
           </EmptyState>
         ) : null}
-        {list.length > 0 ? (
+        {list.length > 0 && visible.length === 0 ? (
+          <div className="pane-note" role="status">
+            该原因下没有候选。
+          </div>
+        ) : null}
+        {visible.length > 0 ? (
           <table className="manage-table cleanup-table">
             <thead>
               <tr>
@@ -229,7 +237,7 @@ export function CleanupView({
               </tr>
             </thead>
             <tbody>
-              {list.map((c) => {
+              {visible.map((c) => {
                 const selectable = isSelectable(c);
                 return (
                   <tr key={c.path} className={selectable ? undefined : "cleanup-locked"}>
@@ -301,6 +309,6 @@ export function CleanupView({
           </table>
         ) : null}
       </div>
-    </main>
+    </div>
   );
 }

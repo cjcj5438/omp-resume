@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   ERROR_KIND_NAME,
   activitySummary,
@@ -137,4 +137,61 @@ it("活跃度汇总：活跃天数、合计、最高单日（同价取最早）�
   expect(sum.streak).toBe(2);
   // 同价取最早。
   expect(activitySummary([{ key: "a", cost: 3 }, { key: "b", cost: 3 }]).best).toEqual({ key: "a", cost: 3 });
+});
+
+describe("heatDayDetail", () => {
+  it("delta = (当日 − 前 7 条目均值) / 均值；不足 7 条用实有条目", async () => {
+    const { heatDayDetail } = await import("./usageFormat");
+    const days = [10, 10, 10, 10, 10, 10, 10, 20].map((cost, i) => ({
+      key: `2026-01-0${i + 1}`,
+      cost,
+      tokens: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+    }));
+    const d = heatDayDetail(days, "2026-01-08");
+    expect(d?.weekday).toBe("周四");
+    expect(d?.costDelta).toBeCloseTo(1, 5);
+    expect(d?.tokensDelta).toBeCloseTo(1, 5);
+    // 前序只有 2 条：均值 10，当日 5 → −50%。
+    const short = heatDayDetail(days.slice(0, 3).map((x, i) => (i === 2 ? { ...x, cost: 5, tokens: { input: 5, output: 0, cacheRead: 0, cacheWrite: 0, total: 5 } } : x)), "2026-01-03");
+    expect(short?.costDelta).toBeCloseTo(-0.5, 5);
+  });
+
+  it("均值为 0 或无前序条目时 delta 为 null；key 不存在返回 null", async () => {
+    const { heatDayDetail } = await import("./usageFormat");
+    const days = [0, 0, 5].map((cost, i) => ({
+      key: `2026-02-0${i + 1}`,
+      cost,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    }));
+    expect(heatDayDetail(days, "2026-02-03")?.costDelta).toBeNull();
+    expect(heatDayDetail(days, "2026-02-01")?.costDelta).toBeNull();
+    expect(heatDayDetail(days, "2026-03-01")).toBeNull();
+  });
+});
+
+describe("usageSummaryText", () => {
+  it("前 3 项目按花费排序；各行格式固定", async () => {
+    const { usageSummaryText } = await import("./usageFormat");
+    const { mockUsageStats } = await import("../dev/usageMock");
+    const stats = mockUsageStats("30d");
+    const text = usageSummaryText(stats, "近 30 天");
+    const lines = text.split("\n");
+    expect(lines[0]).toBe("omp 用量（近 30 天）");
+    expect(lines[1]).toMatch(/^会话 .* · 项目 .*$/);
+    expect(lines[2]).toMatch(/^费用 .*（主对话 .* · 后台 .* · 子代理 .*）$/);
+    expect(lines[4]).toMatch(/^缓存命中 /);
+    expect(lines[5]).toMatch(/^工具调用 .* · 活跃时长 /);
+    // 花费最高项目行：按 cost 倒序取前 3。
+    const expected = [...stats.byProject]
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 3)
+      .map((p) => p.cwd.split("/").filter(Boolean).pop() ?? p.cwd);
+    expect(lines[6].startsWith("花费最高项目：")).toBe(true);
+    let last = -1;
+    for (const name of expected) {
+      const at = lines[6].indexOf(name, last + 1);
+      expect(at).toBeGreaterThan(last);
+      last = at;
+    }
+  });
 });

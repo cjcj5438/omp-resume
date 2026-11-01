@@ -17,13 +17,13 @@ import { OMP_CLI_COMMANDS, OMP_CLI_VERSION } from "../ompCliCommands";
 import { OMP_LEARNING_PATHS } from "../ompLearningPaths";
 import { OMP_COMBOS, filterOmpCombos } from "../ompCombos";
 import { copyText } from "../clipboard";
-import { Ico, Modal } from "./ui";
+import { Ico } from "./ui";
+import { PageHeader } from "./page";
 import { Check } from "lucide-react";
 import { useAlive } from "./useOmpOp";
 import "./CheatSheet.css";
 
-interface CheatSheetDialogProps {
-  onClose: () => void;
+interface CheatSheetViewProps {
   /** 本机已安装 omp 版本；null/缺省表示未知，不做版本提示。 */
   installedVersion?: string | null;
 }
@@ -40,8 +40,12 @@ const TABS: { key: Tab; label: string }[] = [
 const COPIED_MS = 1500;
 const FAILED_MS = 4000;
 
-export function CheatSheetDialog({ onClose, installedVersion = null }: CheatSheetDialogProps) {
+export function CheatSheetView({ installedVersion = null }: CheatSheetViewProps) {
   const [tab, setTab] = useState<Tab>("paths");
+  const filterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    filterRef.current?.focus();
+  }, []);
   const [query, setQuery] = useState("");
   // 已复制按钮的 key（1.5 秒后还原）；复制失败改为同屏可见提示。
   const [copied, setCopied] = useState<string | null>(null);
@@ -140,17 +144,9 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
             : `基于 omp ${OMP_CLI_VERSION} · 匹配 ${cli.length} / ${OMP_CLI_COMMANDS.length} 个终端子命令`;
 
   return (
-    <Modal
-      title="命令速查"
-      onClose={onClose}
-      wide
-      footer={
-        <button type="button" className="btn" onClick={onClose}>
-          关闭
-        </button>
-      }
-    >
-      <p className="cheatsheet-head">{head}</p>
+    <div className="view">
+      <PageHeader kicker="工具 · 参考" title="速查表" sub={head} />
+      <div className="cheatsheet-page">
       {versionMismatch(installedVersion) ? (
         <p className="cheatsheet-version-note">
           你安装的是 {installedVersion}，速查基于 {OMP_VERSION}，个别命令可能有差异
@@ -172,6 +168,7 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
           ))}
         </div>
         <input
+          ref={filterRef}
           type="search"
           className="filter-input cheatsheet-filter"
           placeholder={
@@ -358,7 +355,8 @@ export function CheatSheetDialog({ onClose, installedVersion = null }: CheatShee
         以上为 omp 斜杠命令与终端子命令；`/skill:xxx` 技能命令、自定义命令与插件命令不在此列，
         实时补全以在 omp 中输入 / 为准。
       </p>
-    </Modal>
+      </div>
+    </div>
   );
 }
 

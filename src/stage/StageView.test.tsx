@@ -166,7 +166,7 @@ afterEach(() => {
 describe("StageView", () => {
   test("无运行会话且无选中会话 → 空态", async () => {
     listRunningSessions.mockResolvedValue([]);
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     expect(await screen.findByText("没有运行中的会话")).toBeInTheDocument();
     expect(screen.getByText("在左侧选择一个会话，可回看它的子代理舞台。")).toBeInTheDocument();
     expect(getAgentStage).not.toHaveBeenCalled();
@@ -177,11 +177,11 @@ describe("StageView", () => {
     getAgentStage.mockResolvedValue(
       stage([actor("api", "done"), actor("tests", "running"), actor("docs", "failed")]),
     );
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     const cards = await screen.findByRole("group", { name: "角色卡片" });
     expect(within(cards).getByRole("button", { name: /api/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^完成 / }));
+    fireEvent.click(screen.getByRole("button", { name: /^完成/ }));
     await waitFor(() => {
       expect(within(cards).queryByRole("button", { name: /tests/ })).not.toBeInTheDocument();
     });
@@ -195,11 +195,14 @@ describe("StageView", () => {
     getAgentStage.mockResolvedValue(
       stage([actor("api", "done"), actor("tests", "running", { recent: [{ at: "2026-10-21T01:05:30.000Z", kind: "reply", tool: null, text: "唯一一条" }] })]),
     );
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     const cards = await screen.findByRole("group", { name: "角色卡片" });
     fireEvent.click(within(cards).getByRole("button", { name: /tests/ }));
-    expect(await screen.findByText("唯一一条")).toBeInTheDocument();
-    expect(screen.queryByText("完成")).toBeNull();
+    const feed = await screen.findByText("唯一一条");
+    const feedList = feed.closest(".stage-feed-list");
+    expect(feedList).not.toBeNull();
+    // 活动流只含 tests 的记录：api（已完成）的不在其中。
+    expect((feedList as HTMLElement).textContent).not.toContain("任务 api");
 
     fireEvent.keyDown(document, { key: "Escape" });
     // 清选后回到「全部角色」。
@@ -213,7 +216,7 @@ describe("StageView", () => {
     getAgentStage.mockResolvedValue(
       stage([actor("api", "done", { statusText: "已结束" }), actor("idle1", "idle", { statusText: "等待输入" })]),
     );
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     const cards = await screen.findByRole("group", { name: "角色卡片" });
     const done = within(cards).getByRole("button", { name: /api/ });
     expect(done.textContent).toContain("已完成");
@@ -225,7 +228,7 @@ describe("StageView", () => {
   test("NOT_FOUND 显示专用文案", async () => {
     listRunningSessions.mockResolvedValue([RUNNING_ONE]);
     getAgentStage.mockRejectedValue({ code: "NOT_FOUND", message: "会话文件不存在：/x" });
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     // 连续 2 次失败才置错误（偶发失败不该闪错误）；1.5s 一次轮询。
     expect(
       await screen.findByText("会话文件不存在（可能已被删除）", undefined, { timeout: 5000 }),
@@ -238,7 +241,6 @@ describe("StageView", () => {
     getAgentStage.mockResolvedValue(stage([], false));
     render(
       <StageView
-        onBack={() => {}}
         selectedPath="/mock/s.jsonl"
         stageTarget={null}
         selectedTitle="回看会话"
@@ -254,7 +256,7 @@ describe("StageView", () => {
   test("Agent 库可打开、切换形象并落 localStorage（只读配置）", async () => {
     listRunningSessions.mockResolvedValue([RUNNING_ONE]);
     getAgentStage.mockResolvedValue(stage([actor("api", "running")]));
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     fireEvent.click(await screen.findByRole("button", { name: "打开 Agent 库" }));
     const dialog = await screen.findByRole("dialog", { name: "Agent 库" });
     expect(within(dialog).getByText(/形象只保存在本应用/)).toBeInTheDocument();
@@ -269,7 +271,7 @@ describe("StageView", () => {
   test("选中角色后显示它的 agent 配置（只读）", async () => {
     listRunningSessions.mockResolvedValue([RUNNING_ONE]);
     getAgentStage.mockResolvedValue(stage([actor("api", "running", { agent: "scout" })]));
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     const cards = await screen.findByRole("group", { name: "角色卡片" });
     fireEvent.click(within(cards).getByRole("button", { name: /api/ }));
     expect(await screen.findByText("Agent 配置 · scout")).toBeInTheDocument();
@@ -288,7 +290,7 @@ describe("StageView", () => {
     getAgentStage
       .mockResolvedValueOnce(stage([actor("api", "running")]))
       .mockResolvedValue(stage([actor("api", "done", { statusText: "已结束" })]));
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={() => {}} />);
     await screen.findByRole("group", { name: "角色卡片" });
     await waitFor(
       () => {
@@ -306,7 +308,6 @@ describe("StageView", () => {
     getAgentStage.mockResolvedValue(stage([actor("api", "running")]));
     const { rerender } = render(
       <StageView
-        onBack={() => {}}
         selectedPath="/mock/s.jsonl"
         selectedTitle="回看会话"
         onOpenSession={() => {}}
@@ -320,7 +321,6 @@ describe("StageView", () => {
     getAgentStage.mockClear();
     rerender(
       <StageView
-        onBack={() => {}}
         selectedPath="/mock/old.jsonl"
         selectedTitle="旧会话"
         onOpenSession={() => {}}
@@ -336,7 +336,6 @@ describe("StageView", () => {
     listRunningSessions.mockResolvedValue([RUNNING_ONE]);
     getAgentStage.mockResolvedValue(stage([actor("api", "running")]));
     const props = {
-      onBack: () => {},
       selectedTitle: "另一个会话",
       onOpenSession: () => {},
     };
@@ -357,7 +356,7 @@ describe("StageView", () => {
       expect(getAgentStage).toHaveBeenCalledWith("/mock/other.jsonl");
     });
     // 仍在舞台视图（头部标题还在）。
-    expect(screen.getByText("舞台")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "像素办公室" })).toBeInTheDocument();
   });
 
   test("同一会话在侧栏被再次点击时舞台仍切换过去", async () => {
@@ -377,7 +376,6 @@ describe("StageView", () => {
       }),
     );
     const base = {
-      onBack: () => {},
       selectedTitle: "回看的 A",
       onOpenSession: () => {},
     };
@@ -422,7 +420,7 @@ describe("StageView", () => {
     listRunningSessions.mockResolvedValue([RUNNING_ONE]);
     getAgentStage.mockResolvedValue(stage([actor("api", "running")]));
     const onOpenSession = vi.fn<(path: string) => void>();
-    render(<StageView onBack={() => {}} selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={onOpenSession} />);
+    render(<StageView selectedPath={null} stageTarget={null} selectedTitle={null} onOpenSession={onOpenSession} />);
     fireEvent.click(await screen.findByRole("button", { name: "查看会话" }));
     expect(onOpenSession).toHaveBeenCalledWith("/mock/s.jsonl");
   });

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 // 回归：每个 CSS 文件都必须被显式引用，防止样式表因误删 import 而静默失效。
 const cssFiles = Object.keys(import.meta.glob("./**/*.css")).map((p) => p.split("/").pop()!);
 const raw = (m: Record<string, unknown>) => Object.values(m).join("\n");
@@ -14,4 +15,12 @@ const missing = cssFiles.filter((f) => {
 
 test("每个 CSS 文件都被源码导入（防止样式表被误删导入）", () => {
   expect(missing, `未被任何来源引用的 CSS：${missing.join("、")}`).toEqual([]);
+});
+
+const appCss = readFileSync(join(process.cwd(), "src", "App.css"), "utf-8");
+
+test("App.css 的 token 挂在 :root 上（::root 会被浏览器整条丢弃）", () => {
+  expect(appCss).not.toContain("::root");
+  expect(appCss).toContain(":root,");
+  expect(appCss).toContain(':root[data-theme="dark"]');
 });

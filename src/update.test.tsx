@@ -18,11 +18,12 @@ vi.mock("@tauri-apps/api/app", async (orig) => ({
   getVersion: vi.fn().mockResolvedValue("0.1.0"),
 }));
 // 必须展开原模块：@tauri-apps/api/window 内部也 import event 模块。
+// App 会订阅多个托盘事件（检查更新、打开菜单栏页），按事件名区分 handler。
 let trayHandler: (() => void) | null = null;
 vi.mock("@tauri-apps/api/event", async (orig) => ({
   ...(await orig<object>()),
-  listen: vi.fn(async (_event: string, handler: () => void) => {
-    trayHandler = handler;
+  listen: vi.fn(async (event: string, handler: () => void) => {
+    if (event === "check-app-update") trayHandler = handler;
     return () => {};
   }),
 }));

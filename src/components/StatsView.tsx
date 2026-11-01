@@ -2,23 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { getUsageHealth, getUsageStats, normalizeError } from "../api";
 import { errorText, formatMs, formatTps, usageMoney, usageNumber } from "../format";
 import type { AppError, UsageHealth, UsageRange, UsageStats } from "../types";
+import { copyText } from "../clipboard";
 import { HealthBoard } from "./HealthBoard";
 import { Kpi, TopSessions } from "./UsageCards";
 import { TrendChart, type TrendMetric } from "./UsageCharts";
 import { Donut } from "./UsageDonut";
 import { UsageHeatmap } from "./UsageHeatmap";
-import { activitySummary, cacheHitRate, compactNumber, formatDuration, formatHitRate } from "./usageFormat";
+import { activitySummary, cacheHitRate, compactNumber, formatDuration, formatHitRate, heatDayDetail, usageSummaryText, type HeatMetric } from "./usageFormat";
 import { EmptyState } from "./ui";
+import { PageHeader, Seg } from "./page";
 import { ChartColumn } from "lucide-react";
 import "./Usage.css";
 
-type StatsTab = "cost" | "health";
-
-const TABS: { key: StatsTab; label: string }[] = [
-  { key: "cost", label: "总览" },
-  { key: "health", label: "运行看板" },
-];
-
+export type StatsRoute = "usage" | "health";
 const RANGES: { value: UsageRange; label: string }[] = [
   { value: "today", label: "今天" },
   { value: "24h", label: "近 24 小时" },
@@ -100,19 +96,12 @@ function RangeControls({
 }) {
   return (
     <div className="usage-controls">
-      <div role="group" aria-label="统计范围" className="seg">
-        {RANGES.map((r) => (
-          <button
-            key={r.value}
-            type="button"
-            className="btn"
-            aria-pressed={range === r.value}
-            onClick={() => onRange(r.value)}
-          >
-            {r.label}
-          </button>
-        ))}
-      </div>
+      <Seg
+        label="统计范围"
+        value={range}
+        onChange={onRange}
+        options={RANGES.map((r) => ({ value: r.value, label: r.label }))}
+      />
       <button type="button" className="btn" disabled={loading} onClick={onRefresh}>
         {refreshLabel}
       </button>
@@ -142,20 +131,49 @@ function StatsTable({ name, heads, rows, total }: { name: string; heads: string[
   </section>;
 }
 
-function OverviewPanel({ range, onRange, sessionTitle, onOpenSession }: { range: UsageRange; onRange: (r: UsageRange) => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void }) {
+function OverviewPanel({ range, onRange, sessionTitle, onOpenSession, onData }: { range: UsageRange; onRange: (r: UsageRange) => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void; onData: (d: UsageStats | null) => void }) {
   const { data, loading, error, refresh } = useRangeData<UsageStats>(`stats:${range}`, () => getUsageStats({ range }));
   const [metric, setMetric] = useState<TrendMetric>("cost");
+  const [heatMetric, setHeatMetric] = useState<HeatMetric>("cost");
+  const [heatSelected, setHeatSelected] = useState<string | null>(null);
+  useEffect(() => {
+    onData(data);
+  }, [data, onData]);
+  // 选中日默认取 activity 最后一项；数据刷新后 key 不在则回落。
+  const lastKey = data?.activity.length ? data.activity[data.activity.length - 1].key : null;
+  const effectiveSelected = heatSelected !== null && data?.activity.some((d) => d.key === heatSelected) ? heatSelected : lastKey;
   return (
     <div className="usage-body" aria-busy={loading}>
       <RangeControls range={range} onRange={onRange} loading={loading} onRefresh={refresh} refreshLabel="刷新统计" />
       {loading && !data ? <div className="pane-note" role="status">正在扫描用量…</div> : null}
       {error ? <div className="banner banner-error" role="alert">{errorText(error)}<button type="button" className="btn btn-small" onClick={refresh}>重试</button></div> : null}
-      {data ? <OverviewBody data={data} metric={metric} onMetric={setMetric} sessionTitle={sessionTitle} onOpenSession={onOpenSession} /> : null}
+      {data ? <OverviewBody data={data} metric={metric} onMetric={setMetric} sessionTitle={sessionTitle} onOpenSession={onOpenSession} heatMetric={heatMetric} onHeatMetric={setHeatMetric} heatSelected={effectiveSelected} onHeatSelect={setHeatSelected} /> : null}
     </div>
   );
 }
 
-function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: { data: UsageStats; metric: TrendMetric; onMetric: (m: TrendMetric) => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void }) {
+function formatDelta(delta: number | null): string {
+  if (delta === null) return "—";
+  const pct = delta * 100;
+  const sign = pct > 0 ? "+" : pct < 0 ? "−" : "";
+  return `${sign}${Math.abs(pct).toFixed(1)}%`;
+}
+
+/** 选中日块：日期 + 花费/Token + 较前 7 天日均涨跌。 */
+function HeatDayBlock({ days, selectedKey }: { days: UsageStats["activity"]; selectedKey: string }) {
+  const detail = heatDayDetail(days, selectedKey);
+  if (detail === null) return null;
+  return (
+    <div className="heat-day" aria-label="选中日">
+      <span className="heat-day-date">{detail.key} {detail.weekday}</span>
+      <span>花费 {usageMoney(detail.cost)}</span>
+      <span>Token {usageNumber(detail.tokens)}</span>
+      <span className="usage-muted">较前 7 天日均：花费 {formatDelta(detail.costDelta)} · Token {formatDelta(detail.tokensDelta)}</span>
+    </div>
+  );
+}
+
+function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession, heatMetric, onHeatMetric, heatSelected, onHeatSelect }: { data: UsageStats; metric: TrendMetric; onMetric: (m: TrendMetric) => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void; heatMetric: HeatMetric; onHeatMetric: (m: HeatMetric) => void; heatSelected: string | null; onHeatSelect: (key: string) => void }) {
   const { total, timing } = data;
   const active = timing.waitMs + timing.genMs + timing.toolMs;
   const hit = cacheHitRate(total.tokens);
@@ -177,10 +195,15 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
       <section className="health-card usage-trend" aria-label="用量趋势">
         <div className="card-head">
           <h2>用量趋势</h2>
-          <div role="group" aria-label="趋势指标" className="seg">
-            <button type="button" className="btn" aria-pressed={metric === "cost"} onClick={() => onMetric("cost")}>花费</button>
-            <button type="button" className="btn" aria-pressed={metric === "tokens"} onClick={() => onMetric("tokens")}>Token</button>
-          </div>
+          <Seg
+            label="趋势指标"
+            value={metric}
+            onChange={onMetric}
+            options={[
+              { value: "cost", label: "花费" },
+              { value: "tokens", label: "Token" },
+            ]}
+          />
         </div>
         <TrendChart unit={data.trend.unit} points={data.trend.points} metric={metric} />
       </section>
@@ -220,11 +243,20 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
         <div className="card-head">
           <div className="heat-title">
             <h2>活跃度</h2>
-            <span className="usage-muted heat-scope">近 26 周 · 按日花费 · 不受上方范围影响</span>
+            <span className="usage-muted heat-scope">近 26 周 · 按日{heatMetric === "cost" ? "花费" : "Token"} · 不受上方范围影响</span>
           </div>
+          <Seg
+            label="热力指标"
+            value={heatMetric}
+            onChange={onHeatMetric}
+            options={[
+              { value: "cost", label: "花费" },
+              { value: "tokens", label: "Token" },
+            ]}
+          />
         </div>
         <div className="heat-flex">
-          <UsageHeatmap days={data.activity} />
+          <UsageHeatmap days={data.activity} metric={heatMetric} selectedKey={heatSelected} onSelect={onHeatSelect} />
           <div className="heat-summary">
             <div className="heat-stat">
               <strong>{activity.activeDays}</strong>
@@ -244,6 +276,7 @@ function OverviewBody({ data, metric, onMetric, sessionTitle, onOpenSession }: {
             </div>
           </div>
         </div>
+        {heatSelected !== null ? <HeatDayBlock days={data.activity} selectedKey={heatSelected} /> : null}
       </section>
       <section className="health-card usage-top" aria-label="高花费会话">
         <h2>高花费会话</h2>
@@ -267,48 +300,49 @@ function HealthPanel({ range, onRange }: { range: UsageRange; onRange: (r: Usage
   );
 }
 
-export function StatsView({ onBack, sessionTitle, onOpenSession }: { onBack: () => void; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void }) {
-  const [tab, setTab] = useState<StatsTab>("cost");
+export function StatsView({ tab, sessionTitle, onOpenSession, onToast }: { tab: StatsRoute; sessionTitle: (path: string) => string | null; onOpenSession: (path: string) => void; onToast: (text: string, kind: "info" | "error") => void }) {
   const [costRange, setCostRange] = useState<UsageRange>("today");
   const [healthRange, setHealthRange] = useState<UsageRange>("today");
+  const [stats, setStats] = useState<UsageStats | null>(null);
   // 看板首次访问后常驻（hidden 隐藏）：各自记住范围，切回不重复请求。
   const [healthVisited, setHealthVisited] = useState(false);
+  useEffect(() => {
+    if (tab === "health") setHealthVisited(true);
+  }, [tab]);
+
+  async function copySummary() {
+    if (stats === null) return;
+    const label = RANGES.find((r) => r.value === costRange)?.label ?? costRange;
+    if (await copyText(usageSummaryText(stats, label))) onToast("已复制用量摘要", "info");
+    else onToast("复制失败：剪贴板不可用", "error");
+  }
+
   return (
-    <main className="detail">
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h1 className="detail-title">用量统计</h1>
-          <span className="detail-actions">
-            <button type="button" className="btn" onClick={onBack}>返回</button>
-          </span>
-        </div>
-        <p className="detail-sub">只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD</p>
-      </header>
-      <div className="tabs" role="tablist" aria-label="用量统计">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            id={`tab-stats-${t.key}`}
-            aria-selected={tab === t.key}
-            aria-controls={`panel-stats-${t.key}`}
-            className={tab === t.key ? "tab tab-active" : "tab"}
-            onClick={() => {
-              setTab(t.key);
-              if (t.key === "health") setHealthVisited(true);
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="view">
+      {tab === "usage" ? (
+        <PageHeader
+          kicker="分析 · 来自 usage 记录"
+          title="用量"
+          sub="只读统计 · 主对话 + 后台调用 + 子代理 · fork 复制条目只计一次 · USD"
+          actions={
+            <button type="button" className="btn" disabled={stats === null} onClick={() => void copySummary()}>
+              复制摘要
+            </button>
+          }
+        />
+      ) : (
+        <PageHeader
+          kicker="分析 · 来自 usage 记录"
+          title="运行健康"
+          sub="请求、错误、兜底切换与缓存命中，上游是否不稳一眼可见。"
+        />
+      )}
+      <div role="tabpanel" id="panel-stats-cost" aria-label="用量" hidden={tab !== "usage"} className="usage-panel">
+        <OverviewPanel range={costRange} onRange={setCostRange} sessionTitle={sessionTitle} onOpenSession={onOpenSession} onData={setStats} />
       </div>
-      <div role="tabpanel" id="panel-stats-cost" aria-labelledby="tab-stats-cost" hidden={tab !== "cost"} className="usage-panel">
-        <OverviewPanel range={costRange} onRange={setCostRange} sessionTitle={sessionTitle} onOpenSession={onOpenSession} />
-      </div>
-      <div role="tabpanel" id="panel-stats-health" aria-labelledby="tab-stats-health" hidden={tab !== "health"} className="usage-panel">
+      <div role="tabpanel" id="panel-stats-health" aria-label="运行健康" hidden={tab !== "health"} className="usage-panel">
         {healthVisited ? <HealthPanel range={healthRange} onRange={setHealthRange} /> : null}
       </div>
-    </main>
+    </div>
   );
 }

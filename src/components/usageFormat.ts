@@ -1,4 +1,5 @@
-import type { ErrorKind, UsageTokens, UsageTrendUnit } from "../types";
+import type { ErrorKind, UsageStats, UsageTokens, UsageTrendPoint, UsageTrendUnit } from "../types";
+import { usageMoney, usageNumber } from "../format";
 
 /** ErrorKind 中文映射（契约固定 7 种）。 */
 export const ERROR_KIND_NAME: Record<ErrorKind, string> = {
@@ -152,4 +153,74 @@ export function activitySummary(days: { key: string; cost: number }[]): {
     streak += 1;
   }
   return { activeDays, totalCost, best, streak };
+}
+
+/** 热力指标：花费 / Token。 */
+export type HeatMetric = "cost" | "tokens";
+
+export interface HeatDayDetail {
+  key: string;
+  weekday: string;
+  cost: number;
+  tokens: number;
+  costDelta: number | null;
+  tokensDelta: number | null;
+}
+
+const HEAT_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
+
+function heatDelta(prev: number[], value: number): number | null {
+  if (prev.length === 0) return null;
+  const mean = prev.reduce((a, b) => a + b, 0) / prev.length;
+  if (mean === 0) return null;
+  return (value - mean) / mean;
+}
+
+/**
+ * 选中日详情：delta = (当日 − 前 7 个条目均值) / 均值；前面不足 7 个用实有条目；
+ * 均值为 0 或没有前序条目时为 null。`activity` 是连续日序列，`key` 不存在时返回 null。
+ */
+export function heatDayDetail(days: UsageTrendPoint[], key: string): HeatDayDetail | null {
+  const idx = days.findIndex((d) => d.key === key);
+  if (idx < 0) return null;
+  const day = days[idx];
+  const prev = days.slice(Math.max(0, idx - 7), idx);
+  const weekday = HEAT_WEEKDAYS[new Date(`${day.key}T00:00:00`).getDay()] ?? "周一";
+  return {
+    key: day.key,
+    weekday,
+    cost: day.cost,
+    tokens: day.tokens.total,
+    costDelta: heatDelta(
+      prev.map((d) => d.cost),
+      day.cost,
+    ),
+    tokensDelta: heatDelta(
+      prev.map((d) => d.tokens.total),
+      day.tokens.total,
+    ),
+  };
+}
+
+/**
+ * 用量摘要文本（复制用）：标题 + 会话/项目 + 费用 + Token + 缓存命中 + 工具/时长 + 花费前 3 项目。
+ * 格式化函数与 StatsView 里已在用的同一套。
+ */
+export function usageSummaryText(stats: UsageStats, rangeLabel: string): string {
+  const { total, timing } = stats;
+  const active = timing.waitMs + timing.genMs + timing.toolMs;
+  const hit = cacheHitRate(total.tokens);
+  const top3 = [...stats.byProject]
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 3)
+    .map((p) => `${p.cwd.split("/").filter(Boolean).pop() ?? p.cwd} ${usageMoney(p.cost)}`);
+  return [
+    `omp 用量（${rangeLabel}）`,
+    `会话 ${usageNumber(stats.sessions)} · 项目 ${usageNumber(stats.byProject.length)}`,
+    `费用 ${usageMoney(total.cost.total)}（主对话 ${usageMoney(total.cost.main)} · 后台 ${usageMoney(total.cost.background)} · 子代理 ${usageMoney(total.cost.subagent)}）`,
+    `Token ${compactNumber(total.tokens.total)}（输入 ${usageNumber(total.tokens.input)} · 输出 ${usageNumber(total.tokens.output)} · 缓存读 ${usageNumber(total.tokens.cacheRead)} · 缓存写 ${usageNumber(total.tokens.cacheWrite)}）`,
+    `缓存命中 ${formatHitRate(hit)}`,
+    `工具调用 ${usageNumber(timing.toolCalls)} · 活跃时长 ${formatDuration(active)}`,
+    `花费最高项目：${top3.length > 0 ? top3.join("、") : "—"}`,
+  ].join("\n");
 }

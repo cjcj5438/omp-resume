@@ -130,24 +130,52 @@
 
 /* ---- 勾选框平时隐藏：hover / 聚焦 / 已选 / 批量选择中才显示 ----
  * 仅降透明度（仍占位、可聚焦），批量三态逻辑与可访问名称不变。 */
-.sidebar .row-check,
-.sidebar .group-check {
+.session-list .row-check,
+.session-list .group-check {
   opacity: 0;
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-.sidebar .row:hover .row-check,
-.sidebar .row:focus-within .row-check,
-.sidebar .row-check:checked,
-.sidebar .row-check:focus-visible,
-.sidebar .group-header-row:hover .group-check,
-.sidebar .group-header-row:focus-within .group-check,
-.sidebar .group-check:checked,
-.sidebar .group-check:indeterminate,
-.sidebar .group-check:focus-visible,
-.sidebar.is-selecting .row-check,
-.sidebar.is-selecting .group-check {
+.session-list .row:hover .row-check,
+.session-list .row:focus-within .row-check,
+.session-list .row-check:checked,
+.session-list .row-check:focus-visible,
+.session-list .group-header-row:hover .group-check,
+.session-list .group-header-row:focus-within .group-check,
+.session-list .group-check:checked,
+.session-list .group-check:indeterminate,
+.session-list .group-check:focus-visible,
+.session-list.is-selecting .row-check,
+.session-list.is-selecting .group-check {
   opacity: 1;
+}
+
+/* ---- 行内动作：只在行 hover / focus-within 时显示（照 pin-toggle 的显隐写法） ---- */
+.row-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.row:hover .row-actions,
+.row:focus-within .row-actions {
+  opacity: 1;
+}
+
+.btn.icon-btn.row-action {
+  width: 22px;
+  height: 22px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.btn.icon-btn.row-action:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 /* ---- 项目组 ---- */
@@ -264,14 +292,6 @@
   margin-top: 2px;
 }
 
-.footer-count {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .footer-actions {
   display: flex;
   align-items: center;
@@ -285,12 +305,6 @@
 
 .footer-row .changelog-link {
   margin-left: 0;
-}
-
-/* 外观按钮在行尾：弹窗向左展开，避免溢出侧栏。 */
-.footer-row .appearance-pop {
-  left: auto;
-  right: 0;
 }
 
 /* ---- 右键菜单目标：细描边提示归属（不改选中态） ---- */

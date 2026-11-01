@@ -19,11 +19,11 @@ import { agentKeyOf, loadStagePrefs, type StagePrefs } from "./prefs";
 import { STATE_WORD } from "./stateWords";
 import { useRunningSessions, useStagePoll } from "./useStageData";
 import { EmptyState } from "../components/ui";
+import { PageHeader, Seg } from "../components/page";
 import { Theater } from "lucide-react";
 import "./Stage.css";
 
 export interface StageViewProps {
-  onBack: () => void;
   selectedPath: string | null;
   /** App 转发的侧栏点击请求（path 相同也可能需要切换，seq 区分每次点击）。 */
   stageTarget: { path: string; seq: number } | null;
@@ -52,7 +52,7 @@ function mmss(totalSecs: number): string {
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, onOpenSession }: StageViewProps) {
+export function StageView({ selectedPath, stageTarget, selectedTitle, onOpenSession }: StageViewProps) {
   const running = useRunningSessions();
   const [stagePath, setStagePath] = useState<string | null>(null);
   const [filterKey, setFilterKey] = useState("all");
@@ -182,21 +182,18 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
 
   if (stagePath === null) {
     return (
-      <main className="detail stage-view">
-        <header className="detail-head">
-          <div className="detail-title-row">
-            <h1 className="detail-title">舞台</h1>
-            <span className="detail-actions">
-              <button type="button" className="btn" onClick={onBack}>返回</button>
-            </span>
-          </div>
-        </header>
+      <div className="view stage-view">
+        <PageHeader
+          kicker="Agent Stage · 来自 JSONL 重建"
+          title="像素办公室"
+          sub="子代理、worker 与 advisor 的实时状态，只画会话文件里记录过的事实。"
+        />
         <div className="stage-empty">
           <EmptyState icon={Theater} title="没有运行中的会话">
             在左侧选择一个会话，可回看它的子代理舞台。
           </EmptyState>
         </div>
-      </main>
+      </div>
     );
   }
 
@@ -214,21 +211,22 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
   const totalCost = (stage?.actors ?? []).reduce((sum, a) => sum + a.cost, 0);
   const totalTools = (stage?.actors ?? []).reduce((sum, a) => sum + a.toolCalls, 0);
 
+  const headActions = stage !== null ? (
+    <button type="button" className="btn" onClick={() => onOpenSession(stage.path)}>
+      查看会话
+    </button>
+  ) : undefined;
   return (
-    <main className="detail stage-view">
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h1 className="detail-title">舞台</h1>
+    <div className="view stage-view">
+      <PageHeader
+        kicker="Agent Stage · 来自 JSONL 重建"
+        title="像素办公室"
+        sub="子代理、worker 与 advisor 的实时状态，只画会话文件里记录过的事实。"
+        actions={headActions}
+      >
+        <div className="stage-head-row">
           {stage !== null && !stage.inUse ? <span className="stage-badge">回看</span> : null}
           <span className="stage-head-title">{stage?.title ?? selectedTitle ?? "加载中…"}</span>
-          <span className="detail-actions">
-            {stage !== null ? (
-              <button type="button" className="btn" onClick={() => onOpenSession(stage.path)}>
-                查看会话
-              </button>
-            ) : null}
-            <button type="button" className="btn" onClick={onBack}>返回</button>
-          </span>
         </div>
         {stage !== null ? (
           <div className="detail-meta stage-meta">
@@ -239,7 +237,7 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
             {stage.omitted > 0 ? <span>已省略 {stage.omitted} 个文件</span> : null}
           </div>
         ) : null}
-      </header>
+      </PageHeader>
 
       <div className="stage-body">
         <aside className="stage-rail" aria-label="会话选择">
@@ -315,18 +313,13 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
               {stage.actors.length === 1 ? (
                 <p className="stage-empty-note">该会话没有子代理。</p>
               ) : null}
-              <div className="stage-filters" role="group" aria-label="按状态筛选">
-                {FILTERS.map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    className={f.key === filterKey ? "btn btn-small stage-filter-active" : "btn btn-small"}
-                    aria-pressed={f.key === filterKey}
-                    onClick={() => setFilterKey(f.key)}
-                  >
-                    {f.label} {counts[f.key] ?? 0}
-                  </button>
-                ))}
+              <div className="stage-filters">
+                <Seg
+                  label="按状态筛选"
+                  value={filterKey}
+                  onChange={setFilterKey}
+                  options={FILTERS.map((f) => ({ value: f.key, label: f.label, count: counts[f.key] ?? 0 }))}
+                />
               </div>
               <ActorCards
                 actors={visible}
@@ -369,6 +362,6 @@ export function StageView({ onBack, selectedPath, stageTarget, selectedTitle, on
           stageAgents={stageAgents}
         />
       ) : null}
-    </main>
+    </div>
   );
 }

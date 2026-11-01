@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { getAgentStage, listRunningSessions, normalizeError } from "../api";
+import { startChain } from "../pollChain";
 import type { AgentStage, AppError, RunningSession } from "../types";
 
 /** 舞台数据的轮询间隔（ms）：后端每轮只读增量，1.5s 足够平滑。 */
@@ -19,55 +20,6 @@ export const RUNNING_INTERVAL_MS = 3000;
 export interface StageData {
   stage: AgentStage | null;
   error: AppError | null;
-}
-
-function hidden(): boolean {
-  return typeof document !== "undefined" && document.visibilityState === "hidden";
-}
-
-/**
- * 链式轮询：同一时刻至多一个请求；隐藏时不排期；恢复可见立即拉一次。
- *
- * `run` 永不 reject，返回下一轮延迟（ms）。返回停止函数。
- */
-function startChain(run: () => Promise<number>): () => void {
-  let timer: number | undefined;
-  let inFlight = false;
-  let stopped = false;
-
-  const tick = async (): Promise<void> => {
-    if (stopped || inFlight || hidden()) return;
-    inFlight = true;
-    let next = 0;
-    try {
-      next = await run();
-    } finally {
-      inFlight = false;
-    }
-    if (stopped || hidden()) return;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => void tick(), next);
-  };
-
-  void tick();
-
-  const onVisibility = (): void => {
-    if (hidden()) {
-      window.clearTimeout(timer);
-      return;
-    }
-    if (stopped) return;
-    // 请求还在飞时由 `inFlight` 挡住，等它返回后排期，不会出现第二条链。
-    window.clearTimeout(timer);
-    void tick();
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-
-  return () => {
-    stopped = true;
-    window.clearTimeout(timer);
-    document.removeEventListener("visibilitychange", onVisibility);
-  };
 }
 
 /** 轮询单个会话的舞台。`path === null` 时清空并停止。 */

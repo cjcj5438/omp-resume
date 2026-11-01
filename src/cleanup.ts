@@ -67,3 +67,12 @@ export function sortCandidates(list: CleanupCandidate[], dir: CleanupSortDir): C
     return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
   });
 }
+
+/** 各原因计数：多原因候选在每个原因下各计一次。 */
+export function reasonCounts(list: CleanupCandidate[]): Record<CleanupReason, number> {
+  const out: Record<CleanupReason, number> = { empty: 0, cwd_missing: 0, large: 0, stale: 0 };
+  for (const c of list) {
+    for (const r of c.reasons) out[r] += 1;
+  }
+  return out;
+}

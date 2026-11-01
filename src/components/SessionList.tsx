@@ -1,9 +1,9 @@
 /** 左侧会话列表：置顶区、过滤、标签过滤、分组折叠、批量勾选、刷新、右键菜单。 */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppError, MetaSnapshot, ProjectGroup, SessionMeta, SessionSummary } from "../types";
 import { checkState, type TagCount } from "../listUtils";
 import type { PinKind, Pins } from "../pins";
-import { displayCwd, errorText, formatRelativeTime, formatSize, openOmpChangelog } from "../format";
+import { displayCwd, errorText, formatRelativeTime, formatSize } from "../format";
 import {
   getMeta,
   getResumeCommand,
@@ -23,34 +23,24 @@ import {
   type SessionMenuActions,
 } from "../sessionMenus";
 import { EmptyState, Ico, SessionBadges } from "./ui";
-import { BookOpen, ChartColumn, ChevronRight, Eraser, History, ListChecks, Pin, Plus, RotateCw, SearchX, Settings2, SquarePen, Theater } from "lucide-react";
-import { AppearancePanel } from "./AppearancePanel";
+import { ErrorBanner } from "./page";
+import { ChevronRight, ListChecks, MessageSquareText, Pin, Plus, RotateCw, SearchX, SquareTerminal, Trash } from "lucide-react";
 import type { ToastFn } from "./useOmpOp";
-import { ModePicker } from "./ModePicker";
 import { NewTagDialog } from "./NewTagDialog";
-import "./Sidebar.css";
+import "./SessionList.css";
 
-interface SidebarProps {
+interface SessionListProps {
+  /** page = 列表页全功能；rail = 工作台左栏（无多选/标签条/行内动作）。 */
+  variant: "page" | "rail";
   groups: ProjectGroup[];
   /** 跨项目聚合的置顶会话（已过滤、按修改时间新→旧；空时不渲染置顶区）。 */
   pinnedSessions: SessionSummary[];
-  totalCount: number;
-  hiddenEmpty: number;
   query: string;
   onQuery: (q: string) => void;
   loading: boolean;
   listError: AppError | null;
   onRetry: () => void;
   onRefresh: () => void;
-  onOpenCheatSheet: () => void;
-  manageActive: boolean;
-  onToggleManage: () => void;
-  statsActive: boolean;
-  onToggleStats: () => void;
-  stageActive: boolean;
-  onToggleStage: () => void;
-  cleanupActive: boolean;
-  onToggleCleanup: () => void;
   checked: Set<string>;
   onToggleCheck: (path: string, on: boolean) => void;
   /** 批量勾选/取消：paths 为目标会话 path 列表。 */
@@ -58,20 +48,18 @@ interface SidebarProps {
   /** 清除全部勾选。 */
   onClearChecks: () => void;
   selectedPath: string | null;
-  onSelect: (path: string) => void;
+  /** 行激活：列表页进工作台，工作台左栏切换选中。 */
+  onOpenSession: (path: string) => void;
+  /** 行内「备注」：进工作台并展开备注编辑器。 */
+  onOpenMeta: (path: string) => void;
+  /** 选择条「恢复…」：打开批量恢复确认。 */
+  onBulkResume: (targets: SessionSummary[]) => void;
+  /** 折叠集（App 持有，列表页与工作台左栏共享）。 */
+  collapsed: ReadonlySet<string>;
+  onCollapsedChange: (next: Set<string>) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
-  ompVersion: string | null;
-  ompChecking: boolean;
-  onCheckOmp: () => void;
-  /** 本应用版本；null 时不显示版本行。 */
-  appVersion: string | null;
-  appChecking: boolean;
-  onCheckApp: () => void;
-  onNewSession: () => void;
   onNewSessionIn: (cwd: string) => void;
-  historyActive: boolean;
-  onToggleHistory: () => void;
   /** 应用侧备注快照；null = 未加载（行内不显示别名/标签）。 */
   meta: MetaSnapshot | null;
   /** 正在使用的标签及计数（空时不渲染过滤条）。 */
@@ -88,44 +76,29 @@ interface SidebarProps {
   onMetaSnapshot: (snap: MetaSnapshot) => void;
 }
 
-export function Sidebar({
+export function SessionList({
+  variant,
   groups,
   pinnedSessions,
-  totalCount,
-  hiddenEmpty,
   query,
   onQuery,
   loading,
   listError,
   onRetry,
   onRefresh,
-  onOpenCheatSheet,
-  manageActive,
-  onToggleManage,
-  statsActive,
-  onToggleStats,
-  stageActive,
-  onToggleStage,
-  cleanupActive,
-  onToggleCleanup,
   checked,
   onToggleCheck,
   onToggleChecks,
   onClearChecks,
   selectedPath,
-  onSelect,
+  onOpenSession,
+  onOpenMeta,
+  onBulkResume,
+  collapsed,
+  onCollapsedChange,
   pins,
   onTogglePin,
-  ompVersion,
-  ompChecking,
-  onCheckOmp,
-  appVersion,
-  appChecking,
-  onCheckApp,
-  onNewSession,
   onNewSessionIn,
-  historyActive,
-  onToggleHistory,
   meta,
   tagCounts,
   activeTags,
@@ -134,15 +107,14 @@ export function Sidebar({
   onOpenIterm,
   onRequestDelete,
   onMetaSnapshot,
-}: SidebarProps) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const toggleCollapsed = (key: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+}: SessionListProps) {
+  const isRail = variant === "rail";
+  const toggleCollapsed = (key: string) => {
+    const next = new Set(collapsed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onCollapsedChange(next);
+  };
   // 右键菜单的目标（行 path / 组 cwd / 置顶区键）：仅用于画出当前菜单归属。
   const [menuTarget, setMenuTarget] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -187,14 +159,6 @@ export function Sidebar({
   // 以便一键「全选当前列表」）；有任何勾选时自动视为进入选择态。
   const [multiMode, setMultiMode] = useState(false);
   const selecting = multiMode || checked.size > 0;
-  // 四个视图按钮同一形态：激活时点击 = 返回上一级（title 说明）。
-  const NAV_VIEWS = [
-    { label: "舞台", icon: Theater, active: stageActive, hint: "Agent 舞台", onClick: onToggleStage },
-    { label: "统计", icon: ChartColumn, active: statsActive, hint: "用量统计", onClick: onToggleStats },
-    { label: "清理", icon: Eraser, active: cleanupActive, hint: "清理候选", onClick: onToggleCleanup },
-    { label: "提示词历史", icon: History, active: historyActive, hint: "提示词历史", onClick: onToggleHistory },
-    { label: "管理", icon: Settings2, active: manageActive, hint: "管理", onClick: onToggleManage },
-  ];
   const toggleMulti = () => {
     if (selecting) {
       setMultiMode(false);
@@ -362,8 +326,8 @@ export function Sidebar({
       setMultiMode(true);
       onToggleChecks(paths, true);
     },
-    collapseAll: () => setCollapsed(new Set([PINNED_KEY, ...groups.map((g) => g.cwd)])),
-    expandAll: () => setCollapsed(new Set()),
+    collapseAll: () => onCollapsedChange(new Set([PINNED_KEY, ...groups.map((g) => g.cwd)])),
+    expandAll: () => onCollapsedChange(new Set()),
   };
 
   /** 右键一行：勾选中的行（≥2 个勾选）走批量菜单，否则单会话菜单。右键不改选中态。 */
@@ -406,8 +370,67 @@ export function Sidebar({
     void popupMenu(specs).finally(() => setMenuTarget(null));
   }
 
+  /** 行内动作（page 专用）：备注 / 在 iTerm 继续 / 删除，hover 或 focus-within 时显示。 */
+  function renderRowActions(s: SessionSummary): ReactNode {
+    if (isRail) return null;
+    const name = meta?.sessions[s.id]?.alias ?? s.title;
+    const itermDisabled = s.inUse || !s.cwdExists;
+    const itermTip = s.inUse
+      ? "会话正在被另一个 omp 使用"
+      : !s.cwdExists
+        ? "项目目录不存在"
+        : undefined;
+    return (
+      <span className="row-actions">
+        <button
+          type="button"
+          className="btn icon-btn row-action"
+          aria-label={`备注 ${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenMeta(s.path);
+          }}
+        >
+          <Ico icon={MessageSquareText} size={13} />
+        </button>
+        <button
+          type="button"
+          className="btn icon-btn row-action"
+          aria-label={`在 iTerm 继续 ${name}`}
+          title={itermTip}
+          disabled={itermDisabled}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenIterm(s);
+          }}
+        >
+          <Ico icon={SquareTerminal} size={13} />
+        </button>
+        <button
+          type="button"
+          className="btn icon-btn row-action"
+          aria-label={`删除 ${name}`}
+          disabled={s.inUse}
+          onClick={(e) => {
+            e.stopPropagation();
+            actions.requestDelete([s.path]);
+          }}
+        >
+          <Ico icon={Trash} size={13} />
+        </button>
+      </span>
+    );
+  }
+
+  // 选择条批量动作的目标：当前可见且已勾选的会话。
+  const checkedVisible = visiblePaths
+    .filter((p) => checked.has(p))
+    .map((p) => byPath.get(p))
+    .filter((x): x is SessionSummary => x != null);
+  const checkedVisiblePinned = checkedVisible.every((s) => pins.sessions.includes(s.id));
+
   return (
-    <aside className={selecting ? "sidebar is-selecting" : "sidebar"}>
+    <div className={["session-list", `session-list-${variant}`, selecting ? "is-selecting" : ""].join(" ")}>
       <div className="sidebar-top">
         <div className="search-row">
           <input
@@ -432,41 +455,21 @@ export function Sidebar({
               <Ico icon={RotateCw} size={13} />
             )}
           </button>
-          <button
-            type="button"
-            className="btn icon-btn icon-btn-multi"
-            aria-label="多选"
-            aria-pressed={selecting}
-            title="多选"
-            onClick={toggleMulti}
-          >
-            <Ico icon={ListChecks} size={13} />
-          </button>
-        </div>
-        <button type="button" className="btn btn-accent new-session-btn" onClick={onNewSession}>
-          <Ico icon={SquarePen} size={13} />新会话…
-        </button>
-        <div className="view-nav" role="group" aria-label="视图切换">
-          {NAV_VIEWS.map((v) => (
+          {!isRail ? (
             <button
-              key={v.label}
               type="button"
-              className="view-nav-btn"
-              aria-pressed={v.active}
-              title={v.active ? "返回上一级" : v.hint}
-              onClick={v.onClick}
+              className="btn icon-btn icon-btn-multi"
+              aria-label="多选"
+              aria-pressed={selecting}
+              title="多选"
+              onClick={toggleMulti}
             >
-              <Ico icon={v.icon} size={13} />
-              {v.label}
+              <Ico icon={ListChecks} size={13} />
             </button>
-          ))}
-          <button type="button" className="view-nav-btn" onClick={onOpenCheatSheet}>
-            <Ico icon={BookOpen} size={13} />
-            速查
-          </button>
+          ) : null}
         </div>
       </div>
-      {selecting && (checked.size > 0 || visiblePaths.length > 0) ? (
+      {!isRail && selecting && (checked.size > 0 || visiblePaths.length > 0) ? (
         <div className="select-bar">
           <span>已选 {checked.size} 项</span>
           {hasUncheckedVisible ? (
@@ -479,13 +482,51 @@ export function Sidebar({
             </button>
           ) : null}
           {checked.size > 0 ? (
-            <button type="button" className="select-link" onClick={onClearChecks}>
-              清除选择
-            </button>
+            <>
+              <button type="button" className="select-link" onClick={onClearChecks}>
+                清除选择
+              </button>
+              <button
+                type="button"
+                className="select-link"
+                onClick={() => {
+                  if (checkedVisiblePinned) {
+                    for (const s of checkedVisible) onTogglePin("session", s.id);
+                  } else {
+                    for (const s of checkedVisible) {
+                      if (!pins.sessions.includes(s.id)) onTogglePin("session", s.id);
+                    }
+                  }
+                }}
+              >
+                {checkedVisiblePinned ? "取消置顶全部" : "置顶全部"}
+              </button>
+              <button
+                type="button"
+                className="select-link"
+                onClick={() => onBulkResume(checkedVisible)}
+              >
+                恢复…
+              </button>
+              <button
+                type="button"
+                className="select-link"
+                onClick={() => actions.newTag(checkedVisible.map((s) => s.id))}
+              >
+                加标签…
+              </button>
+              <button
+                type="button"
+                className="select-link"
+                onClick={() => actions.requestDelete(checkedVisible.map((s) => s.path))}
+              >
+                删除所选…
+              </button>
+            </>
           ) : null}
         </div>
       ) : null}
-      {tagCounts.length > 0 ? (
+      {!isRail && tagCounts.length > 0 ? (
         <div className="tag-bar" role="group" aria-label="按标签过滤">
           {tagCounts.map(({ tag, count }) => {
             const on = activeTags.includes(tag);
@@ -505,15 +546,8 @@ export function Sidebar({
         </div>
       ) : null}
       <div className="sidebar-list">
-        {listError ? (
-          <div className="banner banner-error" role="alert">
-            <span>{errorText(listError)}</span>
-            <button type="button" className="btn btn-small" onClick={onRetry}>
-              重试
-            </button>
-          </div>
-        ) : null}
-        {groups.length === 0 && pinnedSessions.length === 0 ? (
+        {listError ? <ErrorBanner error={listError} onRetry={onRetry} /> : null}
+        {isRail && groups.length === 0 && pinnedSessions.length === 0 ? (
           <EmptyState icon={SearchX} title="没有匹配的会话">
             换个关键词，或清除标签筛选。
           </EmptyState>
@@ -536,12 +570,14 @@ export function Sidebar({
                 );
               }}
             >
-              <GroupCheck
-                label="选择全部置顶会话"
-                paths={pinnedSessions.map((s) => s.path)}
-                checked={checked}
-                onToggle={onToggleChecks}
-              />
+              {!isRail ? (
+                <GroupCheck
+                  label="选择全部置顶会话"
+                  paths={pinnedSessions.map((s) => s.path)}
+                  checked={checked}
+                  onToggle={onToggleChecks}
+                />
+              ) : null}
               <button
                 type="button"
                 className="group-header"
@@ -575,8 +611,9 @@ export function Sidebar({
                     renameBusy={renameBusy}
                     onRenameCommit={(value) => void commitRename(s, value)}
                     onRenameCancel={() => setRenamingPath(null)}
-                    onToggleCheck={onToggleCheck}
-                    onSelect={onSelect}
+                    onToggleCheck={isRail ? null : onToggleCheck}
+                    onOpenSession={onOpenSession}
+                    rowActions={renderRowActions(s)}
                     onRowMenu={() => openRowMenu(s)}
                     pinned
                     onTogglePin={() => onTogglePin("session", s.id)}
@@ -616,7 +653,7 @@ export function Sidebar({
                   );
                 }}
               >
-                {g.sessions.length > 0 ? (
+                {!isRail && g.sessions.length > 0 ? (
                   <GroupCheck
                     label={`选择项目 ${name} 的全部会话`}
                     paths={g.sessions.map((s) => s.path)}
@@ -677,8 +714,9 @@ export function Sidebar({
                         renameBusy={renameBusy}
                         onRenameCommit={(value) => void commitRename(s, value)}
                         onRenameCancel={() => setRenamingPath(null)}
-                        onToggleCheck={onToggleCheck}
-                        onSelect={onSelect}
+                        onToggleCheck={isRail ? null : onToggleCheck}
+                        onOpenSession={onOpenSession}
+                        rowActions={renderRowActions(s)}
                         onRowMenu={() => openRowMenu(s)}
                         pinned={pins.sessions.includes(s.id)}
                         onTogglePin={() => onTogglePin("session", s.id)}
@@ -691,55 +729,6 @@ export function Sidebar({
           );
         })}
       </div>
-      <footer className="sidebar-footer">
-        <div className="footer-row">
-          <span className="footer-count">
-            共 {totalCount} 个会话 · 已隐藏 {hiddenEmpty} 个空会话
-          </span>
-          <ModePicker onToast={onToast} />
-          <AppearancePanel />
-        </div>
-        {appVersion !== null ? (
-          <div className="footer-row">
-            <span className="mono muted">omp-resume {appVersion}</span>
-            <div className="footer-actions">
-              <button
-                type="button"
-                className="btn btn-small footer-update"
-                disabled={appChecking}
-                onClick={onCheckApp}
-              >
-                {appChecking ? <span className="spinner" aria-hidden="true" /> : null}
-                检查应用更新
-              </button>
-            </div>
-          </div>
-        ) : null}
-        {ompVersion !== null ? (
-          <div className="footer-row">
-            <span className="mono muted">omp {ompVersion}</span>
-            <div className="footer-actions">
-              <button
-                type="button"
-                className="btn btn-small footer-update"
-                disabled={ompChecking}
-                onClick={onCheckOmp}
-              >
-                {ompChecking ? <span className="spinner" aria-hidden="true" /> : null}
-                检查 omp 更新
-              </button>
-              <button
-                type="button"
-                className="changelog-link"
-                title="在浏览器打开 omp 官方更新日志"
-                onClick={() => void openOmpChangelog()}
-              >
-                更新日志
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </footer>
       {tagTargets !== null ? (
         <NewTagDialog
           count={tagTargets.length}
@@ -761,7 +750,7 @@ export function Sidebar({
           }}
         />
       ) : null}
-    </aside>
+    </div>
   );
 }
 
@@ -805,8 +794,11 @@ interface RowProps {
   renameBusy: boolean;
   onRenameCommit: (value: string) => void;
   onRenameCancel: () => void;
-  onToggleCheck: (path: string, on: boolean) => void;
-  onSelect: (path: string) => void;
+  /** rail 下为 null：不渲染勾选框。 */
+  onToggleCheck: ((path: string, on: boolean) => void) | null;
+  onOpenSession: (path: string) => void;
+  /** 行内动作（rail 下为 null：不渲染行内动作）。 */
+  rowActions: ReactNode;
   onRowMenu: () => void;
   pinned: boolean;
   onTogglePin: () => void;
@@ -826,7 +818,8 @@ function Row({
   onRenameCommit,
   onRenameCancel,
   onToggleCheck,
-  onSelect,
+  onOpenSession,
+  rowActions,
   onRowMenu,
   pinned,
   onTogglePin,
@@ -846,21 +839,30 @@ function Row({
   return (
     <div
       className={cls}
-      onClick={() => onSelect(s.path)}
+      tabIndex={0}
+      onClick={() => onOpenSession(s.path)}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+          e.preventDefault();
+          onOpenSession(s.path);
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
         onRowMenu();
       }}
     >
-      <input
-        type="checkbox"
-        className="row-check"
-        aria-label={`选择 ${alias ?? s.title}`}
-        checked={checked}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => onToggleCheck(s.path, e.target.checked)}
-      />
+      {onToggleCheck !== null ? (
+        <input
+          type="checkbox"
+          className="row-check"
+          aria-label={`选择 ${alias ?? s.title}`}
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onToggleCheck(s.path, e.target.checked)}
+        />
+      ) : null}
       <div className="row-main">
         <div className="row-title-line">
           <div className="row-title" title={alias ? `${alias}（原标题：${s.title}）` : s.title}>
@@ -907,6 +909,7 @@ function Row({
           ) : null}
         </div>
       </div>
+      {rowActions}
       <PinToggle
         pinned={pinned}
         kindLabel="会话"

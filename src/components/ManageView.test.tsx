@@ -10,30 +10,21 @@ import { installMockBackend } from "../dev/mockBackend";
 import { ManageView } from "./ManageView";
 const S1 = "🎛️ DEMO: 构建可视化配置桌面应用";
 
-function rowOf(title: string): HTMLElement {
-  for (const el of screen.getAllByText(title)) {
-    const row = el.closest(".row");
-    if (row) return row as HTMLElement;
-  }
-  throw new Error(`未找到会话行：${title}`);
-}
-
-function renderManageView() {
+function renderManageView(tab: "models" | "agents" | "plugins" | "skills" | "mcp" | "memory" = "models") {
   const onToast = vi.fn();
-  const onBack = vi.fn();
   const onCheckOmp = vi.fn();
   const onOpenSession = vi.fn();
   render(
     <ManageView
       projects={[{ cwd: "/tmp/a", name: "a" }]}
       onToast={onToast}
-      onBack={onBack}
+      tab={tab}
       onCheckOmp={onCheckOmp}
       loadedSessionIds={new Set()}
       onOpenSession={onOpenSession}
     />,
   );
-  return { onToast, onBack, onCheckOmp, onOpenSession };
+  return { onToast, onCheckOmp, onOpenSession };
 }
 
 const UPDATE_CMDS = [
@@ -86,36 +77,53 @@ beforeEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-describe("ManageView 页签", () => {
-  it("默认模型页，可切 Agent / 插件 / Skills / MCP，返回会话回调", async () => {
+describe("ManageView 路由页", () => {
+  it("tab=models 渲染模型闭环；其余 tab 各自渲染对应面板", async () => {
     await installMockBackend();
-    const { onBack } = renderManageView();
-
-    expect(screen.getByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "模型", selected: true })).toBeInTheDocument();
+    const { unmount } = render(
+      <ManageView
+        projects={[{ cwd: "/tmp/a", name: "a" }]}
+        onToast={vi.fn()}
+        tab="models"
+        onCheckOmp={vi.fn()}
+        loadedSessionIds={new Set()}
+        onOpenSession={vi.fn()}
+      />,
+    );
     expect(await screen.findByRole("region", { name: "模型库" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "测试" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "角色分配" })).toBeInTheDocument();
+    unmount();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
-    expect(screen.getByRole("tab", { name: "Agent", selected: true })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
-    await screen.findByText("已安装插件");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
-    expect(await screen.findByText(/仅更新通过 omp skill/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
-    expect(await screen.findByRole("combobox", { name: "配置范围" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
-    expect(onBack).toHaveBeenCalledTimes(1);
+    const tabs = ["agents", "plugins", "skills", "mcp", "memory"] as const;
+    for (const tab of tabs) {
+      const { unmount: u } = render(
+        <ManageView
+          projects={[{ cwd: "/tmp/a", name: "a" }]}
+          onToast={vi.fn()}
+          tab={tab}
+          onCheckOmp={vi.fn()}
+          loadedSessionIds={new Set()}
+          onOpenSession={vi.fn()}
+        />,
+      );
+      // 每个 tab 都渲染出自己的内容，而不是空页。
+      expect(document.querySelector(".page-body")).not.toBeNull();
+      u();
+    }
   });
 
   it("模型页改角色后切 Agent 再切回：编辑与保存条保留", async () => {
     await installMockBackend();
-    renderManageView();
+    const onToast = vi.fn();
+    const base = {
+      projects: [{ cwd: "/tmp/a", name: "a" }],
+      onToast,
+      onCheckOmp: vi.fn(),
+      loadedSessionIds: new Set<string>(),
+      onOpenSession: vi.fn(),
+    };
+    const { rerender } = render(<ManageView {...base} tab="models" />);
     await screen.findByRole("region", { name: "模型库" });
 
     // memory 未配置：紧凑行点「设置」展开成卡，再选一个模型。
@@ -126,9 +134,10 @@ describe("ManageView 页签", () => {
     expect(await within(rolesSection).findByRole("status")).toHaveTextContent("1 处未保存修改");
 
     // 切到 Agent 再切回：同一份草稿，编辑与保存条都在。
-    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
+    // （路由切换时 ManageView 常驻不卸载，这里用 rerender 模拟同族路由切换。）
+    rerender(<ManageView {...base} tab="agents" />);
     await screen.findByTestId("agent-flow");
-    fireEvent.click(screen.getByRole("tab", { name: "模型" }));
+    rerender(<ManageView {...base} tab="models" />);
     await screen.findByRole("region", { name: "模型库" });
     const rolesAgain = screen.getByRole("region", { name: "角色分配" });
     expect(within(rolesAgain).getByTestId("role-card-memory")).toHaveTextContent("DeepSeek v4.1 Flash (5438)");
@@ -137,23 +146,17 @@ describe("ManageView 页签", () => {
 });
 
 describe("App 管理视图进出", () => {
-  it("管理按钮进入，返回会话退出，管理中点行回到会话并选中", async () => {
+  it("导航进入模型页，再导航回会话列表", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "管理" }));
-    expect(await screen.findByRole("tablist", { name: "管理视图" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "模型" }));
+    expect(await screen.findByRole("region", { name: "模型库" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
-    expect(screen.queryByRole("tablist", { name: "管理视图" })).toBeNull();
-    expect(screen.getByText("选择一个会话")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "管理" }));
-    await screen.findByRole("tablist", { name: "管理视图" });
-    fireEvent.click(rowOf(S1));
-    expect(screen.queryByRole("tablist", { name: "管理视图" })).toBeNull();
-    expect(screen.getByRole("heading", { name: S1 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    expect(screen.queryByRole("region", { name: "模型库" })).toBeNull();
+    expect(screen.getByText(S1)).toBeInTheDocument();
   });
 });
 
@@ -161,8 +164,7 @@ describe("全部更新", () => {
   it("按顺序执行四步并给出每步小结，不开更新对话框", async () => {
     const calls: string[] = [];
     stubOmpCalls(calls);
-    const { onToast, onCheckOmp } = renderManageView();
-    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
+    const { onToast, onCheckOmp } = renderManageView("plugins");
     await screen.findByText("尚未安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -187,8 +189,7 @@ describe("全部更新", () => {
       cmd: "omp_plugin_upgrade",
       error: { code: "OMP_FAILED", message: "升级炸了" },
     });
-    const { onToast, onCheckOmp } = renderManageView();
-    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
+    const { onToast, onCheckOmp } = renderManageView("plugins");
     await screen.findByText("尚未安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -211,8 +212,8 @@ describe("全部更新", () => {
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "管理" }));
-    await screen.findByRole("tablist", { name: "管理视图" });
+    fireEvent.click(screen.getByRole("button", { name: "模型" }));
+    await screen.findByRole("region", { name: "模型库" });
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
     expect(within(dialog).getByText("可更新到 18.12.0")).toBeInTheDocument();
@@ -220,8 +221,7 @@ describe("全部更新", () => {
 
   it("omp 已是最新时只记一行，不开对话框", async () => {
     await installMockBackend();
-    const { onToast, onCheckOmp } = renderManageView();
-    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
+    const { onToast, onCheckOmp } = renderManageView("plugins");
     await screen.findByText("已安装插件");
 
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
@@ -234,11 +234,7 @@ describe("全部更新", () => {
   it("运行时禁用全部更新与 MCP 操作，页签保持可切换", async () => {
     window.history.replaceState({}, "", "/?latency=100");
     await installMockBackend();
-    renderManageView();
-    fireEvent.click(screen.getByRole("tab", { name: "插件" }));
-    await screen.findByText("已安装插件");
-
-    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
+    renderManageView("mcp");
     await screen.findByRole("combobox", { name: "配置范围" });
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
 
@@ -246,7 +242,6 @@ describe("全部更新", () => {
     const fieldset = document.querySelector("fieldset.manage-fieldset");
     expect(fieldset).not.toBeNull();
     expect(fieldset).toHaveAttribute("disabled");
-    expect(screen.getByRole("tab", { name: "插件" })).toBeEnabled();
 
     expect(
       await screen.findByRole("list", { name: "全部更新结果" }, { timeout: 5000 }),

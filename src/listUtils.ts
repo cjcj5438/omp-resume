@@ -9,7 +9,7 @@ export const FOCUS_REFRESH_MIN_INTERVAL_MS = 800;
  * 大小写不敏感子串匹配；`meta` 缺失（未加载/加载失败）时只按前三者匹配。
  * 项目组与置顶区共用同一匹配口径。
  */
-function sessionMatchesQuery(
+export function sessionMatchesQuery(
   s: SessionSummary,
   q: string,
   meta?: MetaSnapshot | null,
@@ -193,4 +193,91 @@ export function checkState(paths: readonly string[], checked: ReadonlySet<string
   for (const p of paths) if (checked.has(p)) n += 1;
   if (n === 0) return "none";
   return n === paths.length ? "all" : "some";
+}
+
+/** 状态筛选：全部 / 运行中 / 已置顶 / 有问题。 */
+export type SessionFilter = "all" | "running" | "pinned" | "issues";
+
+export interface SessionIssue {
+  code: "format" | "cwd" | "badLines" | "probe";
+  label: string;
+}
+
+/**
+ * 会话的问题清单（按 format → cwd → badLines → probe 顺序检查）：
+ * 格式不支持 / 目录不存在 / N 行损坏 / 占用探测失败。
+ */
+export function sessionIssues(s: SessionSummary): SessionIssue[] {
+  const out: SessionIssue[] = [];
+  if (!s.formatSupported) out.push({ code: "format", label: "格式不支持" });
+  if (!s.cwdExists) out.push({ code: "cwd", label: "目录不存在" });
+  if (s.badLines > 0) out.push({ code: "badLines", label: `${s.badLines} 行损坏` });
+  if (!s.probeOk) out.push({ code: "probe", label: "占用探测失败" });
+  return out;
+}
+
+function sessionPassesStatus(s: SessionSummary, f: SessionFilter, pins: Pins, groupPinned: boolean): boolean {
+  if (f === "running") return s.inUse;
+  if (f === "issues") return sessionIssues(s).length > 0;
+  // pinned：会话被置顶，或所属项目整组被置顶。
+  return groupPinned || pins.sessions.includes(s.id);
+}
+
+/**
+ * 分组级状态过滤：`all` 返回同一引用；其余丢弃空组。
+ * pinned 语义：会话 id 在 pins.sessions 中，或分组 cwd 在 pins.projects 中（整组保留）。
+ */
+export function filterGroupsByStatus(
+  groups: ProjectGroup[],
+  f: SessionFilter,
+  pins: Pins,
+): ProjectGroup[] {
+  if (f === "all") return groups;
+  const out: ProjectGroup[] = [];
+  for (const g of groups) {
+    const groupPinned = pins.projects.includes(g.cwd);
+    if (f === "pinned" && groupPinned) {
+      out.push(g);
+      continue;
+    }
+    const sessions = g.sessions.filter((s) => sessionPassesStatus(s, f, pins, groupPinned));
+    if (sessions.length > 0) out.push({ ...g, sessions });
+  }
+  return out;
+}
+
+/**
+ * 会话级状态过滤（置顶区用）：`all` 返回同一引用。
+ * pinned 语义：置顶区全部保留（调用方已限定为置顶会话）。
+ */
+export function filterSessionsByStatus(
+  sessions: SessionSummary[],
+  f: SessionFilter,
+  pins: Pins,
+): SessionSummary[] {
+  if (f === "all" || f === "pinned") return sessions;
+  return sessions.filter((s) => sessionPassesStatus(s, f, pins, false));
+}
+
+/**
+ * 各状态计数：在置顶拆分前、不受搜索和标签影响的全量上计数。
+ * pinned = id 被置顶的会话数 + cwd 被置顶的整组会话数（去重）。
+ */
+export function statusCounts(groups: ProjectGroup[], pins: Pins): Record<SessionFilter, number> {
+  let all = 0;
+  let running = 0;
+  let pinned = 0;
+  let issues = 0;
+  const pinnedIds = new Set(pins.sessions);
+  const pinnedCwds = new Set(pins.projects);
+  for (const g of groups) {
+    const groupPinned = pinnedCwds.has(g.cwd);
+    for (const s of g.sessions) {
+      all += 1;
+      if (s.inUse) running += 1;
+      if (groupPinned || pinnedIds.has(s.id)) pinned += 1;
+      if (sessionIssues(s).length > 0) issues += 1;
+    }
+  }
+  return { all, running, pinned, issues };
 }

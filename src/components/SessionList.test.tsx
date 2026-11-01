@@ -1,13 +1,9 @@
-/** Sidebar：置顶区聚合、批量勾选三态与选择条、更新日志外链。 */
+/** SessionList：置顶区聚合、批量勾选三态与选择条。 */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { Sidebar } from "./Sidebar";
+import { SessionList } from "./SessionList";
 import { FIXTURE_SESSIONS, buildListResult } from "../dev/fixtures";
-import { OMP_CHANGELOG_URL } from "../format";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ProjectGroup, SessionSummary } from "../types";
-
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 const noop = () => {};
 const list = buildListResult(FIXTURE_SESSIONS);
@@ -23,50 +19,35 @@ function renderSidebar(over: {
   onToggleChecks?: (paths: string[], on: boolean) => void;
   onClearChecks?: () => void;
   onTogglePin?: (kind: string, key: string) => void;
-  ompVersion?: string | null;
-  statsActive?: boolean;
+  collapsed?: Set<string>;
+  onCollapsedChange?: (next: Set<string>) => void;
 }) {
   const onToggleChecks = over.onToggleChecks ?? vi.fn();
   const onClearChecks = over.onClearChecks ?? vi.fn();
   const view = render(
-    <Sidebar
+    <SessionList
+      variant="page"
       groups={over.groups ?? list.groups}
       pinnedSessions={over.pinnedSessions ?? []}
-      totalCount={10}
-      hiddenEmpty={0}
       query=""
       onQuery={noop}
       loading={false}
       listError={null}
       onRetry={noop}
       onRefresh={noop}
-      onOpenCheatSheet={noop}
-      manageActive={false}
-      onToggleManage={noop}
-      statsActive={over.statsActive ?? false}
-      onToggleStats={noop}
-      stageActive={false}
-      onToggleStage={noop}
-      cleanupActive={false}
-      onToggleCleanup={noop}
       checked={over.checked ?? new Set()}
       onToggleCheck={noop}
       onToggleChecks={onToggleChecks}
       onClearChecks={onClearChecks}
       selectedPath={null}
-      onSelect={noop}
+      onOpenSession={noop}
+      onOpenMeta={noop}
+      onBulkResume={noop}
+      collapsed={over.collapsed ?? new Set<string>()}
+      onCollapsedChange={over.onCollapsedChange ?? noop}
       pins={{ projects: [], sessions: over.pinnedSessions?.map((s) => s.id) ?? [] }}
       onTogglePin={over.onTogglePin ?? noop}
-      ompVersion={over.ompVersion === undefined ? null : over.ompVersion}
-      ompChecking={false}
-      onCheckOmp={noop}
-      appVersion={null}
-      appChecking={false}
-      onCheckApp={noop}
-      onNewSession={noop}
       onNewSessionIn={noop}
-      historyActive={false}
-      onToggleHistory={noop}
       meta={null}
       tagCounts={[]}
       activeTags={[]}
@@ -98,7 +79,7 @@ function rowTitles(section: HTMLElement): string[] {
   return Array.from(section.querySelectorAll(".row-title"), (el) => el.textContent ?? "");
 }
 
-describe("Sidebar 置顶区", () => {
+describe("SessionList 置顶区", () => {
   it("置顶行带醒目样式与所属项目名，点击置顶按钮取消置顶", () => {
     const onTogglePin = vi.fn();
     renderSidebar({ pinnedSessions: [s1, s4], onTogglePin });
@@ -139,7 +120,7 @@ describe("Sidebar 置顶区", () => {
   });
 });
 
-describe("Sidebar 批量勾选", () => {
+describe("SessionList 批量勾选", () => {
   it("组头三态：部分勾选为 indeterminate，点击勾选该组全部可见会话", () => {
     const { onToggleChecks } = renderSidebar({ checked: new Set([s1.path]) });
 
@@ -157,8 +138,7 @@ describe("Sidebar 批量勾选", () => {
   });
 
   it("全选组头包含已折叠组的全部可见会话", () => {
-    const { onToggleChecks } = renderSidebar({});
-    fireEvent.click(within(groupByName("notes-app")).getByRole("button", { name: /^notes-app/ }));
+    const { onToggleChecks } = renderSidebar({ collapsed: new Set([obsidian.cwd]) });
     const collapsed = groupByName("notes-app");
     expect(collapsed.querySelector(".group-rows")).toBeNull();
 
@@ -214,46 +194,15 @@ describe("Sidebar 批量勾选", () => {
   });
 });
 
-describe("Sidebar omp 更新日志", () => {
-  it("版本行提供更新日志入口并打开官方地址", () => {
-    const mocked = vi.mocked(openUrl);
-    mocked.mockClear();
-    renderSidebar({ ompVersion: "18.11.1" });
-
-    fireEvent.click(screen.getByRole("button", { name: "更新日志" }));
-    expect(mocked).toHaveBeenCalledExactlyOnceWith(OMP_CHANGELOG_URL);
-  });
-});
-
-describe("Sidebar 顶部", () => {
-  it("视图切换条同组：舞台/统计/清理/提示词历史/管理为 aria-pressed 开关，速查为普通动作", () => {
-    renderSidebar({ statsActive: true });
-    const nav = screen.getByRole("group", { name: "视图切换" });
-
-    expect(Array.from(nav.querySelectorAll("button"), (b) => b.textContent)).toEqual([
-      "舞台",
-      "统计",
-      "清理",
-      "提示词历史",
-      "管理",
-      "速查",
-    ]);
-    expect(within(nav).getByRole("button", { name: "统计" })).toHaveAttribute("aria-pressed", "true");
-    for (const name of ["舞台", "清理", "提示词历史", "管理"]) {
-      expect(within(nav).getByRole("button", { name })).toHaveAttribute("aria-pressed", "false");
-    }
-    // 速查是打开对话框的动作，不是视图开关。
-    expect(within(nav).getByRole("button", { name: "速查" })).not.toHaveAttribute("aria-pressed");
-  });
-
-  it("图标化控件仍可被屏幕阅读器识别（刷新 / 外观）", () => {
-    renderSidebar({ ompVersion: "18.11.1" });
+describe("SessionList 顶部", () => {
+  it("图标化控件仍可被屏幕阅读器识别（刷新 / 多选）", () => {
+    renderSidebar({});
     expect(screen.getByRole("button", { name: "刷新" })).toHaveAttribute("title", "刷新");
-    expect(screen.getByRole("button", { name: "外观" })).toHaveAttribute("title", "切换主题与强调色");
+    expect(screen.getByRole("button", { name: "多选" })).toHaveAttribute("title", "多选");
   });
 });
 
-describe("Sidebar 多选开关", () => {
+describe("SessionList 多选开关", () => {
   function multiToggle(): HTMLElement {
     const btn = screen.getByRole("button", { name: "多选" });
     expect(btn).toHaveAttribute("title", "多选");
@@ -263,7 +212,7 @@ describe("Sidebar 多选开关", () => {
   it("默认关闭：无选择条、侧栏不在选择态", () => {
     renderSidebar({});
     expect(multiToggle()).toHaveAttribute("aria-pressed", "false");
-    expect(document.querySelector(".sidebar")).not.toHaveClass("is-selecting");
+    expect(document.querySelector(".session-list")).not.toHaveClass("is-selecting");
     expect(document.querySelector(".select-bar")).toBeNull();
   });
 
@@ -272,7 +221,7 @@ describe("Sidebar 多选开关", () => {
     fireEvent.click(multiToggle());
 
     expect(multiToggle()).toHaveAttribute("aria-pressed", "true");
-    expect(document.querySelector(".sidebar")).toHaveClass("is-selecting");
+    expect(document.querySelector(".session-list")).toHaveClass("is-selecting");
     expect(screen.getByText("已选 0 项")).toBeInTheDocument();
     // 0 选中时不提供无意义的「清除选择」。
     expect(screen.queryByRole("button", { name: "清除选择" })).toBeNull();
@@ -288,7 +237,7 @@ describe("Sidebar 多选开关", () => {
     const { onClearChecks } = renderSidebar({ checked: new Set([s1.path]) });
     // 未点开关：已有勾选即视为选择态。
     expect(multiToggle()).toHaveAttribute("aria-pressed", "true");
-    expect(document.querySelector(".sidebar")).toHaveClass("is-selecting");
+    expect(document.querySelector(".session-list")).toHaveClass("is-selecting");
 
     fireEvent.click(multiToggle());
     expect(onClearChecks).toHaveBeenCalledTimes(1);

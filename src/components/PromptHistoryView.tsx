@@ -1,15 +1,15 @@
 /** 提示词历史视图（只读 omp history.db）：搜索、复制、跳到来源会话、在该目录新开会话。 */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { normalizeError, searchPromptHistory } from "../api";
 import type { PromptHistoryEntry } from "../types";
 import { copyText } from "../clipboard";
 import { errorText, formatRelativeTime } from "../format";
 import { EmptyState } from "./ui";
+import { PageHeader, SearchInput } from "./page";
+import { filterHistoryByProject, historyProjects } from "../historyFilter";
 import { History } from "lucide-react";
 
 interface PromptHistoryViewProps {
-  /** 回到上一级视图（与其它视图的「返回」一致）。 */
-  onBack: () => void;
   /** 当前列表已加载的会话 id；来源会话不在其中时「跳到来源会话」禁用。 */
   loadedSessionIds: ReadonlySet<string>;
   onOpenSession: (sessionId: string) => void;
@@ -21,7 +21,6 @@ interface PromptHistoryViewProps {
 const SEARCH_DEBOUNCE_MS = 200;
 
 export function PromptHistoryView({
-  onBack,
   loadedSessionIds,
   onOpenSession,
   onNewSessionIn,
@@ -30,6 +29,13 @@ export function PromptHistoryView({
   const [query, setQuery] = useState("");
   const [entries, setEntries] = useState<PromptHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [project, setProject] = useState<string | "all">("all");
+  const projects = useMemo(() => historyProjects(entries), [entries]);
+  // 搜索结果变化后选中值已不在选项中：重置为 all。
+  useEffect(() => {
+    if (project !== "all" && !projects.some((p) => p.value === project)) setProject("all");
+  }, [projects, project]);
+  const visible = useMemo(() => filterHistoryByProject(entries, project), [entries, project]);
 
   // 输入防抖后查询；过期的响应被丢弃，避免慢请求覆盖新结果。
   useEffect(() => {
@@ -54,37 +60,37 @@ export function PromptHistoryView({
   }, [query, onToast]);
 
   return (
-    <main className="detail ph-view">
-      <header className="detail-head">
-        <div className="detail-title-row">
-          <h1 className="detail-title">提示词历史</h1>
-          <span className="detail-actions">
-            <button type="button" className="btn" onClick={onBack}>
-              返回
-            </button>
-          </span>
-        </div>
-        <p className="detail-sub">只读检索 omp 的 history.db；「跳到来源会话」需要该会话已在列表中。</p>
-      </header>
+    <div className="view ph-view">
+      <PageHeader
+        kicker="分析 · 来自 history.db"
+        title="提示词历史"
+        sub="只读检索 omp 的 history.db；「跳到来源会话」需要该会话已在列表中。"
+      />
       <div className="ph-head">
-        <input
-          type="search"
-          className="filter-input"
+        <SearchInput
+          label="搜索提示词历史"
           placeholder="搜索提示词历史"
-          aria-label="搜索提示词历史"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={setQuery}
         />
-        <span className="muted">{loading ? "搜索中…" : `${entries.length} 条`}</span>
+        <select aria-label="按项目过滤" value={project} onChange={(e) => setProject(e.target.value)}>
+          <option value="all">全部项目</option>
+          {projects.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <span className="muted">{loading ? "搜索中…" : `${visible.length} 条`}</span>
       </div>
       <div className="ph-body">
-        {entries.length === 0 && !loading ? (
+        {visible.length === 0 && !loading ? (
           <EmptyState icon={History} title={query.trim() ? "没有匹配的提示词" : "暂无提示词历史"}>
             {query.trim() ? "换个关键词再试。" : "在 omp 里提问后，提示词会出现在这里。"}
           </EmptyState>
         ) : null}
         <ul className="ph-list">
-          {entries.map((e) => {
+          {visible.map((e) => {
             const sourceLoaded = e.sessionId !== null && loadedSessionIds.has(e.sessionId);
             const cwdName = e.cwd ? (e.cwd.split("/").filter(Boolean).pop() ?? e.cwd) : "无项目目录";
             return (
@@ -138,6 +144,6 @@ export function PromptHistoryView({
           })}
         </ul>
       </div>
-    </main>
+    </div>
   );
 }

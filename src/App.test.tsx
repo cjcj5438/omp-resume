@@ -61,34 +61,39 @@ describe("列表：过滤与跨刷新保持", () => {
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(rowOf(S1));
     fireEvent.click(checkOf(S2));
+    fireEvent.click(rowOf(S1));
     expect(await screen.findByRole("heading", { name: S1 })).toBeInTheDocument();
 
+    // 回到列表页刷新：选中与勾选跨路由保持。
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    await screen.findByText(S1);
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "刷新" })).toBeEnabled());
 
     expect(rowOf(S1)).toHaveClass("row-selected");
     expect(checkOf(S2)).toBeChecked();
-    expect(screen.getByRole("heading", { name: S1 })).toBeInTheDocument();
     // 勾选行保留
     expect(checkOf(S2)).toBeInTheDocument();
   });
 
-  it("选中的会话消失后详情面板提示已不存在", async () => {
+  it("列表页删除选中会话后不再显示，被删会话脱离选中", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(rowOf(S1));
     fireEvent.click(checkOf(S1));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    // 先进一次工作台建立 selectedPath，再回列表删除。
+    fireEvent.click(rowOf(S1));
+    await screen.findByRole("heading", { name: S1 });
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    await screen.findByText(S1);
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
     await screen.findByText(/成功删除 1 个会话/);
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
 
     expect(screen.queryByText(S1)).toBeNull();
-    expect(screen.getByText("该会话已不存在")).toBeInTheDocument();
     expect(checkOf(S2)).not.toBeChecked();
   });
 });
@@ -101,7 +106,7 @@ describe("删除流程", () => {
 
     fireEvent.click(checkOf(S1));
     fireEvent.click(checkOf(S2));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(2\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
 
     expect(screen.getByRole("dialog")).toHaveTextContent(`永久删除 2 个会话？`);
     expect(screen.getByText("使用中，将被跳过")).toBeInTheDocument();
@@ -113,7 +118,8 @@ describe("删除流程", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     await waitFor(() => expect(screen.queryByText(S1)).toBeNull());
-    expect(rowOf(S2)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    expect(await screen.findByText(S2)).toBeInTheDocument();
   });
 
   it("部分失败逐条展示，不被吞掉", async () => {
@@ -124,7 +130,7 @@ describe("删除流程", () => {
     // s9 探测失败：后端返回 PROBE_FAILED
     fireEvent.click(checkOf(S9));
     fireEvent.click(checkOf(S10));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(2\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
 
     await screen.findByText(/成功删除 1 个会话/);
@@ -139,7 +145,7 @@ describe("删除流程", () => {
     await screen.findByText(S1);
 
     fireEvent.click(checkOf(S2));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
 
     const confirm = screen.getByRole("button", { name: "永久删除" });
     expect(confirm).toBeDisabled();
@@ -238,75 +244,60 @@ describe("缺 cwd 会话", () => {
   });
 });
 
-describe("视图返回栈", () => {
-  it("统计 → 管理 → 返回：逐级退回，而不是直接跳回会话页", async () => {
+describe("路由导航", () => {
+  it("导航进入用量页与模型页，Esc 逐级退回", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "统计" }));
-    await screen.findByRole("heading", { name: "用量统计" });
-    fireEvent.click(screen.getByRole("button", { name: "管理" }));
-    await screen.findByRole("heading", { name: "管理" });
+    fireEvent.click(screen.getByRole("button", { name: "用量" }));
+    await screen.findByRole("heading", { name: "用量" });
+    fireEvent.click(screen.getByRole("button", { name: "模型" }));
+    await screen.findByRole("heading", { name: "模型" });
 
-    // 第一次返回 → 统计（上一级），不是会话页。
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
-    expect(await screen.findByRole("heading", { name: "用量统计" })).toBeInTheDocument();
-    // 再返回 → 会话页。
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "用量统计" })).toBeNull());
+    // Esc → 上一级（用量），不是会话页。
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(await screen.findByRole("heading", { name: "用量" })).toBeInTheDocument();
+    // 再 Esc → 会话列表页。
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "用量" })).toBeNull());
+    expect(screen.getByText(S1)).toBeInTheDocument();
   });
 
-  it("Esc 从子视图退回上一级；对话框打开时不抢 Esc", async () => {
+  it("Esc 从子路由退回；对话框打开时不抢 Esc", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
-    fireEvent.click(screen.getByRole("button", { name: "清理" }));
-    await screen.findByRole("heading", { name: "清理" });
+    fireEvent.click(screen.getByRole("button", { name: "清理候选" }));
+    await screen.findByRole("heading", { name: "清理候选" });
 
-    // 速查对话框打开时 Esc 先关它，视图不动。
-    fireEvent.click(screen.getByRole("button", { name: "速查" }));
-    const dialog = await screen.findByRole("dialog", { name: "命令速查" });
-    // Esc 由对话框自己处理（它在容器上监听，焦点在内时生效）。
-    fireEvent.keyDown(dialog, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull());
-    expect(screen.getByRole("heading", { name: "清理" })).toBeInTheDocument();
+    // 删除对话框打开时 Esc 先关它，路由不动。
+    fireEvent.click(screen.getByRole("button", { name: "速查表" }));
+    await screen.findByRole("heading", { name: "速查表" });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(await screen.findByRole("heading", { name: "清理候选" })).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "清理" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "清理候选" })).toBeNull());
   });
 
-  it("提示词历史页也有返回", async () => {
+  it("提示词历史页可由导航进入", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
     fireEvent.click(screen.getByRole("button", { name: "提示词历史" }));
     expect(await screen.findByRole("heading", { name: "提示词历史" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "返回" }));
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "提示词历史" })).toBeNull());
   });
 });
 
-describe("命令速查", () => {
-  it("点击速查打开对话框，过滤缩小行，关闭按钮关闭", async () => {
+describe("速查表页", () => {
+  it("导航进入速查表页", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "速查" }));
-    const dialog = await screen.findByRole("dialog", { name: "命令速查" });
-    // 默认是「入门路径」；命令表在「全部命令」页。
-    fireEvent.click(within(dialog).getByRole("tab", { name: "全部命令" }));
-    expect(within(dialog).getByText(/共 \d+ 条斜杠命令（内置 \d+ \+ 扩展 \d+）/)).toBeInTheDocument();
-
-    const filter = within(dialog).getByRole("searchbox", { name: "过滤命令" });
-    fireEvent.change(filter, { target: { value: "compact" } });
-    // 每行都有一个「复制 /<命令名>」按钮：过滤后只剩 compact 那一行。
-    expect(within(dialog).getAllByRole("button", { name: "复制 /compact" })).toHaveLength(1);
-    expect(within(dialog).queryByRole("button", { name: "复制 /shake" })).toBeNull();
-
-    fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
-    expect(screen.queryByRole("dialog", { name: "命令速查" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "速查表" }));
+    expect(await screen.findByRole("heading", { name: "速查表" })).toBeInTheDocument();
   });
 });
 
@@ -440,19 +431,26 @@ describe("置顶", () => {
     await screen.findByText(S1);
 
     fireEvent.click(rowOf(S1));
-    fireEvent.click(screen.getByRole("button", { name: "置顶" }));
+    fireEvent.click(await screen.findByRole("button", { name: "置顶" }));
 
     expect(storedPins().sessions).toEqual([idOf(S1)]);
+    const detailToggle = screen.getByRole("button", { name: "已置顶" });
+    expect(detailToggle).toHaveAttribute("aria-pressed", "true");
+    expect(detailToggle).toHaveClass("btn-toggle-on");
+    // 回列表：行内置顶按钮同步为已置顶。
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    await screen.findByText(S1);
     expect(screen.getByRole("button", { name: `取消置顶会话 ${S1}` })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    const detailToggle = screen.getByRole("button", { name: "已置顶" });
-    expect(detailToggle).toHaveAttribute("aria-pressed", "true");
-    expect(detailToggle).toHaveClass("btn-toggle-on");
-    fireEvent.click(detailToggle);
+    // 工作台取消置顶后同步回列表。
+    fireEvent.click(rowOf(S1));
+    fireEvent.click(await screen.findByRole("button", { name: "已置顶" }));
     expect(storedPins().sessions).toEqual([]);
-    expect(screen.getByRole("button", { name: "置顶" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    await screen.findByText(S1);
+    expect(screen.getByRole("button", { name: `置顶会话 ${S1}` })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("删除成功的会话清理其置顶，其余置顶保留", async () => {
@@ -463,7 +461,7 @@ describe("置顶", () => {
     fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S1}` }));
     fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S2}` }));
     fireEvent.click(checkOf(S1));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
 
     await screen.findByText(/成功删除 1 个会话/);
@@ -478,7 +476,7 @@ describe("置顶", () => {
     // s9 探测失败：后端返回 PROBE_FAILED，删除不成功。
     fireEvent.click(screen.getByRole("button", { name: `置顶会话 ${S9}` }));
     fireEvent.click(checkOf(S9));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
 
     await waitFor(() =>
@@ -508,11 +506,12 @@ describe("批量选择", () => {
     fireEvent.click(groupBox(name));
     expect(paths.every((box) => box.checked)).toBe(true);
     expect(screen.getByText(`已选 ${paths.length} 项`)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /删除所选 \(\d+\)/ })).toBeInTheDocument();
-
+    // 选择条删除按钮与勾选一致。
+    expect(screen.getByRole("button", { name: "删除所选…" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
     expect(screen.queryByText(/已选 \d+ 项/)).toBeNull();
-    expect(paths.some((box) => box.checked)).toBe(false);
+    const boxes = Array.from(document.querySelectorAll(".row input[type=checkbox]"));
+    expect(boxes.some((box) => (box as HTMLInputElement).checked)).toBe(false);
   });
 
   it("取消组头勾选清空该组；过滤后只勾选可见会话", async () => {
@@ -608,8 +607,7 @@ describe("记忆库跳转来源会话", () => {
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "管理" }));
-    fireEvent.click(await screen.findByRole("tab", { name: "记忆库" }));
+    fireEvent.click(screen.getByRole("button", { name: "记忆" }));
     fireEvent.click(await screen.findByRole("button", { name: "omp-resume" }));
 
     const jumps = await screen.findAllByRole("button", { name: "查看来源会话" });
@@ -617,13 +615,14 @@ describe("记忆库跳转来源会话", () => {
     expect(enabled).toBeTruthy();
     fireEvent.click(enabled as HTMLButtonElement);
 
-    expect(screen.queryByRole("heading", { name: "管理" })).toBeNull();
+    // 跳到来源会话：离开记忆页，进入工作台（详情头还在）。
+    expect(screen.queryByRole("heading", { name: "记忆" })).toBeNull();
     expect(document.querySelector(".detail-head")).not.toBeNull();
   });
 });
 
-describe("舞台内点侧栏会话", () => {
-  it("重复点击已选中的会话行也会切换舞台目标（不离开舞台）", async () => {
+describe("工作台进舞台回看", () => {
+  it("工作台点舞台进入回看；换会话再进则切换目标", async () => {
     // 舞台画布需要 ResizeObserver 与 canvas（jsdom 没有）：只验证切换逻辑，不画画布。
     globalThis.ResizeObserver = class {
       observe(): void {}
@@ -635,35 +634,28 @@ describe("舞台内点侧栏会话", () => {
     render(<App />);
     await screen.findByText(S1);
 
-    // 回放真实复现：先选中 S1（行高亮），再打开舞台。
     // mock 的「运行中」是 sessions[0]（= S1），所以舞台会先落在 S1 上。
     fireEvent.click(rowOf(S1));
-    fireEvent.click(screen.getByRole("button", { name: "舞台" }));
+    fireEvent.click(await screen.findByRole("button", { name: "舞台" }));
     await screen.findByRole("group", { name: "角色卡片" });
     const headTitle = () => document.querySelector(".stage-head-title")?.textContent;
     await waitFor(() => {
       expect(headTitle()).toBe(S1);
     });
-    // 侧栏点 S2：舞台跟过去（selectedPath 变化，旧代码也能处理）。
-    fireEvent.click(rowOf(S2));
-    await waitFor(() => {
-      expect(headTitle()).toBe(S2);
-    });
-    // 舞台内点左栏「运行中」的 S1：舞台目标切回 S1，但侧栏选中行仍是 S2。
+    // 舞台内点左栏「运行中」的 S1：舞台目标仍是 S1。
     const rail = screen.getByRole("complementary", { name: "会话选择" });
     fireEvent.click(within(rail).getByRole("button", { name: new RegExp(S1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }));
     await waitFor(() => {
       expect(headTitle()).toBe(S1);
     });
-    // 关键：侧栏再点一次 S2 ——selectedPath 从头到尾都是 S2（React 状态不变，
-    // 旧的 prevSelected 方案收不到任何事件），但舞台必须切回 S2。
+    // 换会话：回列表进 S2 工作台，再点舞台 → 目标切到 S2。
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    await screen.findByText(S2);
     fireEvent.click(rowOf(S2));
+    fireEvent.click(await screen.findByRole("button", { name: "舞台" }));
     await waitFor(() => {
       expect(headTitle()).toBe(S2);
     });
-    // 全程不离开舞台。
-    expect(screen.getByRole("heading", { name: "运行中" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent 库" })).toBeInTheDocument();
   });
 });
 
@@ -683,6 +675,13 @@ describe("并发 load 与 toast 上限", () => {
         return [{ path: FIXTURE_SESSIONS[0].summary.path, ok: true }];
       }
       if (cmd === "get_meta") return { revision: 0, sessions: {} };
+      if (cmd === "get_session_usage")
+        return {
+          messages: { user: 0, assistant: 0 },
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost: { total: 0, main: 0, background: 0, subagent: 0 },
+          models: [],
+        };
       if (cmd === "get_conversation") return { path: "x", leafId: null, targetId: "", items: [] };
       if (cmd === "get_tree") return { path: "x", leafId: null, rootIds: [], activePathIds: [], nodes: [] };
       if (cmd === "get_omp_version") throw { code: "OMP_NOT_FOUND", message: "未安装" };
@@ -694,7 +693,7 @@ describe("并发 load 与 toast 上限", () => {
     gate.resolve(buildListResult(FIXTURE_SESSIONS));
     await screen.findByText(S1);
     fireEvent.click(checkOf(S1));
-    fireEvent.click(screen.getByRole("button", { name: /删除所选 \(1\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: "删除所选…" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除" }));
     await screen.findByText(/成功删除 1 个会话/);
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));

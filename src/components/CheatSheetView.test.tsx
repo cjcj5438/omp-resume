@@ -1,5 +1,5 @@
 /**
- * CheatSheetDialog 测试：复制成功/失败反馈、版本提示、组合用法与过滤。
+ * CheatSheetView 测试：复制成功/失败反馈、版本提示、组合用法与过滤。
  * 剪贴板用 navigator.clipboard 桩，不触碰系统剪贴板。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { OMP_COMMANDS, OMP_VERSION } from "../ompCommands";
 import { OMP_CLI_COMMANDS } from "../ompCliCommands";
 import { OMP_COMBOS } from "../ompCombos";
-import { CheatSheetDialog } from "./CheatSheetDialog";
+import { CheatSheetView } from "./CheatSheetView";
 
 function stubClipboard(writeText: (text: string) => Promise<void>) {
   Object.defineProperty(navigator, "clipboard", {
@@ -17,7 +17,7 @@ function stubClipboard(writeText: (text: string) => Promise<void>) {
 }
 
 function renderDialog(installedVersion: string | null = null) {
-  render(<CheatSheetDialog installedVersion={installedVersion} onClose={() => {}} />);
+  render(<CheatSheetView installedVersion={installedVersion} />);
 }
 
 /** 默认页是「入门路径」；涉及命令行的用例先切到「全部命令」。 */
@@ -37,7 +37,7 @@ afterEach(() => {
 describe("版本提示", () => {
   it("已安装版本与基准不一致时提示，一致或未知时不提示", () => {
     const { unmount } = render(
-      <CheatSheetDialog installedVersion="18.11.1" onClose={() => {}} />,
+      <CheatSheetView installedVersion="18.11.1" />,
     );
     expect(
       screen.getByText(`你安装的是 18.11.1，速查基于 ${OMP_VERSION}，个别命令可能有差异`),
@@ -119,7 +119,7 @@ describe("终端命令", () => {
     stubClipboard(writeText);
     renderDialog();
     fireEvent.click(screen.getByRole("tab", { name: "终端命令" }));
-    expect(document.querySelector(".cheatsheet-head")?.textContent).toContain(
+    expect(document.querySelector(".page-sub")?.textContent).toContain(
       `共 ${OMP_CLI_COMMANDS.length} 个终端子命令`,
     );
     const bench = OMP_CLI_COMMANDS.find((c) => c.name === "bench");

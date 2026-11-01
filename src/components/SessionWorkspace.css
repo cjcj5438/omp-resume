@@ -1,0 +1,69 @@
+/* 会话工作台：左栏 280px 列表 + 右栏详情。 */
+
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.ws-rail {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.ws-main {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ws-back {
+  align-self: flex-start;
+  margin-bottom: var(--sp-2);
+}
+
+.recent-turns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.recent-turns h2 {
+  font-size: var(--fs-md);
+  margin: 0;
+}
+
+.recent-turns ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.recent-turns li {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+
+.recent-role {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  width: 3em;
+}
+
+.recent-text {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+}

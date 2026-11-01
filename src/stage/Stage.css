@@ -244,10 +244,11 @@
   flex: none;
 }
 
-.stage-filter-active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
+.stage-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
 }
 
 /* ---- 卡片 ---- */

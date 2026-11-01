@@ -277,3 +277,89 @@ describe("置顶区的会话级过滤", () => {
     expect(filterSessionsByTags(pinned, ["bug", "文档"], meta)).toEqual([]);
   });
 });
+
+describe("sessionIssues", () => {
+  it("四种来源依次检出", async () => {
+    const { sessionIssues } = await import("./listUtils");
+    expect(sessionIssues(s({ path: "/p/ok.jsonl" }))).toEqual([]);
+    expect(sessionIssues(s({ path: "/p/a.jsonl", formatSupported: false })).map((i) => i.code)).toEqual([
+      "format",
+    ]);
+    expect(sessionIssues(s({ path: "/p/b.jsonl", cwdExists: false })).map((i) => i.code)).toEqual(["cwd"]);
+    const bad = sessionIssues(s({ path: "/p/c.jsonl", badLines: 7 }));
+    expect(bad.map((i) => i.code)).toEqual(["badLines"]);
+    expect(bad[0].label).toBe("7 行损坏");
+    expect(sessionIssues(s({ path: "/p/d.jsonl", probeOk: false })).map((i) => i.code)).toEqual(["probe"]);
+    // 多问题按 format → cwd → badLines → probe 顺序。
+    const multi = sessionIssues(
+      s({ path: "/p/e.jsonl", formatSupported: false, cwdExists: false, badLines: 2, probeOk: false }),
+    );
+    expect(multi.map((i) => i.code)).toEqual(["format", "cwd", "badLines", "probe"]);
+  });
+});
+
+describe("filterGroupsByStatus", () => {
+  it("all 返回同一引用；pinned 保留置顶会话与整组置顶项目；非 all 丢弃空组", async () => {
+    const { filterGroupsByStatus } = await import("./listUtils");
+    const gs: ProjectGroup[] = [
+      {
+        cwd: "/w/p1",
+        dirName: "p1",
+        sessions: [
+          s({ path: "/p/run.jsonl", cwd: "/w/p1", inUse: true }),
+          s({ path: "/p/idle.jsonl", cwd: "/w/p1" }),
+        ],
+      },
+      {
+        cwd: "/w/p2",
+        dirName: "p2",
+        sessions: [s({ path: "/p/other.jsonl", cwd: "/w/p2" })],
+      },
+    ];
+    const pins = { projects: ["/w/p2"], sessions: ["/p/idle.jsonl"] };
+    expect(filterGroupsByStatus(gs, "all", pins)).toBe(gs);
+
+    const running = filterGroupsByStatus(gs, "running", pins);
+    expect(running).toHaveLength(1);
+    expect(running[0].sessions.map((x) => x.path)).toEqual(["/p/run.jsonl"]);
+
+    const pinned = filterGroupsByStatus(gs, "pinned", pins);
+    // p1 只留被置顶的 idle；p2 整组保留。
+    expect(pinned).toHaveLength(2);
+    expect(pinned[0].sessions.map((x) => x.path)).toEqual(["/p/idle.jsonl"]);
+    expect(pinned[1]).toBe(gs[1]);
+  });
+
+  it("issues 只留有问题的会话", async () => {
+    const { filterGroupsByStatus } = await import("./listUtils");
+    const gs: ProjectGroup[] = [
+      {
+        cwd: "/w/p",
+        dirName: "p",
+        sessions: [
+          s({ path: "/p/ok.jsonl", cwd: "/w/p" }),
+          s({ path: "/p/bad.jsonl", cwd: "/w/p", badLines: 3 }),
+        ],
+      },
+    ];
+    const out = filterGroupsByStatus(gs, "issues", { projects: [], sessions: [] });
+    expect(out).toHaveLength(1);
+    expect(out[0].sessions.map((x) => x.path)).toEqual(["/p/bad.jsonl"]);
+  });
+});
+
+describe("filterSessionsByStatus / statusCounts", () => {
+  it("pinned 原样返回；counts 在全量上计数", async () => {
+    const { filterSessionsByStatus, statusCounts } = await import("./listUtils");
+    const sessions = [
+      s({ path: "/p/a.jsonl", inUse: true }),
+      s({ path: "/p/b.jsonl", badLines: 1 }),
+      s({ path: "/p/c.jsonl" }),
+    ];
+    const pins = { projects: [], sessions: ["/p/c.jsonl"] };
+    expect(filterSessionsByStatus(sessions, "pinned", pins)).toBe(sessions);
+    expect(filterSessionsByStatus(sessions, "running", pins).map((x) => x.path)).toEqual(["/p/a.jsonl"]);
+    const gs: ProjectGroup[] = [{ cwd: "/w/p", dirName: "p", sessions }];
+    expect(statusCounts(gs, pins)).toEqual({ all: 3, running: 1, pinned: 1, issues: 1 });
+  });
+});

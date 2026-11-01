@@ -24,8 +24,12 @@ import type { ToastFn } from "./useOmpOp";
 import { useAlive } from "./useOmpOp";
 import "./ModelsTab.css";
 
-export function ModelsTab(props: { onToast: ToastFn; state: ModelDraftState }): ReactNode {
-  const { onToast } = props;
+export function ModelsTab(props: { onToast: ToastFn; state: ModelDraftState; focus?: "bench" }): ReactNode {
+  const { onToast, focus } = props;
+  // bench 路由进入：滚动到「测试」区。
+  useEffect(() => {
+    if (focus === "bench") document.getElementById("models-bench")?.scrollIntoView({ block: "start" });
+  }, [focus]);
   const alive = useAlive();
   const specsSeq = useRef(0);
   const [specs, setSpecs] = useState<ModelSpec[]>([]);
@@ -166,7 +170,7 @@ export function ModelsTab(props: { onToast: ToastFn; state: ModelDraftState }): 
         />
       </section>
 
-      <section aria-label="测试">
+      <section aria-label="测试" id="models-bench">
         <h3 className="manage-sub">测试</h3>
         <p className="muted models-tab-hint">跑 bench 看速度与稳定性，推荐结果回填到下面的角色分配。</p>
         <ModelTesterPanel
