@@ -62,6 +62,9 @@
       "../superagent/prompts/": "superagent/prompts/",
       "../superagent/skills/": "superagent/skills/",
       "../superagent/plugin/": "superagent/plugin/"
+    },
+    "macOS": {
+      "signingIdentity": "-"
     }
   },
   "plugins": {

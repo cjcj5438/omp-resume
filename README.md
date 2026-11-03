@@ -147,7 +147,13 @@ Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/r
 # omp-resume_0.7.0_aarch64.dmg — macOS arm64
 ```
 
-The bundle carries no Developer ID and is not notarized. If Gatekeeper blocks it: **right-click → Open** in Applications, once.
+The bundle is ad-hoc signed (no Developer ID, not notarized), so a browser-downloaded copy is quarantined and Gatekeeper blocks the first launch. Either open **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/omp-resume.app
+```
+
+On macOS 15+ right-click → Open no longer bypasses this. In-app updates are not quarantined and need no extra step.
 
 The app checks for updates on launch (Tauri updater, minisign-verified) and installs in place. You can also check manually from the sidebar footer (`omp-resume <version>` row) or the tray's Settings submenu.
 
