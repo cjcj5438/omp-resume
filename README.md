@@ -144,7 +144,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.7.0_aarch64.dmg — macOS arm64
+# omp-resume_0.7.1_aarch64.dmg — macOS arm64
 ```
 
 The bundle is ad-hoc signed (no Developer ID, not notarized), so a browser-downloaded copy is quarantined and Gatekeeper blocks the first launch. Either open **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag once:
