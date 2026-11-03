@@ -2,14 +2,13 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.6.0-2f6feb)
+![version](https://img.shields.io/badge/version-0.7.0-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
-![tests](https://img.shields.io/badge/tests-1218%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-2381%20passing-2ea043)
 ![ui](https://img.shields.io/badge/UI-Chinese%20(zh--CN)-8b949e)
 
 > UI copy ships in Chinese today; this README is English. Screenshots are from the built-in demo backend, so no real session data is shown.
-> The UI was rebuilt in 0.5.x (page-based shell — see below); screenshots under `docs/media/` predate the rebuild and are pending refresh.
 
 omp stores every session as an append-only JSONL tree under `~/.omp/agent/sessions`. That is a rich, structured record of everything your agent did — and today it is only readable by the CLI, one `--resume` at a time.
 
@@ -28,15 +27,15 @@ Two kinds of tools already exist: chat clients that host their own runtime, and 
 | [oh-my-pi-gui](https://github.com/nornzach/oh-my-pi-gui) | Electron GUI with a **bundled agent**: parallel sessions, chat, MCP, skills, plugins, stats | You chat with its runtime. omp-resume hosts no runtime at all — it reads omp's JSONL read-only and resumes the session in the real CLI. |
 | [omp-web](https://github.com/17380936778/omp-web) and forks | Browser UI over omp: session browsing + live chat | Same shape, browser-bound: the next turn happens in that app, not in `omp`. |
 | [pi-session-manager](https://github.com/Dwsy/pi-session-manager) | Tauri session workbench for Pi and other agents (Claude Code, Codex, OpenCode, Gemini CLI, Cursor) | Broad multi-agent archive; omp is not among its documented sources, and it does not manage omp's config, models, MCP or memory. |
-| **omp-resume** | Native macOS inspector + config console + launchpad | Opens the session in a real `omp --resume` iTerm2 tab, and can append a branch marker so that resume continues from any node. |
+| **omp-resume** | Native macOS inspector + config console + agent orchestrator | Opens the session in a real `omp --resume` iTerm2 tab, can append a branch marker so that resume continues from any node, and can run a self-hosted Superagent daemon that works GitHub/Feishu tickets through real omp sessions. |
 
 The design rule is simple: **omp owns the session, omp-resume owns the view.** Writes are limited to app-owned files (`meta.json`, `model-bench.jsonl`, memory backups) and to explicitly confirmed, revision-checked edits of omp's own config files. Session contents are never rewritten.
 
 ---
 
-## The shell (0.5.x rebuild)
+## The shell
 
-The main window is a page-based shell: a left sidebar groups every feature into **会话** (sessions), **分析** (usage / health / cleanup / prompt history), **Agent Stage** (pixel office), **环境配置** (models / agents / plugins / skills / MCP / memory), **工具** (model tester / cheat sheet) and **设置** (appearance & behavior / menu bar). Each session opens a **workspace** with three tabs — 概览 (overview), 对话 (conversation) and 树 (tree).
+The main window is a page-based shell: a left sidebar groups every feature into **会话** (sessions), **分析** (usage / health / cleanup / prompt history), **Agent Stage** (pixel office), **Superagent** (management panel / sessions / service), **环境配置** (models / agents / plugins / skills / MCP / memory), **工具** (model tester / cheat sheet) and **设置** (appearance & behavior / menu bar). Each session opens a **workspace** with three tabs — 概览 (overview), 对话 (conversation) and 树 (tree).
 
 Global keys: **⌘K** command palette (search sessions and pages), **⌘B** collapse the sidebar, **⌘N** new session, **⌘,** settings. The sidebar footer shows the update state (checking / new version / failed / up to date) with the session count badge on the Sessions entry. The titlebar keeps the native macOS traffic lights (`trafficLightPosition` in `tauri.conf.json`).
 
@@ -78,6 +77,20 @@ Nothing here is synthetic. If omp did not record it, the stage does not draw it 
 
 ![Agent Stage](docs/media/stage.gif)
 
+### Superagent
+
+A self-hosted agent orchestrator that lives inside omp-resume (new in 0.7.0). The app spawns and supervises a daemon (`omp run …/dist/daemon.js --state-dir … --socket … --omp …`), which watches GitHub and Feishu sources, evaluates incoming events, authorizes work as tickets, runs one `omp --mode rpc` session per ticket inside an isolated working directory, and reports back to the source. The daemon's own prompt pack, generated omp plugin, and GitHub/Feishu skill manuals ship inside the app bundle.
+
+Three pages under the **Superagent** sidebar group:
+
+| Page | What it does |
+|---|---|
+| **Management panel** | The daemon's own six-tab UI (overview / sources / triggers / evals / execution / settings), embedded via the `omp-superagent/panel` export and themed through CSS token mapping |
+| **Sessions** | The orchestrator session plus each worker session, read-only conversation review |
+| **Service** | Enable/disable, restart, pid/uptime/restarts, resolved paths, daemon log tail |
+
+The daemon keeps its state under `<data_dir>/superagent` (sqlite store, session JSONL, work directories, prompts, generated plugin dir). The supervisor tracks six states (`disabled` / `starting` / `running` / `stopping` / `stopped` / `crashed`), probes readiness over the unix socket, restarts crashed daemons on backoff, and reclaims orphaned daemons left by a previous run. See `docs/CONTRACT.md` §26 for the hosting state machine, the five IPC commands (`superagent_status` / `superagent_set_enabled` / `superagent_restart` / `superagent_request` / `superagent_log_tail`) and the daemon HTTP API.
+
 ### Environment and configuration
 
 Six pages, all editing what omp actually reads:
@@ -106,7 +119,7 @@ Model **specs** are editable row by row in `models.yml`, with value-shape valida
 
 ### Cheat sheet
 
-A searchable reference pinned to **omp 18.13.3**: 88 slash commands (85 built-in + 3 bundled extension commands) with aliases, argument hints and examples, 51 terminal subcommands, plus curated learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
+A searchable reference pinned to **omp 18.16.0** (see [Command manual](#command-manual) for how it is verified): 91 entries — 85 built-in slash commands, the `/seance` consult command, 3 bundled extension commands (`/review` / `/green` / `/annotate`), and `/skill:*` plus local custom commands which are intentionally not listed — plus 51 terminal subcommands, 6 learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
 
 ![Cheat sheet](docs/media/cheatsheet.jpg)
 
@@ -131,7 +144,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.6.0_aarch64.dmg — macOS arm64
+# omp-resume_0.7.0_aarch64.dmg — macOS arm64
 ```
 
 The bundle carries no Developer ID and is not notarized. If Gatekeeper blocks it: **right-click → Open** in Applications, once.
@@ -157,11 +170,11 @@ The first time you use **Resume in iTerm2**, macOS asks whether omp-resume may c
 ```sh
 npm run dev          # front end only; add ?mock to the URL for the demo backend
 npm run tauri dev    # full desktop app
-npm run check        # typecheck + vitest
+npm run check        # typecheck + vitest (app) + typecheck + vitest (superagent)
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-The mock backend is a dev-only import that simulates all 83 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships.
+The mock backend is a dev-only import that simulates all 88 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships. The Superagent panel is transport-driven and unusable under the mock (every `superagent_request` returns `SUPERAGENT_UNAVAILABLE`); only the service state machine is simulated.
 
 ### Release
 
@@ -169,12 +182,30 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.6.0 && git push origin v0.6.0
+git tag v0.7.0 && git push origin v0.7.0
 ```
 
-Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
+Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle (including `superagent/dist`, built first via the workspace script) and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
 
 The updater signing key lives in the `TAURI_SIGNING_PRIVATE_KEY` CI secret and has no passphrase. **If that private key is lost, already-installed copies can never be updated again.**
+
+---
+
+## Command manual
+
+Three layers of commands meet in this repo. They are verified differently — do not mix them up:
+
+| Layer | What | Source of truth | Verified by |
+|---|---|---|---|
+| **omp slash commands** | 91 entries in the cheat sheet: 85 built-in + `/seance` + 3 bundled extensions + `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` | `src/ompCommands.test.ts` (existence, aliases, example rules) + manual RPC/TUI spot checks, see `src/ompCommands.ts` header |
+| **omp terminal subcommands** | 51 entries (`omp <name>`) in the cheat sheet | `omp --help` COMMANDS + per-command `omp <name> --help` on 18.16.0 | `src/ompCommands.test.ts` (uniqueness, alphabetical order, example shape) |
+| **omp-resume IPC commands** | 88 Tauri commands (§4.1–§4.80, §4.1 deleted) that the UI calls | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
+
+Rules that follow from this:
+
+- **Cheat sheet entries are static data, refreshed per omp release.** To refresh: diff the upstream `builtin-*.ts` top-level `name:` entries between tags, diff the RPC `available_commands_update` hints/aliases against the table, diff `omp --help` COMMANDS against `src/ompCliCommands.ts`, then bump `OMP_VERSION` and this README together. The 18.13.3 → 18.16.0 refresh, for example, changed only three entries: `/prewalk` args, `omp session` (new `lease` action), `/modelpreset` arg order.
+- **IPC commands follow the contract first.** `docs/CONTRACT.md` §0: every new command changes the contract, `model.rs`, `types.ts`, `api.ts`, and the `generate_handler!` registration together. The contract wins on any disagreement.
+- **Superagent daemon HTTP paths are not IPC commands.** The panel talks to the daemon over `/orchestrator/api/*` through the single `superagent_request` proxy; daemon endpoints are specified in `superagent/src/app/api.ts` and `docs/CONTRACT.md` §26.2, not in §4.
 
 ---
 
@@ -190,12 +221,14 @@ flowchart LR
     end
 
     subgraph app["omp-resume"]
-        RS["Rust core<br/>83 IPC commands"]
+        RS["Rust core<br/>88 IPC commands"]
         UI["React UI<br/>shell pages · stage · panel"]
         MB["menu bar poller<br/>flock + JSONL tail"]
+        SA["Superagent daemon<br/>omp run · unix socket"]
     end
 
     IT["iTerm2<br/>real omp --resume"]
+    GH["GitHub / Feishu<br/>ticket sources"]
 
     SJ -->|read-only| RS
     DB -->|read-only| RS
@@ -203,28 +236,37 @@ flowchart LR
     MEM -->|read-only + backups| RS
     RS <-->|IPC| UI
     RS --> MB
+    RS <-->|spawn + supervise| SA
     UI -->|"open tab, run CLI"| IT
+    GH <-->|"poll + report back"| SA
 ```
 
 - **Sessions are never rewritten.** The only session-file mutation is a single `custom` line appended for a branch marker, which omp's context builder ignores by design.
 - **In-use detection is a real `flock` probe** on omp's ownership lock, not a heuristic.
 - **Config writes are validated** against a whitelist, use atomic temp-file + rename, and carry a revision so a concurrent edit surfaces as a conflict instead of being clobbered.
 - **Memory deletion always backs up first.**
-- Everything is local. No telemetry and no analytics; the only network calls are the updater, `omp update`, `omp bench`, and the plugin/marketplace operations you explicitly trigger.
+- Everything is local. No telemetry and no analytics; the only network calls are the updater, `omp update`, `omp bench`, the Superagent daemon's GitHub/Feishu polling (only when you enable it), and the plugin/marketplace operations you explicitly trigger.
 
 ### Repo layout
 
 ```
-src/                 React front end (75 test files, 726 tests)
+src/                 React front end (81 test files, 758 tests)
 src/stage/           Agent Stage: sprites, layout, scene, timeline
-src/components/      Views: sessions, insight, stage, config, tools, settings
-src-tauri/src/       Rust core (488 tests)
+src/components/      Views: sessions, insight, stage, config, tools, settings, superagent
+src/ompCommands.ts   Cheat sheet: slash registry pinned to omp 18.16.0
+src-tauri/src/       Rust core (527 tests, 88 IPC commands)
   sessions/          JSONL scan, tree building, conversation parsing
   stage/             Incremental cursors + actor state machine
   usage/             Cost/token aggregation, redaction, caching
   memory/            Mnemopi bank reader
   menubar/           Tray poller, classifier, notifications
   ops/               Delete, iTerm2, branch markers
+  superagent/        Daemon supervisor: spawn, readiness, restart, proxy
+superagent/          Orchestrator package: daemon + embeddable panel (1096 tests)
+  src/app/           Runtime, engine, settings, HTTP API
+  src/omp/           omp --mode rpc session pool + plugin generation
+  src/sources/       GitHub + Feishu watchers
+  prompts/ skills/ plugin/  Bundled prompt pack, skill manuals, plugin template
 docs/CONTRACT.md     Authoritative spec: formats, commands, semantics, error codes
 docs/DECISIONS.md    Measured evidence behind every non-obvious choice
 ```
@@ -242,6 +284,8 @@ Everything is resolved from omp's own defaults; every path can be overridden for
 | Ownership locks | `~/.omp/run/session-owners` | `OMP_RESUME_OWNERS_DIR` |
 | Prompt history | `~/.omp/agent/history.db` | `OMP_RESUME_HISTORY_DB` |
 | Memory banks | `~/.omp/agent/memories/mnemopi/banks` | `OMP_RESUME_MEMORY_DIR` |
+| Superagent state | `<app data>/superagent` | `OMP_RESUME_DATA_DIR` (parent) |
+| Superagent assets | bundled `Resources/superagent` (dev: `superagent/`) | `OMP_RESUME_SUPERAGENT_DIR` |
 | App data (`meta.json`, `settings.json`, bench records, backups) | `~/Library/Application Support/omp-resume` | `OMP_RESUME_DATA_DIR` |
 
 ---
@@ -253,4 +297,5 @@ Everything is resolved from omp's own defaults; every path can be overridden for
 - **Deletion is permanent** — no trash, no undo.
 - **The Agent Stage polls** the JSONL every 1.5 s rather than subscribing to events, so it lags reality by up to ~2 s and cannot show background bash jobs or omp-internal queues.
 - **Pins, hidden models and appearance prefs live in WebView localStorage**, so the dev build and the `.app` do not share them.
+- **Superagent is local-first and unsupervised while enabled.** The daemon runs real omp sessions with yolo approvals inside its work directories; only enable it after reviewing the ticket sources and execution settings in the management panel.
 - Detailed edge cases live in [docs/CONTRACT.md](docs/CONTRACT.md) and [docs/DECISIONS.md](docs/DECISIONS.md).
