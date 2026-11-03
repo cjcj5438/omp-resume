@@ -259,7 +259,7 @@ function App() {
       .then(setBuildInfo)
       .catch(() => {});
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock")) {
-      getVersion().catch(() => setAppVersion((v) => v ?? "0.5.1-mock"));
+      getVersion().catch(() => setAppVersion((v) => v ?? "0.7.1-mock"));
     }
   }, []);
 

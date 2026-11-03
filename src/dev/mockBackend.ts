@@ -1533,17 +1533,17 @@ export async function installMockBackend(): Promise<MockHandle> {
         return entries.filter((e) => q === "" || e.prompt.toLowerCase().includes(q) || (e.cwd ?? "").toLowerCase().includes(q) || (e.sessionTitle ?? "").toLowerCase().includes(q));
       }
       case "omp_version":
-        return { version: "18.11.1", path: "/Users/demo/.local/bin/omp" };
+        return { version: "18.16.0", path: "/Users/demo/.local/bin/omp" };
       case "omp_update_check": {
         const mode = params.get("omp");
-        const current = "18.11.1";
+        const current = "18.16.0";
         if (mode === "managed") return {
           current: null,
           latest: null,
           upToDate: false,
           raw: "/opt/homebrew/bin/omp is installed and kept up to date by Homebrew; update it from Homebrew.\n",
         };
-        const latest = mode === "new" ? "18.12.0" : null;
+        const latest = mode === "new" ? "18.17.0" : null;
         return {
           current,
           latest,
@@ -1553,12 +1553,12 @@ export async function installMockBackend(): Promise<MockHandle> {
       }
       case "omp_update_run": {
         const changed = params.get("omp") === "new";
-        const after = changed ? "18.12.0" : "18.11.1";
+        const after = changed ? "18.17.0" : "18.16.0";
         const output = changed
           ? `Downloading ...\nInstalling update...\n✔ Updated to ${after}\nRestart omp to use the new version\n`
           : "版本未变化；请通过安装 omp 的包管理器更新。\n";
         streamedOutput(args, output);
-        return { before: "18.11.1", after, changed, output };
+        return { before: "18.16.0", after, changed, output };
       }
       case "omp_plugins_list":
         return structuredClone({ plugins, npm: [{ name: "omp-enforce-uv", version: "0.3.0" }], marketplaces, warnings: [] });
