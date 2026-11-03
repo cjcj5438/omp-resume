@@ -119,7 +119,7 @@ Model **specs** are editable row by row in `models.yml`, with value-shape valida
 
 ### Cheat sheet
 
-A searchable reference pinned to **omp 18.16.0** (see [Command manual](#command-manual) for how it is verified): 91 entries — 85 built-in slash commands, the `/seance` consult command, 3 bundled extension commands (`/review` / `/green` / `/annotate`), and `/skill:*` plus local custom commands which are intentionally not listed — plus 51 terminal subcommands, 6 learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
+A searchable reference pinned to **omp 18.16.0** (see [Command manual](#command-manual) for how it is verified): 91 entries — 88 in the built-in groups (including the `/seance` consult command) plus 3 bundled extension commands (`/review` / `/green` / `/annotate`); `/skill:*` and local custom commands are intentionally not listed — plus 51 terminal subcommands, 6 learning paths and multi-step recipes. If your installed omp differs, the dialog says so.
 
 ![Cheat sheet](docs/media/cheatsheet.jpg)
 
@@ -197,7 +197,7 @@ Three layers of commands meet in this repo. They are verified differently — do
 
 | Layer | What | Source of truth | Verified by |
 |---|---|---|---|
-| **omp slash commands** | 91 entries in the cheat sheet: 85 built-in + `/seance` + 3 bundled extensions + `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` | `src/ompCommands.test.ts` (existence, aliases, example rules) + manual RPC/TUI spot checks, see `src/ompCommands.ts` header |
+| **omp slash commands** | 91 entries in the cheat sheet: 88 in built-in groups (incl. `/seance`) + 3 bundled extensions; `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` | `src/ompCommands.test.ts` (existence, aliases, example rules) + manual RPC/TUI spot checks, see `src/ompCommands.ts` header |
 | **omp terminal subcommands** | 51 entries (`omp <name>`) in the cheat sheet | `omp --help` COMMANDS + per-command `omp <name> --help` on 18.16.0 | `src/ompCommands.test.ts` (uniqueness, alphabetical order, example shape) |
 | **omp-resume IPC commands** | 88 Tauri commands (§4.1–§4.80, §4.1 deleted) that the UI calls | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
 
