@@ -58,9 +58,10 @@ export function NewSessionDialog({ initialCwd, onClose, onToast }: NewSessionDia
   }
 
   async function submit(): Promise<void> {
-    const trimmed = cwd.trim();
-    let target = trimmed;
-    if (target === "") {
+    // 路径首尾空格可能是目录名的一部分（如 NAS 上的 "…dsh-superagent-prototype "），
+    // 不能直接 trim：原样提交；仅全空白视为「留空」走上次目录。
+    let target = cwd;
+    if (target.trim() === "") {
       try {
         target = localStorage.getItem(LAST_DIR_KEY) ?? "";
       } catch {

@@ -28,6 +28,30 @@ describe("NewSessionDialog", () => {
     const call = calls.find((c) => c.cmd === "new_session_in_iterm");
     expect(call?.args).toMatchObject({ cwd: "/Users/demo/my/omp-resume", model: "5438/deepseek" });
   });
+  it("尾部空格是目录名的一部分：原样提交不 trim", async () => {
+    const calls: { cmd: string; args: unknown }[] = [];
+    mockIPC((cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "list_models") return [];
+      if (cmd === "new_session_in_iterm") return null;
+      return null;
+    });
+    const onClose = vi.fn();
+    render(
+      <NewSessionDialog
+        initialCwd="/Volumes/NAS1/Workspace/github/dsh-superagent-prototype "
+        onClose={onClose}
+        onToast={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "在 iTerm2 启动" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    const call = calls.find((c) => c.cmd === "new_session_in_iterm");
+    expect(call?.args).toMatchObject({
+      cwd: "/Volumes/NAS1/Workspace/github/dsh-superagent-prototype ",
+      model: null,
+    });
+  });
 
   it("留空用上次目录；无上次目录时报错不提交", async () => {
     const calls: string[] = [];

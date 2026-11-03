@@ -128,6 +128,16 @@ pub fn append_branch_marker_impl(
     })
 }
 
+/// `CWD_MISSING` 文案：路径首尾若有空白字符（空格可为目录名一部分，用户却看不见），
+/// 追加去歧义提示。只调文案，不改错误码与拒绝语义。
+fn cwd_missing_message(prefix: &str, cwd: &str) -> String {
+    let mut message = format!("{prefix}：{cwd}");
+    if cwd != cwd.trim() {
+        message.push_str("（注意：路径首尾含空格，请确认目录名是否以空格开头或结尾）");
+    }
+    message
+}
+
 // ---------------------------------------------------------------------------
 // open_in_iterm（CONTRACT §4.8）
 // ---------------------------------------------------------------------------
@@ -157,7 +167,7 @@ fn resume_target(cfg: &Config, path: &str) -> Result<ResumeTarget, AppError> {
     if !cwd_path.is_absolute() || !cwd_path.is_dir() {
         return Err(AppError::new(
             ErrorCode::CwdMissing,
-            format!("记录的工作目录不存在：{cwd}"),
+            cwd_missing_message("记录的工作目录不存在", &cwd),
         ));
     }
     if cwd.chars().any(char::is_control) {
@@ -270,7 +280,7 @@ pub fn open_project_dir_impl(
     if !cwd_path.is_absolute() || !cwd_path.is_dir() {
         return Err(AppError::new(
             ErrorCode::CwdMissing,
-            format!("目录不存在或不是目录：{cwd}"),
+            cwd_missing_message("目录不存在或不是目录", cwd),
         ));
     }
     if cwd.chars().any(char::is_control) {
@@ -305,7 +315,7 @@ pub fn new_session_in_iterm_impl(
     if !cwd_path.is_absolute() || !cwd_path.is_dir() {
         return Err(AppError::new(
             ErrorCode::CwdMissing,
-            format!("目录不存在或不是目录：{cwd}"),
+            cwd_missing_message("目录不存在或不是目录", cwd),
         ));
     }
     if cwd.chars().any(char::is_control) {
