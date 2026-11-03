@@ -1,7 +1,7 @@
 /**
  * omp 终端子命令速查数据（手写静态表，单一分组、按 name 字母序）。
  *
- * 基准：omp 18.13.3 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
+ * 基准：omp 18.16.0 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
  * 复核方法：
  * 1. `omp --help` 的 COMMANDS 段落给出全部子命令与一行英文说明；
  * 2. 逐条 `omp <name> --help` 核对参数与 flag，示例只用那里真实出现的形式；
@@ -283,13 +283,13 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
   },
   {
     name: "session",
-    args: "pack|unpack|moved [SOURCE] [OUTPUT]",
-    zh: "把会话交给另一台机器：打包、解包，或标记本地副本已搬走",
+    args: "pack|unpack|moved|lease [SOURCE] [OUTPUT]",
+    zh: "把会话交给另一台机器：打包、解包、标记本地副本已搬走，或查哪些会话正被占用（lease，不抢占）",
     tag: "会话",
     examples: [
       "omp session pack <会话文件> /tmp/session.tar",
-      "omp session unpack /tmp/session.tar --cwd ~/src/project",
       "omp session moved <会话文件> --to cloud",
+      "omp session lease --json -- <会话id>",
     ],
   },
   {

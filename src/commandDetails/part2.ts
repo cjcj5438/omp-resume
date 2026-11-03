@@ -101,10 +101,12 @@ export const PART_2: Record<string, OmpCommandDetail> = {
     related: ["model", "switch", "effort"],
   },
   prewalk: {
-    when: "当前模型额度快用完、想预约一次换模型交接时用：本轮用完后自动换模型继续。",
+    when: "规划和执行想用不同模型时用：先用规划模型出方案，到第一次改代码时自动交接到执行模型继续。",
     params: [
-      { token: "restart", zh: "重新发起一次模型交接" },
-      { token: "off", zh: "取消已预约的交接" },
+      { token: "into", zh: "交接目标模型（省略则用 prewalk.into 配置，缺省 @smol）" },
+      { token: "restart", zh: "回到规划模型并重新预约交接，可跟 [from] [into] 指定两端模型" },
+      { token: "from", zh: "restart 的来源（规划）模型（省略则用 prewalk.from 配置）" },
+      { token: "off", zh: "取消已预约的交接，不换模型" },
     ],
     related: ["model", "switch", "agents"],
   },

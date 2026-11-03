@@ -100,7 +100,7 @@ describe("版本提示", () => {
   });
 
   it("OMP_VERSION 固定为速查基准版本", () => {
-    expect(OMP_VERSION).toBe("18.13.3");
+    expect(OMP_VERSION).toBe("18.16.0");
   });
 });
 

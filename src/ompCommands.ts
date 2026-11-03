@@ -1,24 +1,26 @@
 /**
  * omp 内置斜杠命令速查数据（手写静态表）。
  *
- * 基准：omp 18.13.3 编译产物内嵌的统一内置注册表（88 条内置命令）。
+ * 基准：omp 18.16.0 编译产物内嵌的统一内置注册表（88 条内置命令）。
  * 复核方法：
  * 1. `echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
  *    返回启动帧 `available_commands_update` 与命令回包中机器可读的
  *    [{name, description, input.hint, aliases, subcommands}]，但只覆盖可在
- *    RPC 下执行的子集（18.13.3 实测 52 条非 skill 命令；/autoresearch、/init、
- *    /annotate、/green、/review 的 source 分别为 extension / file / custom，不在统一
- *    内置注册表内，其中随包发布的 review/green/annotate 单列「扩展命令」分组，
- *    /skill:* 与本机自定义命令仍不收录——见文件尾脚注口径）。
+ *    RPC 下执行的子集（18.16.0 实测 52 条非 skill 命令；/autoresearch 的 source
+ *    为 extension，/init 与本机自定义命令为 file，/annotate、/green、/review 为
+ *    custom，均不在统一内置注册表内，其中随包发布的 review/green/annotate 单列
+ *    「扩展命令」分组，/skill:* 与本机自定义命令仍不收录）。
  * 2. TUI 补全列表覆盖全部内置命令：输入 `/` 后按前缀滚动，可从每行的名称、
  *    图标与英文说明核对；再对每条命令按 Tab，用输入行的参数提示（ghost hint）
  *    校对 args。
- * 3. 上游源码 tag v18.13.3 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
- *    即统一内置注册表本身：v18.12.6 → v18.13.3 新增内置 `/local`，`/hub` 新增
- *    别名 `/subagents`（编译产物内嵌注册表核对）。
+ * 3. 上游源码 tag v18.16.0 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
+ *    即统一内置注册表本身：v18.13.3 → v18.16.0 无内置命令新增/更名/移除，
+ *    仅 `/prewalk` 参数扩展（可指定交接目标与 restart 来源模型）与
+ *    `/modelpreset` 提示词顺序调整（TUI inlineHint 仍为旧序，RPC hint 为新序，
+ *    本表跟 RPC）；另 `omp session` 新增 `lease` 动作（见 ompCliCommands.ts）。
  * 改动本表后请用这几种方式抽查名称拼写、参数提示与别名。
  */
-export const OMP_VERSION = "18.13.3";
+export const OMP_VERSION = "18.16.0";
 
 export interface OmpCommand {
   /** 不带前导 `/` 的命令名，如 "compact"。 */
@@ -100,8 +102,8 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "fast", aliases: [], args: "[on|ultra|off|status]", zh: "切换极速服务档（OpenAI priority/ultrafast、Anthropic fast、Google priority）", tag: "模型", examples: ["/fast", "/fast status", "/fast ultra"] },
       { name: "slow", aliases: [], args: "[on|off|status]", zh: "切换慢速档：OpenAI/Google 走 flex 档，Anthropic 限额后低优先级续跑", tag: "模型", examples: ["/slow", "/slow status"] },
       { name: "effort", aliases: [], args: "[level]", zh: "设置推理强度档位", tag: "模型", examples: ["/effort", "/effort high"] },
-      { name: "modelpreset", aliases: [], args: "[save|switch|delete|list] [name]", zh: "保存与切换模型预设（角色模型 + 推理强度）", tag: "模型", examples: ["/modelpreset list", "/modelpreset save <预设名>", "/modelpreset switch <预设名>"] },
-      { name: "prewalk", aliases: [], args: "[restart|off]", zh: "预约、重启或取消一次性的模型交接", tag: "模型", examples: ["/prewalk", "/prewalk off"] },
+      { name: "modelpreset", aliases: [], args: "[list|save|switch|delete] [name]", zh: "保存与切换模型预设（角色模型 + 推理强度）", tag: "模型", examples: ["/modelpreset list", "/modelpreset save <预设名>", "/modelpreset switch <预设名>"] },
+      { name: "prewalk", aliases: [], args: "[into] | restart [from] [into] | off", zh: "预约、重启或取消一次性的模型交接（可指定交接到哪个模型）", tag: "模型", examples: ["/prewalk", "/prewalk <provider/model>", "/prewalk off"] },
       { name: "extended-context", aliases: [], args: "[on|off|status]", zh: "开关扩展上下文窗口", tag: "模型", examples: ["/extended-context", "/extended-context status"] },
     ],
   },
