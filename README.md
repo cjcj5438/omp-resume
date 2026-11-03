@@ -2,7 +2,7 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.7.0-2f6feb)
+![version](https://img.shields.io/badge/version-0.7.1-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
 ![tests](https://img.shields.io/badge/tests-2381%20passing-2ea043)
@@ -188,7 +188,7 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.7.0 && git push origin v0.7.0
+git tag v0.7.1 && git push origin v0.7.1
 ```
 
 Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle (including `superagent/dist`, built first via the workspace script) and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
