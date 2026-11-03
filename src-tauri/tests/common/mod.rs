@@ -337,6 +337,7 @@ pub fn cfg(root: &Path) -> omp_resume_lib::config::Config {
     omp_resume_lib::config::Config {
         sessions_dir: root.to_path_buf(),
         owners_dir: root.join("owners"),
+        extra_roots: vec![],
     }
 }
 

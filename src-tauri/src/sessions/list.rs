@@ -537,6 +537,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: sessions,
             owners_dir: t.path().join("owners"),
+            extra_roots: vec![],
         };
         let s = only_session(&list_sessions(&cfg).unwrap());
         assert!(!s.in_use && s.probe_ok);
@@ -579,6 +580,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: sessions,
             owners_dir: owners,
+            extra_roots: vec![],
         };
         let s = only_session(&list_sessions(&cfg).unwrap());
         assert!(s.in_use && s.probe_ok);
@@ -615,6 +617,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: sessions,
             owners_dir: t.path().join("owners"),
+            extra_roots: vec![],
         };
         let out = recent_sessions(&cfg, 1).unwrap();
         assert_eq!(out.len(), 1);
@@ -650,6 +653,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: sessions,
             owners_dir: t.path().join("owners"),
+            extra_roots: vec![],
         };
         assert_eq!(recent_projects(&cfg, 5).unwrap(), vec![a, c]);
     }

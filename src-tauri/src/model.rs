@@ -34,9 +34,10 @@ pub enum ErrorCode {
     MetaCorrupt,
     /// 配置键不在模型配置白名单内（仅 `update_model_config` 产生）。
     InvalidKey,
+    /// Superagent 守护进程未运行、无响应或 socket 不可达。
+    SuperagentUnavailable,
     Unknown,
 }
-
 /// 统一错误体。前端 `invoke` 失败时抛出的即为此形状。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2220,4 +2221,45 @@ pub struct AppPaths {
     pub memory_dir: String,
     pub data_dir: Option<String>,
     pub omp_bin: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Superagent（CONTRACT §4.74–§4.78）
+// ---------------------------------------------------------------------------
+
+/// 守护进程托管状态（JSON 为小写字符串）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuperagentState {
+    Disabled,
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Crashed,
+}
+
+/// `superagent_status` / `superagent_set_enabled` / `superagent_restart` 返回。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuperagentStatus {
+    pub state: SuperagentState,
+    pub enabled: bool,
+    pub pid: Option<u32>,
+    pub started_at: Option<String>,
+    pub restarts: u32,
+    pub last_error: Option<String>,
+    pub state_dir: String,
+    pub socket_path: String,
+    pub log_path: String,
+    pub assets_dir: Option<String>,
+    pub omp_bin: Option<String>,
+}
+
+/// `superagent_request` 返回：守护进程 HTTP 状态码与原始正文。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuperagentResponse {
+    pub status: u16,
+    pub body: String,
 }

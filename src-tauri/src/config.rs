@@ -11,11 +11,14 @@ use crate::model::{AppError, ErrorCode};
 pub struct Config {
     pub sessions_dir: PathBuf,
     pub owners_dir: PathBuf,
+    /// 会话路径校验的额外根（如 Superagent 会话目录；扫描不看这里）。
+    pub extra_roots: Vec<PathBuf>,
 }
 
 /// 解析配置：`--sessions-dir <p>` 参数 > `OMP_RESUME_SESSIONS_DIR` >
 /// `$HOME/.omp/agent/sessions`；`ownersDir` 为 `OMP_RESUME_OWNERS_DIR` >
-/// `$HOME/.omp/run/session-owners`。
+/// `$HOME/.omp/run/session-owners`；`extra_roots` 为 Superagent 会话目录
+/// `<data_dir>/superagent/sessions`（`data_dir` 与 `meta::data_dir` 同口径）。
 pub fn resolve_with(
     sessions_dir_arg: Option<String>,
     env: impl Fn(&str) -> Option<String>,
@@ -28,9 +31,14 @@ pub fn resolve_with(
     let owners_dir = env("OMP_RESUME_OWNERS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".omp/run/session-owners"));
+    let data_dir = env("OMP_RESUME_DATA_DIR")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join("Library/Application Support/omp-resume"));
     Config {
         sessions_dir,
         owners_dir,
+        extra_roots: vec![data_dir.join("superagent/sessions")],
     }
 }
 
@@ -41,8 +49,10 @@ pub fn resolve(sessions_dir_arg: Option<String>) -> Config {
 }
 
 /// 校验会话路径（CONTRACT §6）：
-/// 绝对路径 → canonicalize（含符号链接）→ 必须位于 sessionsDir 下、
-/// 且相对部分恰为 `<dir>/<file>.jsonl`、文件名非点文件。
+/// 绝对路径 → canonicalize（含符号链接）→ 必须位于 sessionsDir 或任一
+/// extra_root 下、且相对部分恰为 `<dir>/<file>.jsonl`、文件名非点文件。
+/// extra root canonicalize 失败就跳过；都不满足时：sessionsDir 自身不可
+/// 用报原来的 `IO` 错误，否则报 `OUTSIDE_ROOT`。
 /// 不存在 → `NOT_FOUND`；形状非法/逃出 → `OUTSIDE_ROOT`。
 pub fn validate_session_path(cfg: &Config, path: &str) -> Result<PathBuf, AppError> {
     let input = Path::new(path);
@@ -65,12 +75,19 @@ pub fn validate_session_path(cfg: &Config, path: &str) -> Result<PathBuf, AppErr
             format!("会话根目录不可用：{}：{e}", cfg.sessions_dir.display()),
         )
     })?;
-    let rel = canon.strip_prefix(&root).map_err(|_| {
-        AppError::new(
+    let mut roots: Vec<PathBuf> = Vec::with_capacity(cfg.extra_roots.len() + 1);
+    roots.push(root);
+    for extra in &cfg.extra_roots {
+        if let Ok(canon_extra) = std::fs::canonicalize(extra) {
+            roots.push(canon_extra);
+        }
+    }
+    let Some(rel) = roots.iter().find_map(|root| canon.strip_prefix(root).ok()) else {
+        return Err(AppError::new(
             ErrorCode::OutsideRoot,
             format!("会话路径不在根目录内：{path}"),
-        )
-    })?;
+        ));
+    };
     let rel_parts: Vec<_> = rel.components().collect();
     let [dir, file] = rel_parts.as_slice() else {
         return Err(AppError::new(
@@ -134,6 +151,7 @@ mod tests {
         Config {
             sessions_dir: dir.to_path_buf(),
             owners_dir: dir.join("owners"),
+            extra_roots: vec![],
         }
     }
 
@@ -228,6 +246,59 @@ mod tests {
         let c = cfg(&root);
         let err =
             validate_session_path(&c, t.path().join("p-link.jsonl").to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::OutsideRoot);
+    }
+
+    #[test]
+    fn resolve_sets_superagent_extra_root() {
+        let home = Path::new("/home/u");
+        let c = resolve_with(None, env_of(HashMap::new()), home);
+        assert_eq!(
+            c.extra_roots,
+            vec![
+                Path::new("/home/u/Library/Application Support/omp-resume/superagent/sessions")
+                    .to_path_buf()
+            ]
+        );
+        let mut m = HashMap::new();
+        m.insert("OMP_RESUME_DATA_DIR".into(), "/d".into());
+        let c = resolve_with(None, env_of(m), home);
+        assert_eq!(c.extra_roots, vec![PathBuf::from("/d/superagent/sessions")]);
+    }
+
+    #[test]
+    fn validate_accepts_extra_root_two_levels() {
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        let extra = t.path().join("extra");
+        std::fs::create_dir_all(sessions.join("proj")).unwrap();
+        std::fs::create_dir_all(extra.join("main")).unwrap();
+        let f = extra.join("main").join("x.jsonl");
+        std::fs::write(&f, "{}\n").unwrap();
+        let c = Config {
+            sessions_dir: sessions,
+            owners_dir: t.path().join("owners"),
+            extra_roots: vec![extra],
+        };
+        let got = validate_session_path(&c, f.to_str().unwrap()).unwrap();
+        assert_eq!(got, std::fs::canonicalize(&f).unwrap());
+    }
+
+    #[test]
+    fn validate_rejects_extra_root_three_levels() {
+        let t = tempfile::tempdir().unwrap();
+        let sessions = t.path().join("sessions");
+        let extra = t.path().join("extra");
+        std::fs::create_dir_all(sessions.join("proj")).unwrap();
+        std::fs::create_dir_all(extra.join("main").join("sub")).unwrap();
+        let f = extra.join("main").join("sub").join("x.jsonl");
+        std::fs::write(&f, "{}\n").unwrap();
+        let c = Config {
+            sessions_dir: sessions,
+            owners_dir: t.path().join("owners"),
+            extra_roots: vec![extra],
+        };
+        let err = validate_session_path(&c, f.to_str().unwrap()).unwrap_err();
         assert_eq!(err.code, ErrorCode::OutsideRoot);
     }
 }

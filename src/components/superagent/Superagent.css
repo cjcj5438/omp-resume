@@ -1,0 +1,155 @@
+/* Superagent 三页共享：面板 token 映射 + 页面布局。
+ *
+ * 面板（omp-superagent/panel）用 `--dsw-*` token；这里在 :root 上把它们
+ * 映射到 App.css 的语义变量，随 data-theme/data-accent 实时重算。
+ * 挂在 :root 而不是页面容器上，portal 到 body 的弹窗和 toast 也能取到。
+ * 34 个名字必须与 superagent/src/client/client.css 引用的集合完全一致。 */
+
+:root {
+  /* 文字与描边 */
+  --dsw-alias-label-primary: var(--text);
+  --dsw-alias-label-secondary: var(--text-secondary);
+  --dsw-alias-label-tertiary: var(--text-muted);
+  --dsw-alias-label-caption: var(--text-faint);
+  --dsw-alias-label-dimmed: var(--text-faint);
+  --dsw-alias-label-primary-foreground: var(--on-accent);
+  --dsw-static-neutral-bluish-00: var(--on-accent);
+  --dsw-alias-border-l2: var(--border);
+  --dsw-alias-border-l3: var(--border);
+  --dsw-alias-border-l4: var(--border-strong);
+
+  /* 品牌与状态 */
+  --dsw-alias-brand-primary: var(--accent);
+  --dsw-alias-link: var(--accent);
+  --dsw-alias-state-error-primary: var(--danger);
+  --dsw-alias-state-warn-primary: var(--warn);
+  --dsw-alias-state-success-primary: var(--ok);
+  --dsw-alias-state-business-primary: var(--accent);
+  --dsw-alias-state-idle-primary: var(--text-faint);
+
+  /* 交互与背景 */
+  --dsw-alias-interactive-bg-hover: var(--bg-hover);
+  --dsw-alias-interactive-bg-active: var(--bg-active);
+  --dsw-alias-bg-layer-1: var(--bg-card);
+  --dsw-alias-bg-layer-2: var(--bg-elevated);
+  --dsw-alias-bg-layer-3: var(--bg-raised);
+  --dsw-alias-bg-module-platform: var(--bg-inset);
+  --dsw-alias-bg-mask-1: rgba(0, 0, 0, 0.55);
+  --dsw-mask-blur: blur(4px);
+  --dsw-alias-toast-bg: var(--toast-bg);
+  --dsw-alias-tooltip-bg: var(--bg-overlay);
+
+  /* 阴影与按钮 */
+  --dsw-elevation-prominent: var(--shadow-md);
+  --dsw-elevation-soft: var(--shadow-sm);
+  --dsw-shadow-lv3: var(--shadow-md);
+  --dsw-alias-button-primary-fill: var(--accent-fill);
+  --dsw-alias-button-primary-hover: color-mix(in srgb, var(--accent-fill) 88%, black);
+  --dsw-alias-button-ghost-active-fill: var(--bg-selected);
+  --dsw-alias-button-ghost-active-border: var(--accent-ring);
+}
+
+/* 管理面板宿主：面板自带滚动，宿主只给高度。 */
+.sa-host {
+  height: 100%;
+}
+
+/* 会话页：左列 320px 列表 + 右侧自适应对话。 */
+.sa-split {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.sa-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sa-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sa-row:hover {
+  background: var(--bg-hover);
+}
+
+.sa-row.is-selected {
+  background: var(--bg-selected);
+  border-color: var(--accent-ring);
+}
+
+.sa-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sa-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sa-row-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.sa-row-side {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* 服务页日志：等宽小字，保留换行，限高滚动。 */
+.sa-log {
+  margin: 0;
+  max-height: 480px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.sa-paths {
+  display: flex;
+  flex-direction: column;
+}
+
+.sa-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.sa-path-row .mono {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

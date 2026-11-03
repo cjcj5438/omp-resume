@@ -22,6 +22,7 @@ fn setup() -> (TempDir, Config, UsageCache) {
     let cfg = Config {
         sessions_dir: tmp.path().join("sessions"),
         owners_dir: tmp.path().join("owners"),
+        extra_roots: vec![],
     };
     fs::create_dir_all(cfg.sessions_dir.join("project")).unwrap();
     (tmp, cfg, UsageCache::default())

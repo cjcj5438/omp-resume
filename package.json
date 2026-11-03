@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run superagent:build && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
-    "check": "npm run typecheck && vitest run"
+    "typecheck": "npm run superagent:build && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "check": "npm run typecheck && vitest run && npm run superagent:typecheck && npm run superagent:test",
+    "superagent:build": "npm -w omp-superagent run build",
+    "superagent:typecheck": "npm -w omp-superagent run typecheck",
+    "superagent:test": "npm -w omp-superagent run test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -35,5 +38,8 @@
     "typescript": "~6.0.3",
     "vite": "^8.0.16",
     "vitest": "^5"
-  }
+  },
+  "workspaces": [
+    "superagent"
+  ]
 }

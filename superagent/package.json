@@ -1,0 +1,39 @@
+{
+  "name": "omp-superagent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./panel": {
+      "import": "./dist/panel.js",
+      "types": "./dist/panel.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "proper-lockfile": "4.1.2",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "28.0.3",
+    "@types/node": "^22.20.5",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "jsdom": "^27",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsdown": "0.22.14",
+    "typescript": "~6.0.3",
+    "vitest": "^5"
+  }
+}

@@ -37,6 +37,7 @@ fn cfg_for(root: &std::path::Path) -> Config {
     Config {
         sessions_dir: root.to_path_buf(),
         owners_dir: root.join("owners"),
+        extra_roots: vec![],
     }
 }
 

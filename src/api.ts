@@ -53,6 +53,9 @@ import type {
   PluginCheckResult,
   SessionMetaInput,
   SkillsListResult,
+  SuperagentHttpMethod,
+  SuperagentResponse,
+  SuperagentStatus,
   TreeData,
   SessionUsage,
   MemoryBackup,
@@ -90,6 +93,7 @@ const KNOWN_CODES: Record<string, true> = {
   CONFLICT: true,
   META_CORRUPT: true,
   INVALID_KEY: true,
+  SUPERAGENT_UNAVAILABLE: true,
   UNKNOWN: true,
 };
 
@@ -595,4 +599,35 @@ export function getBuildInfo(): Promise<BuildInfo> {
 /** CONTRACT §4.68：应用关键路径（只读展示）。 */
 export function getAppPaths(): Promise<AppPaths> {
   return call("get_app_paths");
+}
+
+// Superagent（CONTRACT §26 / §4.76–§4.80）。
+
+/** 守护进程托管状态（只读；服务页/管理面板轮询它）。 */
+export function superagentStatus(): Promise<SuperagentStatus> {
+  return call("superagent_status");
+}
+
+/** 启用/停用守护进程（落盘设置 + 按需启停）。 */
+export function superagentSetEnabled(enabled: boolean): Promise<SuperagentStatus> {
+  return call("superagent_set_enabled", { enabled });
+}
+
+/** 重启守护进程（未启用时后端报 INVALID_INPUT）。 */
+export function superagentRestart(): Promise<SuperagentStatus> {
+  return call("superagent_restart");
+}
+
+/** 经 unix socket 代理到守护进程 HTTP 的请求（面板与会话列表都走它）。 */
+export function superagentRequest(
+  method: SuperagentHttpMethod,
+  path: string,
+  body?: unknown,
+): Promise<SuperagentResponse> {
+  return call("superagent_request", { method, path, body: body ?? null });
+}
+
+/** 守护进程日志末尾 N 行（1..=2000，后端钳制之外前端也只传合法值）。 */
+export function superagentLogTail(lines: number): Promise<string[]> {
+  return call("superagent_log_tail", { lines });
 }

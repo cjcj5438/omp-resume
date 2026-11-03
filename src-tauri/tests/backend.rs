@@ -87,6 +87,7 @@ fn list_tree_conversation_kitchen_sink() {
     let c = Config {
         sessions_dir: mil,
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     };
 
     let listed = sessions::list::list_sessions(&c).unwrap();
@@ -270,6 +271,7 @@ fn branching_three_leaves() {
     let listed = sessions::list::list_sessions(&Config {
         sessions_dir: _t.path().join("sessions"),
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     })
     .unwrap();
     assert_eq!(listed.groups[0].sessions[0].branch_count, 3);
@@ -319,6 +321,7 @@ fn non_v3_degrades() {
     let listed = sessions::list::list_sessions(&Config {
         sessions_dir: _t.path().join("sessions"),
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     })
     .unwrap();
     let s = &listed.groups[0].sessions[0];
@@ -429,6 +432,7 @@ fn hidden_empty_title_rules_and_fork() {
     let listed = sessions::list::list_sessions(&Config {
         sessions_dir: mil.clone(),
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     })
     .unwrap();
     assert_eq!(listed.hidden_empty, 1);
@@ -529,6 +533,7 @@ fn check_session_free_and_missing() {
     let c = Config {
         sessions_dir: _t.path().join("sessions"),
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     };
     let dir = _t.path().join("sessions").join("-k");
     let p = write_lines(
@@ -585,6 +590,7 @@ fn list_sorts_and_cwd_flags() {
     let listed = sessions::list::list_sessions(&Config {
         sessions_dir: mil,
         owners_dir: _t.path().join("owners"),
+        extra_roots: vec![],
     })
     .unwrap();
     assert_eq!(listed.hidden_empty, 0);
@@ -664,6 +670,7 @@ fn real_data_validation() {
     let c = Config {
         sessions_dir: root,
         owners_dir: PathBuf::from(format!("{home}/.omp/run/session-owners")),
+        extra_roots: vec![],
     };
     let t0 = Instant::now();
     let listed = sessions::list::list_sessions(&c).unwrap();

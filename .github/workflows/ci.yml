@@ -35,6 +35,15 @@ jobs:
       - name: Check versions
         run: node scripts/check-versions.mjs
 
+      - name: Superagent build
+        run: npm run superagent:build
+
+      - name: Superagent typecheck
+        run: npm run superagent:typecheck
+
+      - name: Superagent tests
+        run: npm run superagent:test
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -4,7 +4,7 @@
   "version": "0.6.0",
   "identifier": "com.chenjing.omp-resume",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run superagent:build && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
@@ -55,7 +55,14 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns"
-    ]
+    ],
+    "resources": {
+      "../superagent/package.json": "superagent/package.json",
+      "../superagent/dist/daemon.js": "superagent/dist/daemon.js",
+      "../superagent/prompts/": "superagent/prompts/",
+      "../superagent/skills/": "superagent/skills/",
+      "../superagent/plugin/": "superagent/plugin/"
+    }
   },
   "plugins": {
     "updater": {

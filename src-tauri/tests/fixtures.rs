@@ -47,6 +47,7 @@ fn fixture_manifest_check() {
     let cfg = Config {
         sessions_dir: sessions_dir.clone(),
         owners_dir,
+        extra_roots: vec![],
     };
 
     let t0 = Instant::now();

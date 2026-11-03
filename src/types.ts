@@ -21,6 +21,7 @@ export type ErrorCode =
   | "CONFLICT"
   | "META_CORRUPT"
   | "INVALID_KEY"
+  | "SUPERAGENT_UNAVAILABLE"
   | "UNKNOWN";
 
 export interface AppError {
@@ -1127,4 +1128,39 @@ export interface AppPaths {
   memoryDir: string;
   dataDir: string | null;
   ompBin: string | null;
+}
+
+// Superagent（CONTRACT §26）：守护进程托管状态 + HTTP 代理响应。
+
+export type SuperagentState = "disabled" | "starting" | "running" | "stopping" | "stopped" | "crashed";
+
+export interface SuperagentStatus {
+  state: SuperagentState;
+  enabled: boolean;
+  pid: number | null;
+  startedAt: string | null;
+  restarts: number;
+  lastError: string | null;
+  stateDir: string;
+  socketPath: string;
+  logPath: string;
+  assetsDir: string | null;
+  ompBin: string | null;
+}
+
+export interface SuperagentResponse {
+  status: number;
+  body: string;
+}
+
+export type SuperagentHttpMethod = "GET" | "POST" | "PUT";
+
+/** `GET sessions` 一行（守护进程会话视图，供会话页列表用）。 */
+export interface SuperagentSessionItem {
+  id: string;
+  role: "orchestrator" | "worker";
+  ticketId: string | null;
+  title: string;
+  sessionFile: string | null;
+  state: "absent" | "starting" | "running" | "settling" | "idle";
 }

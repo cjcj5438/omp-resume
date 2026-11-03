@@ -8,6 +8,7 @@ import {
   Book,
   Bot,
   Brain,
+  Broom,
   ChartColumn,
   Cpu,
   FlaskConical,
@@ -15,11 +16,13 @@ import {
   MessagesSquare,
   Monitor,
   Plug,
+  Power,
+  ScrollText,
   Server,
   Settings,
   Sparkles,
   Theater,
-  Broom,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,8 +43,10 @@ export type Route =
   | "memory"
   | "cheatsheet"
   | "settings"
-  | "tray";
-
+  | "tray"
+  | "superagent"
+  | "superagent-sessions"
+  | "superagent-service";
 export type ConfigRoute = "models" | "bench" | "agents" | "plugins" | "skills" | "mcp" | "memory";
 
 export function isConfigRoute(r: Route): r is ConfigRoute {
@@ -72,6 +77,14 @@ export const NAV_GROUPS: {
     ],
   },
   { label: "Agent Stage", items: [{ route: "stage", label: "像素办公室", icon: Theater }] },
+  {
+    label: "Superagent",
+    items: [
+      { route: "superagent", label: "管理面板", icon: Workflow },
+      { route: "superagent-sessions", label: "会话", icon: ScrollText },
+      { route: "superagent-service", label: "服务", icon: Power },
+    ],
+  },
   {
     label: "环境配置",
     items: [
@@ -118,4 +131,7 @@ export const ROUTE_TITLE: Record<Route, string> = {
   cheatsheet: "速查表",
   settings: "外观与行为",
   tray: "菜单栏",
+  superagent: "Superagent",
+  "superagent-sessions": "Superagent 会话",
+  "superagent-service": "Superagent 服务",
 };

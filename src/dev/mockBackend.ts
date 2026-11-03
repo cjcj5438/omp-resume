@@ -13,7 +13,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { Channel } from "@tauri-apps/api/core";
 import { deepEqual } from "../modelConfig";
-import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, CreateAgentDefinitionResult, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary } from "../types";
+import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, CreateAgentDefinitionResult, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary, SuperagentStatus } from "../types";
 import type { ModelPreset, ModelPresetSnapshot, ModelPresetsState } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
 import type { PromptHistoryEntry, UsageRange } from "../types";
@@ -1212,6 +1212,20 @@ export async function installMockBackend(): Promise<MockHandle> {
     showSearch: true,
     showDockIcon: false,
   };
+  // Superagent 托管状态（内存态，初始未启用；启用后切 running）。
+  let superagent: SuperagentStatus = {
+    state: "disabled",
+    enabled: false,
+    pid: null,
+    startedAt: null,
+    restarts: 0,
+    lastError: null,
+    stateDir: "/mock/superagent",
+    socketPath: "/mock/superagent/daemon.sock",
+    logPath: "/mock/superagent/logs/daemon.log",
+    assetsDir: "/mock/superagent-assets",
+    ompBin: "/mock/omp",
+  };
 
   (window as unknown as { __ompMock?: unknown }).__ompMock = {
     calls: itermCalls,
@@ -1717,6 +1731,30 @@ export async function installMockBackend(): Promise<MockHandle> {
           dataDir: "/Users/demo/Library/Application Support/omp-resume",
           ompBin: "/Users/demo/.local/bin/omp",
         };
+      case "superagent_status":
+        return structuredClone(superagent);
+      case "superagent_set_enabled": {
+        const enabled = args["enabled"];
+        if (typeof enabled !== "boolean") throw err("INVALID_INPUT", "enabled 必须为布尔值");
+        superagent = enabled
+          ? { ...superagent, state: "running", enabled: true, pid: 4242, startedAt: "2026-11-02T10:00:00.000Z", lastError: null }
+          : { ...superagent, state: "disabled", enabled: false, pid: null, startedAt: null };
+        return structuredClone(superagent);
+      }
+      case "superagent_restart": {
+        if (!superagent.enabled) throw err("INVALID_INPUT", "Superagent 未启用");
+        superagent = { ...superagent, state: "running", restarts: superagent.restarts + 1 };
+        return structuredClone(superagent);
+      }
+      case "superagent_request":
+        throw err("SUPERAGENT_UNAVAILABLE", "mock：没有 Superagent 守护进程");
+      case "superagent_log_tail": {
+        const lines = args["lines"];
+        if (typeof lines !== "number" || !Number.isInteger(lines) || lines < 1 || lines > 2000) {
+          throw err("INVALID_INPUT", "lines 须为 1..=2000 的整数");
+        }
+        return ["mock log line"];
+      }
       default:
         throw err("UNKNOWN", `未知命令：${cmd}`);
     }

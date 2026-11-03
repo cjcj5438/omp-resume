@@ -43,6 +43,8 @@ pub mod ops;
 pub mod sessions;
 /// Agent 舞台：会话内主会话/子代理/worker 的可视化状态（见 CONTRACT §23）。
 pub mod stage;
+/// Superagent 守护进程托管、IPC 命令与代理（见计划 §8）。
+pub mod superagent;
 pub mod usage;
 pub mod util;
 
@@ -371,9 +373,20 @@ pub fn run() {
             let data_dir =
                 meta::data_dir().unwrap_or_else(|_| std::env::temp_dir().join("omp-resume"));
             let settings = menubar::settings::load(&data_dir);
-            app.manage(menubar::tray::Shared::new(data_dir, settings.clone()));
+            app.manage(menubar::tray::Shared::new(
+                data_dir.clone(),
+                settings.clone(),
+            ));
+            // Superagent：先 manage 再拉起——命令层 `State<Supervisor>` 在
+            // setup 返回后即可解析；start 只做 fork+exec（就绪探测在后台
+            // 线程），不阻塞应用启动。
+            let supervisor =
+                superagent::supervisor::Supervisor::new(app.handle().clone(), data_dir);
+            app.manage(supervisor);
+            if let Some(supervisor) = app.try_state::<superagent::supervisor::Supervisor>() {
+                supervisor.start_if_enabled();
+            }
             let initial = menubar::menu::build_model(Vec::new(), &settings);
-            let _tray = menubar::tray::create_tray(app, &initial)?;
             menubar::tray::register_click_handler(app.handle())?;
             menubar::tray::apply_badge(app.handle(), &initial);
             #[cfg(target_os = "macos")]
@@ -508,17 +521,28 @@ pub fn run() {
             menubar::tray::open_main_window,
             menubar::tray::quit_app,
             menubar::tray::get_build_info,
-            get_app_paths
+            get_app_paths,
+            superagent::superagent_status,
+            superagent::superagent_set_enabled,
+            superagent::superagent_restart,
+            superagent::superagent_request,
+            superagent::superagent_log_tail
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
+            // 退出前先停 Superagent 守护进程，不留子进程。
+            if let tauri::RunEvent::Exit = event {
+                if let Some(supervisor) = app.try_state::<superagent::supervisor::Supervisor>() {
+                    supervisor.stop_blocking();
+                }
+            }
             // 点 Dock 图标 = 回到主窗口（与「打开主窗口」同路径）。
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 menubar::tray::show_main(app);
             }
             #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
+            let _ = (app, &event);
         });
 }

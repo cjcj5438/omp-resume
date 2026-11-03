@@ -600,6 +600,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: sessions_dir.clone(),
             owners_dir,
+            extra_roots: vec![],
         };
 
         // 会话一：正常 meta，删除后条目应被联动清除。

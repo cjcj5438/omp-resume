@@ -289,6 +289,7 @@ mod tests {
         Config {
             sessions_dir: root.join("sessions"),
             owners_dir: root.join("owners"),
+            extra_roots: vec![],
         }
     }
 
@@ -593,6 +594,7 @@ mod tests {
         let cfg = Config {
             sessions_dir: home.join(".omp/agent/sessions"),
             owners_dir: home.join(".omp/run/session-owners"),
+            extra_roots: vec![],
         };
         if !cfg.sessions_dir.is_dir() {
             println!("无真实 sessions 目录，跳过");

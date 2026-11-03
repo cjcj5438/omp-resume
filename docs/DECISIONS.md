@@ -225,3 +225,24 @@
   `command + argCount`；完整命令见编辑框。
 - bench 运行进度不做假进度：探针阶段需后端事件（`model_bench_run` 单次阻塞），
   事件落地前只保留行内「测试中…结果稍后更新」标识。
+
+## D11：Superagent 嵌入为 omp-resume 托管的守护进程（2026-11-02）
+
+背景：把 `dsh-superagent-prototype`（MIT，研究原型）移植为 omp 插件形态，
+管理面板接入 omp-resume 侧边栏；与 DSH 完全隔离（不读 `~/.dsh`，
+命名不出现 dsh，不导入 DSH 数据）。
+
+- 形态：npm workspace `superagent/`（包名 `omp-superagent`，版本 0.1.0，
+  不参与版本三元组校验），单文件产物 `superagent/dist/daemon.js`
+  （ESM，只用 `node:` 内置模块），资源（`prompts/`、`skills/`、`plugin/`）
+  随 Tauri `bundle.resources` 打包。
+- 运行：守护进程跑在 omp 内嵌 Bun 上（`BUN_BE_BUN=1 omp run`），
+  监听 unix-socket HTTP（0600）；CSP 禁止 webview 直连，
+  经 Rust 侧 5 个 IPC 命令（`superagent_status`/`set_enabled`/`restart`/
+  `request`/`log_tail`）代理，命令总数 83 → 88。
+- 会话：每会话一个 `omp --mode rpc` 子进程，带 overlay 配置
+  （`-e S/plugin/r<rev> --config S/omp-overlay.yml`），`~/.omp/agent`
+  永不修改；会话 JSONL 在 `<data_dir>/superagent/sessions`，
+  经 `extra_roots` 加入路径白名单（§6）。
+- 后果：`superagent:build` 是 `typecheck`/`build`（从而 cargo 构建）的前提；
+  旧 DSH 部署若盯同一 GitHub 账号须先停掉，否则同一条评论被处理两次。

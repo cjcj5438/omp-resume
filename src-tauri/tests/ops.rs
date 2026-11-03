@@ -213,6 +213,7 @@ fn marker_refusals() {
     let c2 = Config {
         sessions_dir: t.path().to_path_buf(),
         owners_dir: t2.path().join("BLOCK"),
+        extra_roots: vec![],
     };
     let e = ops_cmds::append_branch_marker_impl(&c2, &ps, "u1").unwrap_err();
     assert_eq!(e.code, ErrorCode::ProbeFailed);
@@ -303,6 +304,7 @@ fn iterm_command_string_and_refusals() {
     let c3 = Config {
         sessions_dir: t.path().to_path_buf(),
         owners_dir: t3.path().join("BLOCK"),
+        extra_roots: vec![],
     };
     got.replace(String::new());
     ops_cmds::open_in_iterm_impl(&c3, &bs, &opener).unwrap();
@@ -360,6 +362,27 @@ fn new_session_in_iterm_refusals_and_command() {
         ),
     );
 
+    // 尾部空格是目录名的一部分：原样放行（NAS 真实目录名 `…dsh-superagent-prototype `）。
+    got.replace(None);
+    let trailing = t.path().join("trailing-space ");
+    std::fs::create_dir_all(&trailing).unwrap();
+    ops_cmds::new_session_in_iterm_impl(&trailing.display().to_string(), None, &opener).unwrap();
+    assert_eq!(
+        got.borrow().as_deref(),
+        Some(format!("cd '{}' && omp", trailing.display()).as_str()),
+    );
+
+    // 首尾含空格的错误路径：CWD_MISSING 文案带去歧义提示。
+    got.replace(None);
+    let e = ops_cmds::new_session_in_iterm_impl(
+        &format!("{} ", t.path().join("gone").display()),
+        None,
+        &opener,
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::CwdMissing);
+    assert!(e.message.contains("首尾含空格"), "{}", e.message);
+    assert!(got.borrow().is_none());
     // CWD_MISSING：不存在 / 是文件 / 相对路径；opener 均不得被调用。
     got.replace(None);
     let gone = t.path().join("gone");
@@ -437,6 +460,7 @@ fn smoke_marker_real() {
     let c = Config {
         sessions_dir: PathBuf::from(&sessions),
         owners_dir: owners.clone(),
+        extra_roots: vec![],
     };
     let valid = config::validate_session_path(&c, &file).unwrap();
     let before = sessions::tree::get_tree(&valid).unwrap();
@@ -552,11 +576,20 @@ fn reveal_session_file_and_open_project_dir() {
         assert_eq!(calls[0].0, "/usr/bin/open");
         assert_eq!(calls[0].1, vec![cwd.display().to_string()]);
     }
+    // 尾部空格目录名同样放行（与 new_session_in_iterm 同一校验口径）。
+    let trailing = t.path().join("trailing ");
+    std::fs::create_dir_all(&trailing).unwrap();
+    ops_cmds::open_project_dir_impl(&trailing.display().to_string(), &project_runner).unwrap();
+    {
+        let calls = project_runner.calls.lock().unwrap();
+        assert_eq!(calls[1].0, "/usr/bin/open");
+        assert_eq!(calls[1].1, vec![trailing.display().to_string()]);
+    }
     let gone = t.path().join("gone");
     let e =
         ops_cmds::open_project_dir_impl(&gone.display().to_string(), &project_runner).unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
-    assert_eq!(project_runner.calls.lock().unwrap().len(), 1);
+    assert_eq!(project_runner.calls.lock().unwrap().len(), 2);
 
     // runner 失败 → IO 且文案带用途。
     let bad = RecordRunner {

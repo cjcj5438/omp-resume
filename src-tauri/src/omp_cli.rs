@@ -264,6 +264,19 @@ pub struct RunOpts<'a> {
     pub pipe_cap: Option<usize>,
 }
 
+/// 子进程用的增强 PATH：GUI 进程的 PATH 极简，先补上 omp 常驻目录，
+/// 再接原 PATH，最后兜底系统目录。`run_omp_with` 与 Superagent 守护进程共用。
+pub(crate) fn augmented_path() -> std::ffi::OsString {
+    let mut path = std::ffi::OsString::from("/opt/homebrew/bin:/usr/local/bin:");
+    if let Some(home) = std::env::var_os("HOME") {
+        path.push(PathBuf::from(home).join(".local/bin"));
+    }
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    path.push(":/usr/bin:/bin:/usr/sbin:/sbin");
+    path
+}
+
 /// `run_omp` 的可配版：见 `RunOpts`。
 pub fn run_omp_with(
     bin: &Path,
@@ -272,13 +285,7 @@ pub fn run_omp_with(
     on_line: &mut dyn FnMut(&str),
     opts: RunOpts<'_>,
 ) -> Result<RunOutput, AppError> {
-    let mut path = std::ffi::OsString::from("/opt/homebrew/bin:/usr/local/bin:");
-    if let Some(home) = std::env::var_os("HOME") {
-        path.push(PathBuf::from(home).join(".local/bin"));
-    }
-    path.push(":");
-    path.push(std::env::var_os("PATH").unwrap_or_default());
-    path.push(":/usr/bin:/bin:/usr/sbin:/sbin");
+    let path = augmented_path();
     let mut command = if bin.is_absolute() {
         Command::new(bin)
     } else {

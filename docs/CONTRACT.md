@@ -28,7 +28,7 @@ MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）
   4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）、4.68 应用路径（§25.6）、
   4.69 新建模型规格（§21.9）、4.70 新建 agent 定义（§16.9）、4.71 插件检查更新、
   4.72 通用 Finder 显示（§25.7）、4.73 MCP 握手测试、4.74 记忆库全量备份（§18.8.9）、
-  4.75 聚焦在用会话的 iTerm 标签。
+  4.75 聚焦在用会话的 iTerm 标签、4.76–4.80 Superagent 托管与代理（§26）。
 
 ## 1. 配置解析
 
@@ -412,6 +412,37 @@ header `.title`、每个 `title_change` 的 `.title`。
 - 实现：`ops::commands::focus_iterm_tab_impl(cfg, path, run)`（`run` 可注入，
   生产用 `menubar::iterm::SystemRunner`）；`api.ts`：`focusItermTab(path)`。
 
+### 4.76 `superagent_status() -> SuperagentStatus`（只读）
+
+- 返回守护进程托管状态（状态机见 §26.3）。不触碰守护进程 socket，纯内存快照。
+- `SuperagentStatus { state, enabled, pid, startedAt, restarts, lastError, stateDir, socketPath, logPath, assetsDir, ompBin }`（JSON camelCase；`state` 为小写 `disabled/starting/running/stopping/stopped/crashed`）。
+- `api.ts`：`superagentStatus()`。前端服务页/管理面板每 3 秒轮询它。
+
+### 4.77 `superagent_set_enabled { enabled } -> SuperagentStatus`
+
+- 先落盘 `<data_dir>/superagent.json`（`{ version: 1, enabled }`，新文件 0600 原子写），再按需 `start()`/`stop()`，返回新状态。
+- 写设置失败 → `IO`（不启停）；`start()` 失败（找不到 omp/资源目录/建目录/日志/ spawn 任一）→ 命令本身返回该错误（`OMP_NOT_FOUND`/`IO`），但 `enabled` 已落盘为 true 且状态已置 `crashed` + `lastError`，前端显示错误而非静默禁用。
+- `api.ts`：`superagentSetEnabled(enabled)`。
+
+### 4.78 `superagent_restart() -> SuperagentStatus`
+
+- 先 `stop()` 再 `start()`。未启用时 → `INVALID_INPUT`（“Superagent 未启用”），不做任何事。
+- `api.ts`：`superagentRestart()`。前端仅在 `enabled` 时放行按钮，后端再验一次。
+
+### 4.79 `superagent_request { method, path, body? } -> SuperagentResponse`
+
+- 经 unix socket 代理到守护进程 HTTP `/{method} /orchestrator/api/{path}`，返回 `{ status, body }`（`body` 为原文字符串，前端自己 `JSON.parse`）。
+- 校验（`proxy::validate_path`，不连 socket 先验）：`method` 必须为 `GET/POST/PUT`；`path` 非空、不以 `/` 开头、长度 ≤2048 字节、字符只能在 `[A-Za-z0-9._~%/:@!$&'()*+,;=?-]` 内。路由段（首个 `?` 之前，按 `/` 切分）逐段做 `%` 解码后再比较 `..`：字面量 `..`、`%2e%2e`（大小写混写亦然）、非法转义（`%` 后不足两位十六进制）一律拒绝；查询串（首个 `?` 之后）不做 `..` 检查，但字符集与长度限制仍然适用。否则 → `INVALID_INPUT`。
+- 托管状态非 `running` 时直接 → `SUPERAGENT_UNAVAILABLE`（不尝试连接）。
+- 连接失败/读写超时（GET 30s，其余 120s）→ `SUPERAGENT_UNAVAILABLE`；响应超过 32 MiB → `IO`；请求体无法序列化为 JSON → `INVALID_INPUT`。
+- 响应解析：在首个 `\r\n\r\n` 处切分头部与正文，从状态行取三位状态码，正文按 UTF-8 宽松解码；`Transfer-Encoding: chunked` 时解码分块正文（上限仍受 32 MiB 约束，分块损坏 → `IO`）。
+- `api.ts`：`superagentRequest(method, path, body?)`。面板 transport 与会话列表都走它。
+
+### 4.80 `superagent_log_tail { lines } -> string[]`
+
+- 读日志文件的最后 N 行（`lines` 须为 1..=2000 的整数，否则 → `INVALID_INPUT`）。文件不存在时返回空列表（不是错误）。实现从文件尾按 64 KiB 块倒序扫描换行符（只读够 N 行所需的尾部，不一次性读入整个日志），非 UTF-8 字节宽松解码。
+- `api.ts`：`superagentLogTail(lines)`。前端固定传 200。
+
 
 ### 4.9 `omp_version() -> { version, path }`
 
@@ -677,6 +708,13 @@ header `.title`、每个 `title_change` 的 `.title`。
 2. canonicalize（含符号链接）后必须以 `sessionsDir + "/"` 为前缀，
    且相对部分恰为两段 `<dir>/<file>.jsonl`，文件名不以 `.` 开头。
 3. 不存在 → `NOT_FOUND`。
+4. Superagent extra root（§26.5）：`Config.extra_roots` 里的
+   `<data_dir>/superagent/sessions` 同样可读。校验时依次尝试
+   `[sessions_dir] + extra_roots`：取第一个满足 `strip_prefix` 的根，
+   之后的形状校验（两段路径、`.jsonl`、非点文件、常规文件）原样不动。
+   extra root 自身 canonicalize 失败就跳过；都不满足时，
+   `sessions_dir` canonicalize 失败返回原来的 `IO` 错误，否则返回 `OUTSIDE_ROOT`。
+   会话列表、用量、菜单栏、清理这些扫描仍然只看 `sessions_dir`。
 
 ## 7. 错误码
 
@@ -699,6 +737,7 @@ header `.title`、每个 `title_change` 的 `.title`。
 | `CONFLICT` | 文件已被外部修改 |
 | `META_CORRUPT` | 应用侧 `meta.json` 解析失败或版本不兼容（§15.3；绝不覆盖，UI 禁用保存） |
 | `INVALID_KEY` | 配置键不在模型配置白名单内（§16.1；仅 `update_model_config` 产生，绝不调用 omp） |
+| `SUPERAGENT_UNAVAILABLE` | Superagent 守护进程不可用：socket 不存在/拒绝连接、读超时、或托管状态非 `running`（§26） |
 | `UNKNOWN` | **仅前端**：传输层或未预期失败的归一化（后端永不产生） |
 
 `AppError { code, message }`；`message` 为中文人类可读。
@@ -765,6 +804,11 @@ header `.title`、每个 `title_change` 的 `.title`。
   「Release notes」步取上一个 tag 到本 tag 的 `feat|fix|perf|style` 提交标题
   （无则 `- 维护性更新`），经 `releaseBody` 写进 `latest.json` 的 notes
   在更新弹窗展示；Release 仍为草稿（`releaseDraft: true`），人工核对资产后手动发布。
+- Superagent 资源（§26）：`bundle.resources` 必须把 `superagent/` 的
+  `package.json`、`dist/daemon.js`、`prompts/`、`skills/`、`plugin/`
+  打进 `Resources/superagent/`。`beforeDevCommand` 与 `build` 脚本先跑
+  `superagent:build`，保证 `dist/daemon.js` 存在；打包后验证
+  `omp-resume.app/Contents/Resources/superagent/dist/daemon.js` 存在。
 
 ## 11. 纯前端功能（无后端命令）
 
@@ -1017,6 +1061,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - `new_session_in_iterm { cwd, model? }`：
   - `cwd` 必须为**存在的绝对目录**，否则 `CWD_MISSING`
     （不存在 / 是文件 / 相对路径同一错误码，与现有 §4.8 一致）。
+    路径首尾若含空白字符，错误文案追加去歧义提示（路径本身可能以空格开头/结尾）。
   - `cwd` 含控制字符（换行等）→ `INVALID_INPUT`：AppleScript 字符串字面量
     转义会**静默剥离**控制字符（§4.8 的 fail-safe 策略），若不拒绝，
     `cd` 目标会与实际目录不一致。
@@ -1043,6 +1088,8 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 - 前端：侧栏顶部强调色「新会话…」按钮 → `choose_directory` → 有结果则
   `new_session_in_iterm`；项目分组头「+」按钮（hover/focus 显示，
   与置顶按钮并排，tooltip「在此项目新会话」）直接用该组 `cwd`。目录不存在时禁用。
+  新建对话框提交时**不得 trim 路径**（首尾空格可为目录名一部分），
+  仅全空白视为「留空」回退上次目录。
   成功 / 失败提示沿用「在 iTerm 继续」的 toast 处理。
   `api.ts`：`newSessionInIterm(cwd, model?)` 与 `chooseDirectory()`。
   托盘「新建会话 ▸」走同一 iTerm 原语（见 §17.3 ⑥），传 `model: None`（裸 `omp`）。
@@ -2496,3 +2543,126 @@ AppPaths = { sessionsDir: string; ownersDir: string; historyDb: string; memoryDi
 约束，供 MCP「打开配置文件」等非会话文件入口用。校验：非绝对路径/不存在/不是文件 →
 `INVALID_INPUT`/`NOT_FOUND`；含控制字符 → `INVALID_INPUT`（都不调用 Runner）；
 Runner 失败 → `IO`。Runner 可注入，单测断言精确 argv。
+
+## 26. Superagent（§4.76–§4.80：守护进程托管 + 面板 + 会话）
+
+> 本应用以子进程托管一个 Superagent 守护进程（`superagent/dist/daemon.js`，
+> 经 `omp run` 启动），侧边栏新增 **Superagent** 分组，下设管理面板、会话、服务三页。
+> 守护进程跑在 omp 自带的运行时上，每个会话一个 `omp --mode rpc` 子进程。
+> 与 DSH 完全隔离：不读 `~/.dsh`，不写 omp 原始配置，只读用户模型与登录态。
+
+### 26.1 状态目录
+
+`S = <data_dir>/superagent`，其中 `data_dir` 为 `$OMP_RESUME_DATA_DIR`（非空时），
+否则为 `~/Library/Application Support/omp-resume`。
+
+| 路径 | 用途 |
+|---|---|
+| `S/superagent.sqlite` | Store（schema 11；新增数据只用 `kv` 表） |
+| `<data_dir>/superagent.lock` | `proper-lockfile` 锁 |
+| `S/sessions/<sessionId>/*.jsonl` | 每个会话一个目录，作为 `--session-dir` |
+| `S/work/<name>/` | 工单目录默认根 |
+| `S/worker-bin/`、`S/worker-gitconfig` | gh/lark-cli shim 和隔离 git 配置 |
+| `S/prompts/<sessionId>.r<rev>.md` | 传给 `--append-system-prompt` 的提示词文件 |
+| `S/plugin/r<rev>/` | 按提示词版本生成的 omp 插件目录 |
+| `S/omp-overlay.yml` | 传给 `--config` 的覆盖配置，只作用于本进程 |
+| `S/logs/daemon.log`（`.1`） | 守护进程 stdout/stderr（Rust 重定向） |
+| `S/daemon.sock` | HTTP unix socket（路径规则见 §26.2） |
+| `S/daemon.pid` | 守护进程 pid（十进制 + 换行，0600；监听成功后写入，干净退出时删除） |
+会话 id 规则：主会话 id 为 `KV.runtime.masterId`（新库 `"main"`）；
+worker 会话 id 为 `worker-<ticketId>`。
+
+### 26.2 守护进程 HTTP 接口
+
+- 基于 `node:http`，监听 unix socket，前缀 `/orchestrator/api/`。
+- 每个响应都带 `content-type: application/json; charset=utf-8`、
+  `content-length`、`connection: close`。
+- 不做同源检查：socket 文件权限 `0600` 就是访问边界。
+- `GET sessions` 返回 `{ items: [{ id, role, ticketId, title, sessionFile, state }] }`，
+  `role` 为 `orchestrator|worker`，`state` 为 `absent|starting|running|settling|idle`。
+- socket 路径由 Rust 决定：`S/daemon.sock` 的字节长度 ≤100 时用它，
+  否则用 `/tmp/omp-superagent-<uid>/daemon.sock`（目录 `0700`）。
+  原因是 macOS 的 `sun_path` 上限 104 字节。回退目录经安全校验后才用：
+  拒绝符号链接、属主必须为当前 uid、组/其他用户不可写；不满足时改用
+  `std::env::temp_dir()` 下的同名目录（同样校验），两个都不可用时仍返回
+  主路径，由 `bind`/`connect` 报出明确的系统错误，而不是静默用不安全目录。
+
+### 26.3 托管状态机
+
+`SuperagentState = disabled|starting|running|stopping|stopped|crashed`。
+
+- 启动：`start()` 先做单实例守卫（有存活子进程直接返回；并发 `start()` 以预占 `Starting` 互斥），
+  再用 `omp_cli::resolve_omp()` 找 omp。找不到 omp、资源目录缺失
+  （`$OMP_RESUME_SUPERAGENT_DIR` → debug 构建的 `../superagent` →
+  `resource_dir/superagent`，取存在 `dist/daemon.js` 的那个）、建状态/日志目录失败、
+  日志打开/重定向失败、spawn 失败任一 → 置 `crashed` + `lastError` 并返回对应错误。
+  否则 `Command::new(omp).arg("run").arg(assets/dist/daemon.js)`
+  `--state-dir S --socket sock --omp omp`（`BUN_BE_BUN=1`、`NO_COLOR=1`、
+  增强 PATH、cwd=S、stdin null、stdout/stderr 接日志文件（超 5 MiB 先轮转为 `.1`）、
+  独立进程组），置 `starting`，代际 +1（预占时递增），起就绪/等待线程。
+  spawn 前先按 `S/daemon.pid` 尝试接管孤儿（见下），接管成功后正常 spawn。
+- 孤儿接管（`reclaim_orphan`，至多一次，不递归）：应用被 force-quit/kill -9 后，
+  旧守护进程可能以 ppid=1 的孤儿存活并继续占着状态目录。`start()` 在 spawn 前、
+  以及等待线程收到退出码 3 时，各补一次接管（一次 `start()` 尝试至多触发其中一次成功路径）。
+  仅当 pid 文件存在时动手：解析出 pid 后经 `/bin/ps -p <pid> -o command=` 核验命令行
+  必须同时包含 `dist/daemon.js` 与精确的 `--state-dir <S>` 相邻二元组，否则拒绝
+  （pid 已被回收复用）。核验通过只给该 pid 自身发 SIGTERM（不是进程组：它不是我们的子进程），
+  20 秒未退则 SIGKILL 再等 5 秒；成功后删掉 pid 文件并在日志里记
+  `[supervisor] reclaimed orphaned daemon pid <pid>`，拒绝时记 `[supervisor] reclaim refused: <原因>`。
+  接管中状态保持 `starting`，`lastError` 临时为“正在接管残留的守护进程（pid <n>）…”（成功/拒绝后清除）；
+  全程在锁外等待、每 100ms 检查代际，可被 `stop()`/`set_enabled(false)` 中断。
+- 就绪：`superagent-ready` 线程每 500ms 调 `GET state`（单次 2s 超时），200 即置 `running`；
+  60 秒未就绪则 SIGKILL（杀进程组），置 `crashed`，`last_error` 为“守护进程 60 秒内未就绪，详见日志”。
+  代际变化或状态已非 `Starting` 时线程自杀，绝不复活已停止的实例。
+- 退出：`superagent-wait` 线程 `child.wait()` 返回后，代际已变（主动停止/新一轮接管）则不碰状态；
+  主动停止 → `stopped`（未启用 → `disabled`）；否则 → `crashed`，`last_error` 为
+  `守护进程退出（<退出码/信号>）：<日志最后 8 KiB 的最后一行>`（无日志行时省略后半）。
+  退出码 3（另一个守护进程占用状态目录）先补一次孤儿接管：接管成功则直接重启（不计退避）；
+  接管无果（无 pid 文件/核验拒绝/超时未退）则置 `crashed` 且不自动重启，`last_error` 为
+  `另一个 Superagent 守护进程正在使用状态目录<S>（未能自动接管，可手动结束该进程后重试）`。
+  其余崩溃：运行超 600 秒视为稳定（`crashes` 复位为 1），
+  否则 `crashes += 1`，`restarts += 1`，仍启用时按 `[1,2,5,10,30,60][min(crashes-1,5)]` 秒退避重启。
+- 退避可中断：退避等待中每 100ms 检查代际与启用开关，`stop()`/`set_enabled(false)`/`restart()` 任一
+  都会递增代际，等待线程看到变化即放弃重启，绝不在 disable/stop 之后复活进程；重启前还要求状态仍为 `Crashed`。
+- 停止：`stop()` 递增代际后置 `stopping`，`kill(-pid, SIGTERM)`（整个进程组），15 秒超时后 SIGKILL，再等 5 秒；
+  收尾 `on_stopped` 只在同代际时写 `stopped`/`disabled`，避免旧 stop 覆盖新 `starting`。
+  注意信号只发到守护进程自己的进程组：守护进程拉起的 `omp --mode rpc` 子进程自建独立进程组，
+  由守护进程负责传播 SIGTERM（15 秒宽限），SIGKILL 兜底时它们可能残留。
+- 单实例守卫：`start()` 以「预占 Starting 状态」互斥并发启动；已有存活子进程时直接返回。
+- `set_enabled` 先落盘设置再按需启停；`restart` 先 stop 再 start；
+  应用退出（`RunEvent::Exit`）时 `stop_blocking()`（从未启动时不发信号、不改状态）。
+
+### 26.4 前端
+
+- 路由：`superagent`（管理面板）、`superagent-sessions`（会话）、
+  `superagent-service`（服务），NAV_GROUPS 在 "Agent Stage" 组之后插入
+  Superagent 分组；⌘K 命令面板自动收录（`paletteItems` 遍历 NAV_GROUPS）。
+- 管理面板：每 3 秒轮询 `superagent_status()`；非 `running` 显示 `EmptyState`
+  （按状态取标题 + `lastError` +「前往服务页」按钮）；`running` 时渲染
+  `omp-superagent/panel` 的 `<SuperagentPanel transport openSession lang="zh" />`。
+- 会话页：每 5 秒经 `superagent_request('GET','sessions')` 拉列表；
+  左列标题 + `Badge`（主会话 `accent`、worker `grey`）+ `StatePill`
+  （running/settling→`running`，starting→`queued`，idle→`idle`，absent→`done`）；
+  右列有 `sessionFile` 时 `getConversation` + `<ConversationView>`，
+  没有时 `EmptyState`“该会话还没有记录”。`target.seq` 变化即选中。
+- 服务页：状态面板（`StatePill` + pid/启动时间/重启次数/`lastError` +
+  启用 `Switch` + 重启按钮，仅启用时可用）；路径面板（`stateDir`/`socketPath`/
+  `logPath`/`assetsDir`/`ompBin`，文件行带「在 Finder 中显示」走 `reveal_file`）；
+  日志面板（`superagent_log_tail(200)` + 刷新按钮）。状态同样 3 秒轮询。
+- transport（`src/components/superagent/transport.ts`）：`invokeTransport`
+  把面板请求经 `superagent_request` 代理出去；`SUPERAGENT_UNAVAILABLE`
+  转抛 `TransportUnavailable`（面板显示离线态），其余错误透传。
+- token 映射（`src/components/superagent/Superagent.css`）：在 `:root` 上把
+  面板用的 34 个 `--dsw-*` token 映射到 App.css 语义变量（文字/描边→
+  `--text*`/`--border*`，品牌/状态→`--accent`/`--danger`/`--warn`/`--ok`，
+  交互/背景→`--bg-*`，阴影/按钮→`--shadow-*`/`--accent-fill`），
+  随 `data-theme`/`data-accent` 实时重算；portal 到 `body` 的弹窗和 toast
+  也能取到。名字集合必须与 `client.css` 引用的完全一致。
+
+### 26.5 会话路径白名单
+
+`Config.extra_roots` 放入 `<data_dir>/superagent/sessions`
+（`data_dir` 与 §26.1 同口径）。`validate_session_path` 依次尝试
+`[sessions_dir] + extra_roots`，取第一个满足 `strip_prefix` 的根，
+之后的形状校验原样不动（见 §6 条目 4）。扫描（列表/用量/菜单栏/清理）
+仍然只看 `sessions_dir`。

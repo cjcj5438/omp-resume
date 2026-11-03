@@ -53,6 +53,9 @@ import { DeleteDialog } from "./components/DeleteDialog";
 import { CheatSheetView } from "./components/CheatSheetView";
 import { TrayView } from "./components/TrayView";
 import { SettingsView } from "./components/SettingsView";
+import { SuperagentView } from "./components/superagent/SuperagentView";
+import { SuperagentSessionsView } from "./components/superagent/SuperagentSessionsView";
+import { SuperagentServiceView } from "./components/superagent/SuperagentServiceView";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { checkForUpdate, checkForUpdateManually, onCheckAppUpdateRequest, type Update } from "./update";
 import { onOpenMainRouteRequest, onOpenTraySettingsRequest } from "./traySettings";
@@ -81,6 +84,8 @@ function App() {
   const [metaRequest, setMetaRequest] = useState<{ path: string; seq: number } | null>(null);
   // 舞台内点侧栏会话：即使 path 没变（重复点同一行），seq 递增也会让 StageView 收到切换请求。
   const [stageTarget, setStageTarget] = useState<{ path: string; seq: number } | null>(null);
+  // 管理面板「打开会话」：seq 区分每次点击，SuperagentSessionsView 收到即选中。
+  const [superagentTarget, setSuperagentTarget] = useState<{ id: string; seq: number } | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<DeleteTarget[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // 路由栈：栈顶是当前路由；同族路由（usage/health、配置类）切换时常驻组件不卸载。
@@ -100,6 +105,14 @@ function App() {
         return path;
       });
       navigate("session");
+    },
+    [navigate],
+  );
+  /** 管理面板「打开会话」：记下目标并跳到会话页（seq 让重复点同一会话也生效）。 */
+  const openSuperagentSession = useCallback(
+    (id: string) => {
+      setSuperagentTarget((prev) => ({ id, seq: (prev?.seq ?? -1) + 1 }));
+      navigate("superagent-sessions");
     },
     [navigate],
   );
@@ -671,6 +684,14 @@ function App() {
         onManageAgents={() => navigate("agents")}
       />
     );
+  } else if (route === "superagent") {
+    page = (
+      <SuperagentView onOpenSession={openSuperagentSession} onNavigate={navigate} />
+    );
+  } else if (route === "superagent-sessions") {
+    page = <SuperagentSessionsView target={superagentTarget} />;
+  } else if (route === "superagent-service") {
+    page = <SuperagentServiceView onToast={addToast} />;
   } else if (route === "cleanup") {
     page = (
       <CleanupView
