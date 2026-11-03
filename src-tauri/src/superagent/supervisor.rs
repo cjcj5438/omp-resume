@@ -458,13 +458,44 @@ impl Supervisor {
 
     /// 接管崩溃残留的孤儿守护进程（至多一次，不递归）。
     ///
-    /// 触发条件：`<state_dir>/daemon.pid` 存在。核验该 pid 的命令行
+    /// 触发条件：`<state_dir>/daemon.pid` 存在。spawn 前接管核验该 pid 的命令行
     /// （`/bin/ps -p <pid> -o command=`）同时包含 `dist/daemon.js` 与精确的
     /// `--state-dir <state_dir>` 参数才动手；否则拒绝（pid 已被回收复用）。
     /// 只给该 pid 自身发 SIGTERM（不是进程组：它不是我们的子进程），
     /// 20 秒未退则 SIGKILL 再等 5 秒；成功后删掉 pid 文件。
     /// 全程在锁外等待，每 100ms 检查代际，可被 stop()/disable 中断。
+    ///
+    /// spawn 前接管用严格命令行核验（见 `reclaim_orphan_inner(direct=false)`）；
+    /// 退出码 3 的二次接管走 `reclaim_orphan_direct`，只做弱核验。
     fn reclaim_orphan(&self, state_dir: &std::path::Path, generation: u64) -> ReclaimOutcome {
+        self.reclaim_orphan_inner(state_dir, generation, false)
+    }
+
+    /// 退出码 3 的二次接管：持锁者身份主要由“锁挡回新进程”这一事实确立——
+    /// 我们的新进程刚被 `proper-lockfile` 挡回来，说明持锁者必然存在、必然
+    /// 不是我们自己（我们还没拿到锁）。但 pid 文件在锁建立后才写入，存在
+    /// 一个窗口：持锁者尚未写入 pid 文件时，pid 文件是崩溃残留的旧 pid，
+    /// 可能已被回收复用给无关进程——因此仍需一道弱核验：`ps` 看到的命令行
+    /// 必须含有 `dist/daemon.js` 标记，否则拒绝（绝不发信号）。
+    /// 不核验 `--state-dir`：空格目录/`ps` 截断/omp 自我更新改名都可能让
+    /// 严格匹配误拒真正的持锁者（0.7.0 线上故障），而标记检查不受这些影响。
+    /// `ps` 自身失败（超时/spawn 失败）但 pid 存活时放行：`ps` 不可用不能
+    /// 让接管瘫痪，此时锁挡回的事实仍是身份依据（死亡竞态下对已死 pid 的
+    /// SIGTERM 无害，wait 会立即返回）。
+    fn reclaim_orphan_direct(
+        &self,
+        state_dir: &std::path::Path,
+        generation: u64,
+    ) -> ReclaimOutcome {
+        self.reclaim_orphan_inner(state_dir, generation, true)
+    }
+
+    fn reclaim_orphan_inner(
+        &self,
+        state_dir: &std::path::Path,
+        generation: u64,
+        direct: bool,
+    ) -> ReclaimOutcome {
         let pid_path = super::paths::pid_path(state_dir);
         let text = match std::fs::read_to_string(&pid_path) {
             Ok(text) => text,
@@ -480,7 +511,7 @@ impl Supervisor {
                 reason: "pid 文件指向本进程，拒绝接管".to_string(),
             };
         }
-        // 中断检查点：读文件与 ps 之间也可能被 stop/disable 抢占。
+        // 中断检查点：读文件与核验之间也可能被 stop/disable 抢占。
         if self.is_stale_generation(generation) {
             return ReclaimOutcome::Interrupted;
         }
@@ -491,28 +522,77 @@ impl Supervisor {
             }
             inner.last_error = Some(format!("正在接管残留的守护进程（pid {pid}）…"));
         }
-        let command = match ps_command_line(pid) {
-            Some(command) => command,
-            None => {
-                // ps 查不到该 pid：进程已死，删掉残留 pid 文件后视为无孤儿。
-                let _ = std::fs::remove_file(&pid_path);
+        if direct {
+            // 弱核验：pid 死了就清掉残留 pid 文件；`ps` 看到命令行但不含
+            // 入口标记 → pid 已被复用给无关进程，拒绝且绝不发信号；zombie
+            // 按已死处理。只有 `ps` 自身失败但 pid 存活时才放行（见
+            // `reclaim_orphan_direct` 文档）。
+            match ps_command_line(pid) {
+                None if !pid_alive(pid) => {
+                    let _ = std::fs::remove_file(&pid_path);
+                    let mut inner = self.lock();
+                    if inner.generation == generation {
+                        inner.last_error = None;
+                    }
+                    return ReclaimOutcome::NoPidFile;
+                }
+                None => {}
+                Some(command) if command.trim_start().starts_with("<defunct>") => {
+                    let _ = std::fs::remove_file(&pid_path);
+                    let mut inner = self.lock();
+                    if inner.generation == generation {
+                        inner.last_error = None;
+                    }
+                    return ReclaimOutcome::NoPidFile;
+                }
+                Some(command) if !command.contains(DAEMON_ENTRY_MARKER) => {
+                    let mut inner = self.lock();
+                    if inner.generation == generation {
+                        inner.last_error = None;
+                    }
+                    return ReclaimOutcome::Refused {
+                        reason: format!("pid {pid} 的命令行不含守护进程标记，拒绝接管"),
+                    };
+                }
+                Some(_) => {}
+            }
+        } else {
+            let command = match ps_command_line(pid) {
+                Some(command) => command,
+                None => {
+                    // ps 查不到该 pid：进程已死，删掉残留 pid 文件后视为无孤儿。
+                    let _ = std::fs::remove_file(&pid_path);
+                    let mut inner = self.lock();
+                    if inner.generation == generation {
+                        inner.last_error = None;
+                    }
+                    return ReclaimOutcome::NoPidFile;
+                }
+            };
+            if !is_our_daemon_command(&command, &state_dir.display().to_string()) {
                 let mut inner = self.lock();
                 if inner.generation == generation {
                     inner.last_error = None;
                 }
-                return ReclaimOutcome::NoPidFile;
+                return ReclaimOutcome::Refused {
+                    reason: format!("pid {pid} 不是本状态目录的守护进程，拒绝接管"),
+                };
             }
-        };
-        if !is_our_daemon_command(&command, &state_dir.display().to_string()) {
-            let mut inner = self.lock();
-            if inner.generation == generation {
-                inner.last_error = None;
-            }
-            return ReclaimOutcome::Refused {
-                reason: format!("pid {pid} 不是本状态目录的守护进程，拒绝接管"),
-            };
         }
-        // 只杀该 pid 自身：孤儿不是我们的子进程，没有可用的进程组语义。
+        self.kill_reclaimed_pid(pid, &pid_path, generation)
+    }
+
+    /// 给已核验的孤儿 pid 发 SIGTERM（20 秒）→ SIGKILL（5 秒），确认退出后
+    /// 删掉 pid 文件。只杀该 pid 自身：孤儿不是我们的子进程，没有可用的
+    /// 进程组语义；SIGKILL 兜底时它的 `omp --mode rpc` 子进程可能残留
+    /// （见 CONTRACT §26.3 注释与 stop 文档），而 SIGTERM 路径下守护进程
+    /// 自己负责向它们传播（15 秒内部关闭宽限），25 秒足够走完。
+    fn kill_reclaimed_pid(
+        &self,
+        pid: u32,
+        pid_path: &std::path::Path,
+        generation: u64,
+    ) -> ReclaimOutcome {
         // SAFETY：kill(2) 只发信号，不解引用指针。
         let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
         // `is_exited` 把 zombie 也算退出：孤儿可能是我们的子进程
@@ -530,7 +610,7 @@ impl Supervisor {
             self.is_stale_generation(generation)
         }) || is_exited(pid)
         {
-            let _ = std::fs::remove_file(&pid_path);
+            let _ = std::fs::remove_file(pid_path);
             let mut inner = self.lock();
             if inner.generation == generation {
                 inner.last_error = None;
@@ -545,7 +625,7 @@ impl Supervisor {
             self.is_stale_generation(generation)
         }) || is_exited(pid)
         {
-            let _ = std::fs::remove_file(&pid_path);
+            let _ = std::fs::remove_file(pid_path);
             let mut inner = self.lock();
             if inner.generation == generation {
                 inner.last_error = None;
@@ -885,6 +965,11 @@ impl Supervisor {
     ///
     /// 运行在等待线程（非 UI 线程）：接管的 SIGTERM 20s + SIGKILL 5s 全在
     /// 锁外等待，可被 stop()/disable 中断（代际检查）。
+    ///
+    /// 这里用 `reclaim_orphan_direct`（弱核验：只要求命令行含入口标记，
+    /// 不要求 `--state-dir` 严格匹配）：新进程刚被锁挡回，持锁者身份已定；
+    /// spawn 前接管若已因严格核验拒绝而放过它，这里是最后的兜底——但 pid
+    /// 复用给无关进程时仍拒绝，绝不误杀。
     fn on_already_running_exit(&self, generation: u64, state_dir: &std::path::Path) {
         {
             let inner = self.lock();
@@ -907,7 +992,7 @@ impl Supervisor {
                 return;
             }
         }
-        match self.reclaim_orphan(state_dir, generation) {
+        match self.reclaim_orphan_direct(state_dir, generation) {
             ReclaimOutcome::Reclaimed { pid } => {
                 append_log_line(
                     &super::paths::log_path(state_dir),
@@ -949,6 +1034,8 @@ impl Supervisor {
     }
 
     /// 退出码 3 且接管无果：置 `Crashed` + 指引文案（不重启）。
+    /// pid 文件能解析出 holder pid 时带上它和可复制的 kill 命令：用户按指引
+    /// 手动杀时不再需要翻日志找 pid（服务页的错误行允许换行显示全文）。
     fn set_already_running_crashed(&self, generation: u64, state_dir: &std::path::Path) {
         let mut inner = self.lock();
         if inner.generation != generation {
@@ -957,10 +1044,19 @@ impl Supervisor {
         inner.pid = None;
         inner.child = None;
         inner.state = SuperagentState::Crashed;
-        inner.last_error = Some(format!(
-            "另一个 Superagent 守护进程正在使用状态目录{}（未能自动接管，可手动结束该进程后重试）",
-            state_dir.display(),
-        ));
+        let holder = std::fs::read_to_string(super::paths::pid_path(state_dir))
+            .ok()
+            .and_then(|text| parse_pid_file(&text));
+        inner.last_error = Some(match holder {
+            Some(pid) => format!(
+                "另一个 Superagent 守护进程（pid {pid}）正在使用状态目录{}（未能自动接管，可手动结束该进程后重试：kill {pid}，仍在则 kill -9 {pid}）",
+                state_dir.display(),
+            ),
+            None => format!(
+                "另一个 Superagent 守护进程正在使用状态目录{}（未能自动接管，可手动结束该进程后重试）",
+                state_dir.display(),
+            ),
+        });
     }
 }
 
@@ -1138,18 +1234,38 @@ fn parse_pid_file(text: &str) -> Option<u32> {
 }
 
 /// 该命令行是否属于本状态目录的守护进程（纯函数，供 `ps` 输出核验）。
-///
-/// 必须同时满足：包含 `dist/daemon.js`，且以空白切分后的 argv 中出现
-/// 精确的 `--state-dir <state_dir>` 相邻二元组（防 `--state-dir-evil`、
-/// 前缀目录、子串误配）。`ps -o command=` 在 macOS 上对超长命令行会
+/// 必须同时满足：包含 `dist/daemon.js`，且出现精确的
+/// `--state-dir <state_dir>`（前后都是空白/串边界）。
+/// 注意不能按空白切分 argv：`ps` 把参数按空格拼成一行，而 macOS 默认
+/// 状态目录含空格（`…/Application Support/…`），切分会把目录拆碎导致
+/// 永远匹配不上。`ps -o command=` 在 macOS 上对超长命令行会
 /// 截断：截断只会导致拒绝接管（保守），不会误杀。
 fn is_our_daemon_command(command: &str, state_dir: &str) -> bool {
     if !command.contains(DAEMON_ENTRY_MARKER) {
         return false;
     }
-    let args: Vec<&str> = command.split_whitespace().collect();
-    args.windows(2)
-        .any(|w| w[0] == "--state-dir" && w[1] == state_dir)
+    let flag = "--state-dir";
+    let bytes = command.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = command[from..].find(flag) {
+        let at = from + rel;
+        let before_ok = at == 0 || bytes[at - 1].is_ascii_whitespace();
+        let mut after = at + flag.len();
+        let flag_boundary_ok = after < bytes.len() && bytes[after].is_ascii_whitespace();
+        if before_ok && flag_boundary_ok {
+            while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                after += 1;
+            }
+            if command[after..].starts_with(state_dir) {
+                let end = after + state_dir.len();
+                if end == bytes.len() || bytes[end].is_ascii_whitespace() {
+                    return true;
+                }
+            }
+        }
+        from = at + flag.len();
+    }
+    false
 }
 
 /// 经 `/bin/ps -p <pid> -o command=` 取该进程的完整命令行。
@@ -1561,6 +1677,27 @@ exit 99
         // 回收复用的 pid 跑着别的程序 → 拒绝。
         assert!(!is_our_daemon_command("vim /tmp/notes.txt", dir));
         assert!(!is_our_daemon_command("", dir));
+        // macOS 默认状态目录含空格：ps 把参数按空格拼成一行，切分 argv 会
+        // 把目录拆碎——必须整体匹配。串尾无后续参数同样放行。
+        let spaced = "/Users/x/Library/Application Support/omp-resume/superagent";
+        assert!(is_our_daemon_command(
+            &format!("omp run /repo/dist/daemon.js --state-dir {spaced} --socket {spaced}/daemon.sock --omp /x/omp"),
+            spaced
+        ));
+        assert!(is_our_daemon_command(
+            &format!("omp run /repo/dist/daemon.js --state-dir {spaced}"),
+            spaced
+        ));
+        // 含空格目录的前缀误配 → 拒绝。
+        assert!(!is_our_daemon_command(
+            &format!("omp run /repo/dist/daemon.js --state-dir {spaced}/evil --socket x"),
+            spaced
+        ));
+        // 另一个含空格目录的孤儿 → 拒绝。
+        assert!(!is_our_daemon_command(
+            &format!("omp run /repo/dist/daemon.js --state-dir {spaced}-other"),
+            spaced
+        ));
     }
 
     #[test]
@@ -1728,5 +1865,176 @@ exit 99
         let _ = other.wait();
         fx.supervisor.set_enabled(false).unwrap();
         fx.wait_state(SuperagentState::Disabled, Duration::from_secs(20));
+    }
+
+    /// 退出码 3 的二次接管必须杀掉持锁者，哪怕它的命令行通不过严格核验：
+    /// 回归 0.7.0 发布后的线上故障——旧版 `is_our_daemon_command` 按空白切分
+    /// argv，macOS 默认状态目录含空格（`…/Application Support/…`），真正的
+    /// 守护进程永远匹配不上，spawn 前接管与二次接管都以“不是本状态目录的
+    /// 守护进程”拒绝，服务页卡死在「异常退出」且重启次数为 0。
+    ///
+    /// 二次接管只做弱核验（命令行含 `dist/daemon.js` 标记即可，不要求
+    /// `--state-dir` 严格匹配）：假持锁者的命令行带标记但指着另一个状态
+    /// 目录——spawn 前接管会拒绝它，而退出码 3 的二次接管必须杀掉它并重启成功。
+    #[test]
+    fn exit3_reclaims_holder_despite_strict_mismatch() {
+        let _guard = env_guard();
+        // `serve` 行为的假守护进程需要 node；重启成功以进入 Running 为准。
+        if !node_available() {
+            eprintln!("skip: node 未安装，无法起假守护进程");
+            return;
+        }
+        let fx = Fixture::new("serve");
+        let state_dir = fx.supervisor.state_dir();
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::create_dir_all(state_dir.join("logs")).unwrap();
+        // 假持锁者：脚本路径含 `dist/daemon.js` 标记（弱核验通过），但
+        // `--state-dir` 指向另一个目录（严格核验拒绝，模拟空格/截断/改名
+        // 导致的误拒）。只发信号给本测试亲手 spawn 的 pid。
+        let holder_dir = fx.dir().join("dist");
+        std::fs::create_dir_all(&holder_dir).unwrap();
+        let holder_script = holder_dir.join("daemon.js.sh");
+        std::fs::write(&holder_script, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+        std::fs::set_permissions(&holder_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut holder = std::process::Command::new("/bin/sh")
+            .arg(&holder_script)
+            .arg("--state-dir")
+            .arg(fx.dir().join("other-state"))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let holder_pid = holder.id();
+        // 确认它卡在“弱过、严拒”的位置上：含标记但严格匹配不上。
+        let probe = ps_command_line(holder_pid);
+        let Some(cmd) = probe.as_deref() else {
+            let _ = holder.kill();
+            let _ = holder.wait();
+            eprintln!("skip: ps 看不到假持锁者的命令行");
+            return;
+        };
+        assert!(
+            cmd.contains(DAEMON_ENTRY_MARKER),
+            "假持锁者应含入口标记：{cmd:?}",
+        );
+        assert!(
+            !is_our_daemon_command(cmd, &state_dir.display().to_string()),
+            "假持锁者应通不过严格核验：{cmd:?}",
+        );
+        std::fs::write(
+            super::super::paths::pid_path(&state_dir),
+            format!("{holder_pid}\n"),
+        )
+        .unwrap();
+        // 直接调退出码 3 的处理路径：代际与状态先摆成“刚 spawn、秒退”的样子。
+        let generation = {
+            let mut inner = fx.supervisor.lock();
+            inner.enabled = true;
+            inner.state = SuperagentState::Starting;
+            inner.generation += 1;
+            inner.generation
+        };
+        fx.supervisor
+            .on_already_running_exit(generation, &state_dir);
+        // 持锁者必须被杀掉（SIGTERM 即退；zombie 由 try_wait 回收同样算数）。
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            // SAFETY：kill(pid, 0) 只做存在性探测。
+            let alive = unsafe { libc::kill(holder_pid as i32, 0) } == 0;
+            let reaped = holder.try_wait().ok().flatten().is_some();
+            if reaped || !alive {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = holder.kill();
+                let _ = holder.wait();
+                panic!("假持锁者 pid {holder_pid} 未被二次接管杀掉");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = holder.wait();
+        assert!(!super::super::paths::pid_path(&state_dir).exists());
+        // 接管成功后直接重启：serve 行为的假守护进程应进入 Running。
+        fx.wait_state(SuperagentState::Running, Duration::from_secs(30));
+        // 审计行在轮转前或当前日志里（二者必居其一）。
+        let log_path = super::super::paths::log_path(&state_dir);
+        let rotated = log_path.with_extension("log.1");
+        let log = std::fs::read_to_string(&log_path).unwrap();
+        let old = std::fs::read_to_string(&rotated).unwrap_or_default();
+        assert!(
+            log.contains(&format!(
+                "[supervisor] reclaimed orphaned daemon pid {holder_pid}"
+            )) || old.contains(&format!(
+                "[supervisor] reclaimed orphaned daemon pid {holder_pid}"
+            )),
+            "日志缺接管行：当前{log:?} 轮转{old:?}",
+        );
+        fx.supervisor.set_enabled(false).unwrap();
+        fx.wait_state(SuperagentState::Disabled, Duration::from_secs(20));
+    }
+
+    /// 退出码 3 的二次接管遇到 pid 复用必须拒绝：pid 文件指向存活但命令行
+    /// 不含入口标记的进程时（崩溃残留 pid 被无关进程复用），绝不发信号，
+    /// 置 `Crashed` 且错误文案带 pid 与 kill 指引。
+    #[test]
+    fn exit3_refuses_recycled_pid_without_marker() {
+        let _guard = env_guard();
+        let fx = Fixture::new("exit3");
+        let state_dir = fx.supervisor.state_dir();
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::create_dir_all(state_dir.join("logs")).unwrap();
+        // 亲手 spawn 的 sleep：绝不给它发信号，只验证拒绝逻辑。
+        let mut other = std::process::Command::new("/bin/sleep")
+            .arg("300")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let other_pid = other.id();
+        // 确认它确实不含标记（否则测不到弱核验的拒绝分支）。
+        let probe = ps_command_line(other_pid);
+        assert!(
+            !probe
+                .as_deref()
+                .is_some_and(|cmd| cmd.contains(DAEMON_ENTRY_MARKER)),
+            "假复用进程意外含有入口标记：{probe:?}",
+        );
+        std::fs::write(
+            super::super::paths::pid_path(&state_dir),
+            format!("{other_pid}\n"),
+        )
+        .unwrap();
+        // 直接调退出码 3 的处理路径：代际与状态先摆成“刚 spawn、秒退”的样子。
+        let generation = {
+            let mut inner = fx.supervisor.lock();
+            inner.enabled = true;
+            inner.state = SuperagentState::Starting;
+            inner.generation += 1;
+            inner.generation
+        };
+        fx.supervisor
+            .on_already_running_exit(generation, &state_dir);
+        // 拒绝：sleep 存活（没收到信号），pid 文件保留，状态 Crashed。
+        // SAFETY：kill(pid, 0) 只做存在性探测，不发信号。
+        assert_eq!(unsafe { libc::kill(other_pid as i32, 0) }, 0);
+        assert!(other.try_wait().unwrap().is_none());
+        assert!(super::super::paths::pid_path(&state_dir).exists());
+        let st = fx.supervisor.status();
+        assert_eq!(st.state, SuperagentState::Crashed);
+        assert_eq!(st.restarts, 0);
+        let want = format!(
+            "另一个 Superagent 守护进程（pid {other_pid}）正在使用状态目录{}（未能自动接管，可手动结束该进程后重试：kill {other_pid}，仍在则 kill -9 {other_pid}）",
+            st.state_dir,
+        );
+        assert_eq!(st.last_error.as_deref(), Some(want.as_str()));
+        let log = std::fs::read_to_string(super::super::paths::log_path(&state_dir)).unwrap();
+        assert!(
+            log.contains(&format!("pid {other_pid} 的命令行不含守护进程标记")),
+            "日志缺拒绝行：{log:?}",
+        );
+        let _ = other.kill();
+        let _ = other.wait();
     }
 }

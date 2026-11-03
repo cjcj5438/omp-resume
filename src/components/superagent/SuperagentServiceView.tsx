@@ -152,7 +152,7 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
               {status.lastError !== null ? (
                 <div className="detail-row">
                   <dt>最近错误</dt>
-                  <dd title={status.lastError}>{status.lastError}</dd>
+                  <dd className="sa-error-wrap" title={status.lastError}>{status.lastError}</dd>
                 </div>
               ) : null}
             </dl>

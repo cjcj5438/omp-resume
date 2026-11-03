@@ -112,6 +112,16 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     stopping ??= (async () => {
       logger.info(`received ${signal}, stopping`)
+      // Watchdog: graceful shutdown should take well under 20 s (15 s stop race
+      // plus socket cleanup). If anything hangs past 25 s — a wedged session close,
+      // a stuck server.close — SIGKILL ourselves so the supervisor's reclaim/stop
+      // never times out waiting for a process that already decided to die.
+      // SIGKILL cannot be caught or ignored; the supervisor deletes the pid file.
+      const watchdog = setTimeout(() => {
+        logger.warn('shutdown timed out after 25 s, self SIGKILL')
+        process.kill(process.pid, 'SIGKILL')
+      }, 25_000)
+      watchdog.unref?.()
       // A rejecting stop must not skip server close, socket unlink, and exit: contain it before the race.
       await Promise.race([current.stop().catch((error: unknown) => logger.warn(`stop failed: ${String(error)}`)),
         new Promise(resolve => setTimeout(resolve, 15_000))])
@@ -119,6 +129,7 @@ async function main(): Promise<void> {
       await new Promise<void>(resolve => server.close(() => resolve()))
       try { unlinkSync(pidFile) } catch { /* Already gone. */ }
       try { unlinkSync(socket) } catch { /* Already gone. */ }
+      clearTimeout(watchdog)
       logger.info('stopped')
       process.exit(0)
     })()

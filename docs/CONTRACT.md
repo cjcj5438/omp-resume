@@ -2604,11 +2604,18 @@ worker 会话 id 为 `worker-<ticketId>`。
 - 孤儿接管（`reclaim_orphan`，至多一次，不递归）：应用被 force-quit/kill -9 后，
   旧守护进程可能以 ppid=1 的孤儿存活并继续占着状态目录。`start()` 在 spawn 前、
   以及等待线程收到退出码 3 时，各补一次接管（一次 `start()` 尝试至多触发其中一次成功路径）。
-  仅当 pid 文件存在时动手：解析出 pid 后经 `/bin/ps -p <pid> -o command=` 核验命令行
-  必须同时包含 `dist/daemon.js` 与精确的 `--state-dir <S>` 相邻二元组，否则拒绝
-  （pid 已被回收复用）。核验通过只给该 pid 自身发 SIGTERM（不是进程组：它不是我们的子进程），
+  仅当 pid 文件存在时动手。spawn 前接管经 `/bin/ps -p <pid> -o command=` 核验命令行
+  必须同时包含 `dist/daemon.js` 与精确的 `--state-dir <S>`（前后空白/串边界，
+  整体子串匹配：`ps` 把参数按空格拼成一行，含空格的状态目录不能按空白切分 argv），
+  否则拒绝（pid 已被回收复用）。退出码 3 的二次接管只做弱核验：新进程刚被锁挡回，
+  持锁者身份已定，但 pid 文件可能是在持锁者写入前残留的旧 pid（可被复用给无关进程），
+  故 `ps` 看到的命令行必须含有 `dist/daemon.js` 标记才动手，不含则拒绝且绝不发信号；
+  不核验 `--state-dir`（空格目录/`ps` 截断/omp 自我更新改名都可能让严格匹配误拒真正的
+  持锁者），`ps` 自身失败但 pid 存活时放行（`ps` 不可用不能让接管瘫痪）。
+  核验通过只给该 pid 自身发 SIGTERM（不是进程组：它不是我们的子进程），
   20 秒未退则 SIGKILL 再等 5 秒；成功后删掉 pid 文件并在日志里记
   `[supervisor] reclaimed orphaned daemon pid <pid>`，拒绝时记 `[supervisor] reclaim refused: <原因>`。
+  守护进程收到 SIGTERM 后 25 秒仍未退完会自发 SIGKILL（关闭看门狗），保证接管/停止不等空等。
   接管中状态保持 `starting`，`lastError` 临时为“正在接管残留的守护进程（pid <n>）…”（成功/拒绝后清除）；
   全程在锁外等待、每 100ms 检查代际，可被 `stop()`/`set_enabled(false)` 中断。
 - 就绪：`superagent-ready` 线程每 500ms 调 `GET state`（单次 2s 超时），200 即置 `running`；
@@ -2619,7 +2626,8 @@ worker 会话 id 为 `worker-<ticketId>`。
   `守护进程退出（<退出码/信号>）：<日志最后 8 KiB 的最后一行>`（无日志行时省略后半）。
   退出码 3（另一个守护进程占用状态目录）先补一次孤儿接管：接管成功则直接重启（不计退避）；
   接管无果（无 pid 文件/核验拒绝/超时未退）则置 `crashed` 且不自动重启，`last_error` 为
-  `另一个 Superagent 守护进程正在使用状态目录<S>（未能自动接管，可手动结束该进程后重试）`。
+  `另一个 Superagent 守护进程（pid <n>）正在使用状态目录<S>（未能自动接管，可手动结束该进程后重试：kill <n>，仍在则 kill -9 <n>）`
+  （pid 文件缺失/无法解析时退化为不带 pid 的旧文案）。
   其余崩溃：运行超 600 秒视为稳定（`crashes` 复位为 1），
   否则 `crashes += 1`，`restarts += 1`，仍启用时按 `[1,2,5,10,30,60][min(crashes-1,5)]` 秒退避重启。
 - 退避可中断：退避等待中每 100ms 检查代际与启用开关，`stop()`/`set_enabled(false)`/`restart()` 任一
