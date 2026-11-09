@@ -6,6 +6,7 @@ import {
   revealFile,
   superagentLogTail,
   superagentRestart,
+  superagentResetState,
   superagentSetEnabled,
   superagentStatus,
 } from "../../api";
@@ -13,6 +14,7 @@ import type { AppError, SuperagentState, SuperagentStatus } from "../../types";
 import { displayCwd, formatFullTime } from "../../format";
 import { startChain } from "../../pollChain";
 import { ErrorBanner, PageHeader, Panel, StatePill, Switch } from "../page";
+import { Modal } from "../ui";
 import "./Superagent.css";
 
 interface SuperagentServiceViewProps {
@@ -29,6 +31,7 @@ const PILL: Record<SuperagentState, { state: "running" | "idle" | "queued" | "fa
   stopping: { state: "queued", word: "停止中" },
   stopped: { state: "idle", word: "已停止" },
   crashed: { state: "failed", word: "异常退出" },
+  incompatible: { state: "failed", word: "版本不匹配" },
 };
 
 interface PathRow {
@@ -46,6 +49,7 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
   const [log, setLog] = useState<string[] | null>(null);
   const [logError, setLogError] = useState<AppError | null>(null);
   const [logLoading, setLogLoading] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     return startChain(async () => {
@@ -83,6 +87,24 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
       onToast(`${label}成功`, "info");
     } catch (e) {
       onToast(`${label}失败：${normalizeError(e).message}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetState = async () => {
+    setConfirmReset(false);
+    setBusy(true);
+    try {
+      const next = await superagentResetState();
+      setStatus(next);
+      setError(null);
+      onToast(
+        next.archivedTo == null || next.archivedTo === "" ? "已改用新状态目录" : `已改用新状态目录，旧目录保留在 ${next.archivedTo}`,
+        "info",
+      );
+    } catch (e) {
+      onToast(`改用新状态目录失败：${normalizeError(e).message}`, "error");
     } finally {
       setBusy(false);
     }
@@ -166,6 +188,25 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
           </>
         )}
       </Panel>
+      {status?.schema != null ? (
+        <div className="banner banner-warn sa-mismatch" role="alert">
+          <div className="sa-mismatch-text">
+            <strong>状态库版本不匹配：守护进程无法启动。</strong>
+            <span>
+              {`状态库 schema ${status.schema.state}，本版本守护进程支持 ${status.schema.oldest}–${status.schema.newest}。`}
+              安装与状态库匹配的版本；或改用新状态目录——旧目录会改名保留。
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-small btn-primary"
+            disabled={busy}
+            onClick={() => setConfirmReset(true)}
+          >
+            改用新状态目录
+          </button>
+        </div>
+      ) : null}
       <Panel title="路径" icon={FolderSearch}>
         {status === null ? (
           <div className="pane-note">读取中…</div>
@@ -216,6 +257,40 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
           <pre className="sa-log">{log.join("\n")}</pre>
         )}
       </Panel>
+      {confirmReset && status?.schema != null ? (
+        <Modal
+          title="改用新状态目录？"
+          onClose={() => {
+            if (!busy) setConfirmReset(false);
+          }}
+          footer={
+            <>
+              <button
+                type="button"
+                className="btn"
+                data-autofocus
+                disabled={busy}
+                onClick={() => setConfirmReset(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => void resetState()}
+              >
+                改用新状态目录
+              </button>
+            </>
+          }
+        >
+          <p>
+            {`当前状态库 schema ${status.schema.state}，本版本守护进程只支持 ${status.schema.oldest}–${status.schema.newest}。`}
+            旧状态目录会改名保留，守护进程从空状态目录重新启动；旧库里的数据不会迁移过来。
+          </p>
+        </Modal>
+      ) : null}
     </div>
   );
 }

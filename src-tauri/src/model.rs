@@ -1978,6 +1978,16 @@ pub enum SuperagentState {
     Stopping,
     Stopped,
     Crashed,
+    Incompatible,
+}
+
+/// 状态库 schema 与守护进程支持范围失配时的明细：只在检测到失配时为 `Some`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuperagentSchema {
+    pub state: u32,
+    pub oldest: u32,
+    pub newest: u32,
 }
 
 /// `superagent_status` / `superagent_set_enabled` / `superagent_restart` 返回。
@@ -1995,6 +2005,11 @@ pub struct SuperagentStatus {
     pub log_path: String,
     pub assets_dir: Option<String>,
     pub omp_bin: Option<String>,
+    #[serde(default)]
+    pub schema: Option<SuperagentSchema>,
+    /// 最近一次一键恢复的归档目录绝对路径；下次成功启动后清掉。
+    #[serde(default)]
+    pub archived_to: Option<String>,
 }
 
 /// `superagent_request` 返回：守护进程 HTTP 状态码与原始正文。

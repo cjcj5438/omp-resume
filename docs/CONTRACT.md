@@ -28,7 +28,7 @@ MCP 原生配置管理、清理、记忆库（Mnemopi）浏览与维护、模型
   4.60–4.63 模型模式（§24）、4.64–4.67 会话右键菜单辅助（§25）、4.68 应用路径（§25.6）、
   4.69 新建模型规格（§21.9）、4.70 新建 agent 定义（§16.9）、4.71 插件检查更新、
   4.72 通用 Finder 显示（§25.7）、4.73 MCP 握手测试、4.74 记忆库全量备份（§18.8.9）、
-  4.75 聚焦在用会话的 iTerm 标签、4.76–4.80 Superagent 托管与代理（§26）。
+  4.75 聚焦在用会话的 iTerm 标签、4.76–4.81 Superagent 托管与代理（§26）。
 
 ## 1. 配置解析
 
@@ -415,7 +415,7 @@ header `.title`、每个 `title_change` 的 `.title`。
 ### 4.76 `superagent_status() -> SuperagentStatus`（只读）
 
 - 返回守护进程托管状态（状态机见 §26.3）。不触碰守护进程 socket，纯内存快照。
-- `SuperagentStatus { state, enabled, pid, startedAt, restarts, lastError, stateDir, socketPath, logPath, assetsDir, ompBin }`（JSON camelCase；`state` 为小写 `disabled/starting/running/stopping/stopped/crashed`）。
+- `SuperagentStatus { state, enabled, pid, startedAt, restarts, lastError, stateDir, socketPath, logPath, assetsDir, ompBin, schema, archivedTo }`（JSON camelCase；`state` 为小写 `disabled/starting/running/stopping/stopped/crashed/incompatible`；`schema` 形如 `{ state, oldest, newest }`，兼容时为 null；`archivedTo` 为最近一次归档路径，其余情况 null；见 §26.1.1）。
 - `api.ts`：`superagentStatus()`。前端服务页/管理面板每 3 秒轮询它。
 
 ### 4.77 `superagent_set_enabled { enabled } -> SuperagentStatus`
@@ -442,6 +442,13 @@ header `.title`、每个 `title_change` 的 `.title`。
 
 - 读日志文件的最后 N 行（`lines` 须为 1..=2000 的整数，否则 → `INVALID_INPUT`）。文件不存在时返回空列表（不是错误）。实现从文件尾按 64 KiB 块倒序扫描换行符（只读够 N 行所需的尾部，不一次性读入整个日志），非 UTF-8 字节宽松解码。
 - `api.ts`：`superagentLogTail(lines)`。前端固定传 200。
+
+### 4.81 `superagent_reset_state() -> SuperagentStatus`
+
+- 仅当托管状态为 `incompatible`（§26.1.1）时可用；其余状态 → `INVALID_INPUT`，不做任何事。
+- 把整个状态目录改名为 `<state_dir>.schema-<库版本>-<YYYYMMDD-HHMMSS>`（目标已存在则追加 `-2`、`-3`…），重建空状态目录后启动守护进程，返回新状态。归档目录永不删除。
+- `api.ts`：`superagentResetState()`。返回的 `SuperagentStatus.archivedTo` 为本次归档路径（下一次成功 start/restart/set_enabled 后清除）；前端 toast 指向该路径。
+- 前端服务页仅当 `status.schema != null` 时显示 `banner-warn` 提示：真实版本号（如"状态库 schema 13，本版本守护进程支持 10–11"）、建议（装匹配版本，或改用新状态目录——旧目录改名保留），主按钮「改用新状态目录」走标准确认弹窗。
 
 
 ### 4.9 `omp_version() -> { version, path }`
@@ -2421,7 +2428,7 @@ AppPaths = { sessionsDir: string; ownersDir: string; historyDb: string; memoryDi
 `INVALID_INPUT`/`NOT_FOUND`；含控制字符 → `INVALID_INPUT`（都不调用 Runner）；
 Runner 失败 → `IO`。Runner 可注入，单测断言精确 argv。
 
-## 26. Superagent（§4.76–§4.80：守护进程托管 + 面板 + 会话）
+## 26. Superagent（§4.76–§4.81：守护进程托管 + 面板 + 会话）
 
 > 本应用以子进程托管一个 Superagent 守护进程（`superagent/dist/daemon.js`，
 > 经 `omp run` 启动），侧边栏新增 **Superagent** 分组，下设管理面板、会话、服务三页。
@@ -2430,13 +2437,21 @@ Runner 失败 → `IO`。Runner 可注入，单测断言精确 argv。
 
 ### 26.1 状态目录
 
-`S = <data_dir>/superagent`，其中 `data_dir` 为 `$OMP_RESUME_DATA_DIR`（非空时），
-否则为 `~/Library/Application Support/omp-resume`。
+状态目录 `S` 按通道区分（`data_dir` 为 `$OMP_RESUME_DATA_DIR`（非空时），
+否则为 `~/Library/Application Support/omp-resume`）：
+`$OMP_RESUME_SUPERAGENT_STATE_DIR`（绝对路径）非空时直接用它；
+否则 release 构建用 `<data_dir>/superagent`，
+debug 构建（`npm run tauri dev`）用 `<data_dir>/superagent-dev`。
+首次 debug 运行时，若 `superagent-dev/superagent.sqlite` 不存在而
+`<data_dir>/superagent/superagent.sqlite` 存在，则把该 sqlite 文件及
+`-wal`/`-shm` 附属文件一次性复制进 `superagent-dev/`（项目/工单/设置随之带入；
+生产库永不被 debug 构建修改）。dev 构建会把状态 schema 向前迁移，
+共用一个目录会让每个 release 安装都继承一个比所带守护进程更新的库——分开存放。
 
 | 路径 | 用途 |
 |---|---|
-| `S/superagent.sqlite` | Store（schema 11；新增数据只用 `kv` 表） |
-| `<data_dir>/superagent.lock` | `proper-lockfile` 锁 |
+| `S/superagent.sqlite` | Store（库版本为写库守护进程迁移到的 `kv.schema`，打开它的构建必须支持该版本，见 §26.1.1；新增数据只用 `kv` 表） |
+| `<state>.lock`（release `<data_dir>/superagent.lock` / debug `<data_dir>/superagent-dev.lock` / override `<override>.lock`） | `proper-lockfile` 锁 |
 | `S/sessions/<sessionId>/*.jsonl` | 每个会话一个目录，作为 `--session-dir` |
 | `S/work/<name>/` | 工单目录默认根 |
 | `S/worker-bin/`、`S/worker-gitconfig` | gh/lark-cli shim 和隔离 git 配置 |
@@ -2449,6 +2464,23 @@ Runner 失败 → `IO`。Runner 可注入，单测断言精确 argv。
 会话 id 规则：主会话 id 为 `KV.runtime.masterId`（新库 `"main"`）；
 worker 会话 id 为 `worker-<ticketId>`。
 
+### 26.1.1 状态库 schema 守卫
+
+- spawn 前先做 schema 预检：只读打开 `S/superagent.sqlite` 的 `kv` 表读 `schema` 行取库版本；
+  文件不存在时不建库、不拦截启动。
+- 守护进程支持范围来自运行所带守护进程 `--print-schema`：它在触碰任何状态前打印一行
+  形如 `schema {"schema":13,"oldest":10}` 并以退出码 0 退出；`schema` 为支持的最大版本，`oldest` 为最小版本。
+- 判定：库版本 ≤ 守护进程最大值 → 照常 spawn；库版本 > 最大值或 < 最小值 → 置 `incompatible`：
+  不 spawn、不重试/不退避，`lastError` 为一句可操作的中文，
+  `SuperagentStatus.schema` 为 `{ state, oldest, newest }`（兼容时为 null）。
+- 守护进程自保：若仍以不兼容的库启动（如被应用外拉起），在 stderr 打印
+  `orchestrator schema mismatch: state=<n> supported=<oldest>..<newest>` 并以退出码 78 退出；
+  其余启动失败保持原行为（退出码 1，锁被占用为 3）。
+- 恢复命令 `superagent_reset_state`（§4.81）：仅当状态为 `incompatible` 时可用，否则 `INVALID_INPUT`；
+  把整个状态目录改名为 `<state_dir>.schema-<库版本>-<YYYYMMDD-HHMMSS>`（重名则追加 `-2`、`-3`…），
+  重建空状态目录后启动守护进程，返回新状态。`SuperagentStatus.archivedTo` 为本次归档路径
+  （其余情况 null，下一次成功 start/restart/set_enabled 后清除）。归档目录永不删除，前端 toast 指向它。
+
 ### 26.2 守护进程 HTTP 接口
 
 - 基于 `node:http`，监听 unix socket，前缀 `/orchestrator/api/`。
@@ -2458,15 +2490,18 @@ worker 会话 id 为 `worker-<ticketId>`。
 - `GET sessions` 返回 `{ items: [{ id, role, ticketId, title, sessionFile, state }] }`，
   `role` 为 `orchestrator|worker`，`state` 为 `absent|starting|running|settling|idle`。
 - socket 路径由 Rust 决定：`S/daemon.sock` 的字节长度 ≤100 时用它，
-  否则用 `/tmp/omp-superagent-<uid>/daemon.sock`（目录 `0700`）。
-  原因是 macOS 的 `sun_path` 上限 104 字节。回退目录经安全校验后才用：
+  否则用 `/tmp/omp-superagent-<uid>-<disc>/daemon.sock`（目录 `0700`），
+  其中 `<disc>` 为 `sha256(状态目录的字节)` 的前 8 个小写十六进制字符。
+  原因是 macOS 的 `sun_path` 上限 104 字节。回退 socket 按状态目录区分，
+  debug（`superagent-dev`）与 release 应用永不共用一个回退 socket。
+  回退目录经安全校验后才用：
   拒绝符号链接、属主必须为当前 uid、组/其他用户不可写；不满足时改用
   `std::env::temp_dir()` 下的同名目录（同样校验），两个都不可用时仍返回
   主路径，由 `bind`/`connect` 报出明确的系统错误，而不是静默用不安全目录。
 
 ### 26.3 托管状态机
 
-`SuperagentState = disabled|starting|running|stopping|stopped|crashed`。
+`SuperagentState = disabled|starting|running|stopping|stopped|crashed|incompatible`（`incompatible` 见 §26.1.1：不 spawn、不重试）。
 
 - 启动：`start()` 先做单实例守卫（有存活子进程直接返回；并发 `start()` 以预占 `Starting` 互斥），
   再用 `omp_cli::resolve_omp()` 找 omp。找不到 omp、资源目录缺失
@@ -2478,6 +2513,7 @@ worker 会话 id 为 `worker-<ticketId>`。
   增强 PATH、cwd=S、stdin null、stdout/stderr 接日志文件（超 5 MiB 先轮转为 `.1`）、
   独立进程组），置 `starting`，代际 +1（预占时递增），起就绪/等待线程。
   spawn 前先按 `S/daemon.pid` 尝试接管孤儿（见下），接管成功后正常 spawn。
+  spawn 前还做 schema 预检（§26.1.1）：库版本超出所带守护进程的支持范围 → 置 `incompatible`（不 spawn、不重试/不退避），不走 `crashed` 路径。
 - 孤儿接管（`reclaim_orphan`，至多一次，不递归）：应用被 force-quit/kill -9 后，
   旧守护进程可能以 ppid=1 的孤儿存活并继续占着状态目录。`start()` 在 spawn 前、
   以及等待线程收到退出码 3 时，各补一次接管（一次 `start()` 尝试至多触发其中一次成功路径）。
@@ -2546,8 +2582,9 @@ worker 会话 id 为 `worker-<ticketId>`。
 
 ### 26.5 会话路径白名单
 
-`Config.extra_roots` 放入 `<data_dir>/superagent/sessions`
-（`data_dir` 与 §26.1 同口径）。`validate_session_path` 依次尝试
+`Config.extra_roots` 放入 `<state>/sessions`，其中 `<state>` 为
+`$OMP_RESUME_SUPERAGENT_STATE_DIR`（非空时），否则 release 构建为 `<data_dir>/superagent`、
+debug 构建为 `<data_dir>/superagent-dev`（与 §26.1 同口径）。`validate_session_path` 依次尝试
 `[sessions_dir] + extra_roots`，取第一个满足 `strip_prefix` 的根，
 之后的形状校验原样不动（见 §6 条目 4）。扫描（列表/菜单栏/清理）
 仍然只看 `sessions_dir`。

@@ -1000,7 +1000,14 @@ export interface AppPaths {
 
 // Superagent（CONTRACT §26）：守护进程托管状态 + HTTP 代理响应。
 
-export type SuperagentState = "disabled" | "starting" | "running" | "stopping" | "stopped" | "crashed";
+export type SuperagentState = "disabled" | "starting" | "running" | "stopping" | "stopped" | "crashed" | "incompatible";
+
+/** 守护进程 preflight 发现的状态库版本三元组（`state` 为库版本，`oldest..newest` 为本次支持区间）。 */
+export interface SuperagentSchema {
+  state: number;
+  oldest: number;
+  newest: number;
+}
 
 export interface SuperagentStatus {
   state: SuperagentState;
@@ -1014,6 +1021,10 @@ export interface SuperagentStatus {
   logPath: string;
   assetsDir: string | null;
   ompBin: string | null;
+  /** Preflight schema 报告：正常时 absent/null；`incompatible` 时携带真实版本号。 */
+  schema?: SuperagentSchema | null;
+  /** 最近一次改用新状态目录的归档绝对路径；下次成功启动后清掉。 */
+  archivedTo?: string | null;
 }
 
 export interface SuperagentResponse {

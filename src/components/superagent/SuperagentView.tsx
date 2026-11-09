@@ -25,6 +25,7 @@ const STATE_TITLE: Record<Exclude<SuperagentState, "running">, string> = {
   stopping: "正在停止…",
   stopped: "已停止",
   crashed: "守护进程异常退出",
+  incompatible: "状态库版本不匹配",
 };
 
 export function SuperagentView({ onOpenSession, onNavigate }: SuperagentViewProps) {

@@ -254,3 +254,15 @@
 - 删除用量页（`StatsView`，`get_usage_stats`）、运行健康页（`HealthBoard`，`get_usage_health`）与菜单栏「今日花费」（原生菜单花费行、面板头部、`showCost` 设置）；命令总数 88 → 86。
 - 保留单会话「本次用量」（`get_session_usage`）与模型测试器 bench 图表及「日常实测」列（`model_perf_list`）。
 - 旧 `settings.json` 中的 `showCost` 键仍可加载但被忽略。
+
+## D13：Superagent 状态库 schema 与发布版本解耦（2026-11-09）
+
+实测故障：已发布 0.8.0 所带守护进程仅支持 schema ≤11，而真实状态库已被 dev 构建迁移到 13，
+守护进程以 `Unsupported orchestrator database version 13` 反复崩溃（restarts 14），退避重启永不收敛。
+决策分两部分：① dev/prod 状态目录分离（`superagent-dev` vs `superagent`，首次运行时一次性从生产库复制
+sqlite 及 `-wal`/`-shm` 附属文件；`OMP_RESUME_SUPERAGENT_STATE_DIR` 可覆盖）；② spawn 前 schema 预检：
+`--print-schema` 取守护进程支持范围，不兼容则置 `incompatible`（不 spawn、不重试，`lastError` 给中文指引），
+守护进程自保退出码 78，`superagent_reset_state` 把旧目录改名归档（`schema-<版本>-<时间>`，永不删除）后重建启动。
+后果：已发布应用永不与更新的库静默死斗；dev 构建再也动不了生产库的 schema。
+
+- 后续收口：通道分离暴露出两处仍写死 release 口径的地方，均已改为随状态目录走——`Config.extra_roots` 改由 `superagent::paths::state_dir_for_with_override` 派生（dev 会话不再被判 `OUTSIDE_ROOT`）；超长路径的 socket 回退改按状态目录区分（`/tmp/omp-superagent-<uid>-<disc>/daemon.sock`，`<disc>` 为 `sha256(状态目录)` 前 8 hex），dev/release 永不共用一个回退 socket。

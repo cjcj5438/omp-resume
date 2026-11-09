@@ -51,6 +51,12 @@ struct Inner {
     restarts: u32,
     crashes: u32,
     last_error: Option<String>,
+    /// schema 失配明细：只在预检拦停（`Incompatible`）时为 `Some`，
+    /// 手动 `restart`/`set_enabled(true)` 重跑预检前清掉。
+    schema: Option<crate::model::SuperagentSchema>,
+    /// 最近一次一键恢复的归档目录绝对路径：`reset_state` 写入，
+    /// 下次成功 spawn 后清掉（`last_error` 不掺这个路径：服务页把它渲染成「最近错误」）。
+    archived_to: Option<String>,
     /// 代际：每次 `start`/`stop` 递增，旧线程凭此自杀。
     generation: u64,
     /// 存活的子进程句柄（等待线程接管后为 None）。
@@ -65,6 +71,9 @@ pub struct Supervisor {
     app: Option<tauri::AppHandle>,
     data_dir: PathBuf,
     inner: Arc<Mutex<Inner>>,
+    /// `--print-schema` 探测缓存：一次 spawn 开销只付一次，进程内有效。
+    /// 守护进程版本随应用版本固定，运行中不会变化。
+    daemon_schema: Arc<Mutex<Option<(u32, u32)>>>,
 }
 
 impl Supervisor {
@@ -95,10 +104,13 @@ impl Supervisor {
                 restarts: 0,
                 crashes: 0,
                 last_error: None,
+                schema: None,
+                archived_to: None,
                 generation: 0,
                 child: None,
                 started_instant: None,
             })),
+            daemon_schema: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -119,12 +131,36 @@ impl Supervisor {
         }
     }
 
+    /// 守护进程 schema 范围（带进程内缓存）：`--print-schema` 的 spawn 开销
+    /// 只付一次。探测与 spawn 环境一致，失败 ⇒ `None`（预检按 `Unknown` 放行）。
+    fn daemon_schema_cached(
+        &self,
+        assets: &std::path::Path,
+        omp: &std::path::Path,
+    ) -> Option<(u32, u32)> {
+        if let Some(cached) = *self
+            .daemon_schema
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            return Some(cached);
+        }
+        let probed = super::schema::daemon_schema(assets, omp);
+        if let Some(range) = probed {
+            *self
+                .daemon_schema
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(range);
+        }
+        probed
+    }
+
     /// 当前状态快照（供命令层与前端轮询）。
     ///
     /// 只持锁做字段拷贝：`resolve_omp`/`assets_dir` 的文件探测在锁外执行，
     /// 避免 3 秒一次的轮询与启停路径互相拖慢。
     pub fn status(&self) -> SuperagentStatus {
-        let (state, enabled, pid, started_at, restarts, last_error) = {
+        let (state, enabled, pid, started_at, restarts, last_error, schema, archived_to) = {
             let inner = self.lock();
             (
                 inner.state,
@@ -133,6 +169,8 @@ impl Supervisor {
                 inner.started_at.clone(),
                 inner.restarts,
                 inner.last_error.clone(),
+                inner.schema.clone(),
+                inner.archived_to.clone(),
             )
         };
         let state_dir = self.state_dir();
@@ -149,6 +187,8 @@ impl Supervisor {
             log_path: super::paths::log_path(&state_dir).display().to_string(),
             assets_dir: self.assets_dir().map(|p| p.display().to_string()),
             omp_bin,
+            schema,
+            archived_to,
         }
     }
 
@@ -161,6 +201,8 @@ impl Supervisor {
         {
             let mut inner = self.lock();
             inner.enabled = enabled;
+            // 重跑预检前清掉旧的失配明细（stop() 不碰它）。
+            inner.schema = None;
         }
         if enabled {
             // start() 失败（找不到 omp/资源目录）时返回 Err，但 enabled
@@ -178,7 +220,44 @@ impl Supervisor {
             return Err(AppError::new(ErrorCode::InvalidInput, "Superagent 未启用"));
         }
         self.stop();
+        // 重跑预检前清掉旧的失配明细（stop() 不碰它）。
+        self.lock().schema = None;
         self.start()?;
+        Ok(self.status())
+    }
+
+    /// 一键恢复：仅在 `Incompatible` 时可用。把整个状态目录改名归档
+    /// （`<state_dir>.schema-<n>-<YYYYMMDD-HHMMSS>`，永不删除），重建空目录
+    /// 后重启守护进程，返回新状态。归档名冲突时追加 `-2`、`-3`…。
+    /// 归档路径进 `archived_to`（服务页单独展示）；`last_error` 留给新目录的
+    /// 启动结果，不掺归档路径。
+    pub fn reset_state(&self) -> AppResult<SuperagentStatus> {
+        let schema = {
+            let inner = self.lock();
+            if !matches!(inner.state, SuperagentState::Incompatible) || inner.schema.is_none() {
+                return Err(AppError::new(
+                    ErrorCode::InvalidInput,
+                    "当前状态无需重置：仅 schema 不兼容时可用",
+                ));
+            }
+            inner.schema.clone().expect("checked above")
+        };
+        self.stop();
+        let state_dir = self.state_dir();
+        let archived = archive_state_dir(&state_dir, schema.state)?;
+        append_log_line(
+            &super::paths::log_path(&state_dir),
+            &format!(
+                "[supervisor] archived incompatible state dir (schema {}) to {}",
+                schema.state,
+                archived.display()
+            ),
+        );
+        // 重跑预检前清掉旧的失配明细（stop() 不碰它）。
+        self.lock().schema = None;
+        self.start()?;
+        // start() 的预占已清掉旧 archived_to：这里记下本轮的新归档。
+        self.lock().archived_to = Some(archived.display().to_string());
         Ok(self.status())
     }
 
@@ -240,6 +319,8 @@ impl Supervisor {
             inner.state = SuperagentState::Starting;
             inner.pid = None;
             inner.last_error = None;
+            // 旧的归档路径不留到下一轮：reset 的新值由 reset_state 在 start 之后写。
+            inner.archived_to = None;
             inner.generation += 1;
         }
         let generation = self.lock().generation;
@@ -278,6 +359,43 @@ impl Supervisor {
         let log_path = super::paths::log_path(&state_dir);
         let socket_path = super::paths::socket_path(&state_dir);
         let daemon_js = assets.join("dist/daemon.js");
+        // debug 首次运行：把生产库拷进 `superagent-dev/`（幂等，见 `paths`）。
+        if super::paths::seed_dev_state_dir(&self.data_dir) {
+            let _ = std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(log_path.parent().unwrap_or(&state_dir));
+            append_log_line(
+                &log_path,
+                "[supervisor] seeded superagent-dev from production superagent state",
+            );
+            eprintln!("superagent: 已从生产状态目录拷入 superagent-dev（仅 debug 首次运行）");
+        }
+        // schema 预检：拦住必定秒退的启动（低版本守护进程打不开高版本库），
+        // 置 `Incompatible` 并停住——不定退避、不 spawn、不碰生产库。
+        // 探测（`--print-schema` 子进程）在锁外跑，最长 10 秒。
+        {
+            let daemon = self.daemon_schema_cached(&assets, &omp);
+            let state_db = super::schema::read_state_schema(&super::schema::db_path(&state_dir));
+            match (super::schema::check(state_db, daemon), daemon) {
+                (super::schema::Check::Compatible | super::schema::Check::Unknown, _) => {}
+                (mismatch, Some((oldest, newest))) => {
+                    let mut inner = self.lock();
+                    if inner.generation == generation {
+                        let (schema, last_error) = mismatch_status(mismatch, oldest, newest);
+                        inner.state = SuperagentState::Incompatible;
+                        inner.schema = Some(schema);
+                        inner.last_error = Some(last_error);
+                    }
+                    return Ok(());
+                }
+                // 失配结论必然带着守护进程范围：此分支不可达，保守放行。
+                (_, None) => {}
+            }
+            if self.is_stale_generation(generation) {
+                return Ok(());
+            }
+        }
         // 接管日志先于目录创建：`append_log_line` 不建父目录，spawn 前接管
         // 时 logs/ 可能尚不存在——这里预建目录（0700），失败则跳过接管日志
         // （接管本身不受影响，spawn 慢路径会再建一次并报错）。
@@ -843,6 +961,7 @@ impl Supervisor {
             app: self.app.clone(),
             data_dir: self.data_dir.clone(),
             inner: Arc::clone(&self.inner),
+            daemon_schema: Arc::clone(&self.daemon_schema),
         };
         let _ = std::thread::Builder::new()
             .name("superagent-wait".to_string())
@@ -1092,6 +1211,7 @@ struct SelfHandle {
     app: Option<tauri::AppHandle>,
     data_dir: PathBuf,
     inner: Arc<Mutex<Inner>>,
+    daemon_schema: Arc<Mutex<Option<(u32, u32)>>>,
 }
 
 impl SelfHandle {
@@ -1101,6 +1221,7 @@ impl SelfHandle {
             app: self.app.clone(),
             data_dir: self.data_dir.clone(),
             inner: Arc::clone(&self.inner),
+            daemon_schema: Arc::clone(&self.daemon_schema),
         };
         supervisor.on_child_exit(generation, status);
     }
@@ -1206,6 +1327,76 @@ fn last_log_line(path: &std::path::Path) -> Option<String> {
 /// 当前 UTC 时间（ISO-8601 毫秒，与 CONTRACT §0 一致）。
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// 失配结论 →（状态明细，前端展示的中文文案）。调用方保证只传失配变体。
+fn mismatch_status(
+    mismatch: super::schema::Check,
+    oldest: u32,
+    newest: u32,
+) -> (crate::model::SuperagentSchema, String) {
+    let state = match mismatch {
+        super::schema::Check::TooNew { state, .. } | super::schema::Check::TooOld { state, .. } => {
+            state
+        }
+        super::schema::Check::Compatible | super::schema::Check::Unknown => {
+            unreachable!("mismatch_status 只接受失配结论")
+        }
+    };
+    let schema = crate::model::SuperagentSchema {
+        state,
+        oldest,
+        newest,
+    };
+    let message = match mismatch {
+        super::schema::Check::TooNew { .. } => format!(
+            "状态库 schema {state} 高于本版本守护进程支持的 {newest}：请安装与状态库匹配的版本，或点「改用新状态目录」以保留旧目录并重新开始（旧目录会改名保留）"
+        ),
+        super::schema::Check::TooOld { .. } => format!(
+            "状态库 schema {state} 低于本版本守护进程可迁移的 {oldest}：请点「改用新状态目录」以保留旧目录并重新开始（旧目录会改名保留）"
+        ),
+        super::schema::Check::Compatible | super::schema::Check::Unknown => {
+            unreachable!("mismatch_status 只接受失配结论")
+        }
+    };
+    (schema, message)
+}
+
+/// 把状态目录改名归档并重建空目录，返回归档路径。
+///
+/// 归档名 `<state_dir>.schema-<n>-<YYYYMMDD-HHMMSS>`（本地时间），冲突时追加
+/// `-2`、`-3`…。归档目录永不删除；重建失败时尝试把改名还原（`rename` 回去），
+/// 还原失败也如实报错，不静默丢状态。
+fn archive_state_dir(state_dir: &std::path::Path, state_schema: u32) -> AppResult<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let mut target = {
+        let mut name = state_dir.as_os_str().to_os_string();
+        name.push(format!(".schema-{state_schema}-{stamp}"));
+        PathBuf::from(name)
+    };
+    for suffix in 2u32.. {
+        if !target.exists() {
+            break;
+        }
+        let mut name = state_dir.as_os_str().to_os_string();
+        name.push(format!(".schema-{state_schema}-{stamp}-{suffix}"));
+        target = PathBuf::from(name);
+    }
+    std::fs::rename(state_dir, &target)
+        .map_err(|e| AppError::new(ErrorCode::Io, format!("归档状态目录失败：{e}")))?;
+    if let Err(e) = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(state_dir)
+    {
+        let _ = std::fs::rename(&target, state_dir);
+        return Err(AppError::new(
+            ErrorCode::Io,
+            format!("重建状态目录失败：{e}"),
+        ));
+    }
+    Ok(target)
 }
 
 /// 孤儿接管结果。
@@ -1440,6 +1631,12 @@ mod tests {
             let script = format!(
                 r#"#!/bin/sh
 echo "$*" >> "{argv}"
+for a in "$@"; do
+  if [ "$a" = "--print-schema" ]; then
+    if [ -f "{schema_range}" ]; then cat "{schema_range}"; else echo "no schema here"; fi
+    exit 0
+  fi
+done
 BEHAVIOR=$(cat "{behavior}")
 case "$BEHAVIOR" in
   serve)
@@ -1474,6 +1671,7 @@ exit 99
 "#,
                 argv = dir.path().join("argv.log").display(),
                 behavior = behavior_file.display(),
+                schema_range = dir.path().join("schema-range").display(),
             );
             std::fs::write(&bin, script).unwrap();
             std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1508,6 +1706,24 @@ exit 99
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+        }
+
+        /// 假守护进程的 `--print-schema` 应答范围（不调则无 schema 行 ⇒ `Unknown`）。
+        fn set_daemon_schema(&self, oldest: u32, newest: u32) {
+            std::fs::write(
+                self.dir().join("schema-range"),
+                format!("schema {{\"schema\":{newest},\"oldest\":{oldest}}}\n"),
+            )
+            .unwrap();
+        }
+
+        /// 假 omp 收到的调用参数（每行一次调用），供「未 spawn」断言。
+        fn argv_lines(&self) -> Vec<String> {
+            std::fs::read_to_string(self.dir().join("argv.log"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
         }
     }
     impl Drop for Fixture {
@@ -2036,5 +2252,195 @@ exit 99
         );
         let _ = other.kill();
         let _ = other.wait();
+    }
+
+    /// 在状态目录里写一个 `kv('schema', v)` 的库（`store.ts` 同款写入口径）。
+    fn write_state_db(state_dir: &std::path::Path, schema: u32) {
+        std::fs::create_dir_all(state_dir).unwrap();
+        let conn = rusqlite::Connection::open(state_dir.join("superagent.sqlite")).unwrap();
+        conn.execute(
+            "CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO kv VALUES ('schema', ?1)", [schema.to_string()])
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_too_new_parks_incompatible_without_spawn_or_retry() {
+        let _guard = env_guard();
+        let fx = Fixture::new("sleep");
+        fx.set_daemon_schema(10, 11);
+        write_state_db(&fx.supervisor.state_dir(), 13);
+        fx.supervisor.set_enabled(true).unwrap();
+        fx.wait_state(SuperagentState::Incompatible, Duration::from_secs(15));
+        let st = fx.supervisor.status();
+        assert_eq!(st.pid, None);
+        assert_eq!(st.restarts, 0);
+        let schema = st.schema.clone().expect("失配明细缺失");
+        assert_eq!((schema.state, schema.oldest, schema.newest), (13, 10, 11));
+        let err = st.last_error.as_deref().expect("last_error 缺失");
+        assert!(err.contains("13"), "{err:?}");
+        assert!(err.contains("11"), "{err:?}");
+        assert!(err.contains("改用新状态目录"), "{err:?}");
+        // 只跑过 `--print-schema` 探测：真正的 daemon spawn（带 `--state-dir`）一次没有。
+        // 假子进程落 argv.log 与父进程置 Incompatible 有竞态：轮询等探测行出现。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let argv = loop {
+            let argv = fx.argv_lines();
+            if !argv.is_empty() {
+                break argv;
+            }
+            assert!(Instant::now() < deadline, "探测都没跑？");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            argv.iter().all(|line| line.contains("--print-schema")),
+            "拦停后仍有 spawn：{argv:?}"
+        );
+        // 无退避重试：50ms 退避下等 300ms，调用次数与状态都不变。
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(fx.supervisor.status().state, SuperagentState::Incompatible);
+        assert_eq!(fx.supervisor.status().restarts, 0);
+        assert_eq!(fx.argv_lines(), argv);
+    }
+
+    #[test]
+    fn schema_too_old_parks_and_compatible_proceeds() {
+        let _guard = env_guard();
+        // 库 9 < 下限 10：拦停。
+        let fx = Fixture::new("sleep");
+        fx.set_daemon_schema(10, 13);
+        write_state_db(&fx.supervisor.state_dir(), 9);
+        fx.supervisor.set_enabled(true).unwrap();
+        fx.wait_state(SuperagentState::Incompatible, Duration::from_secs(15));
+        let st = fx.supervisor.status();
+        let schema = st.schema.clone().expect("失配明细缺失");
+        assert_eq!((schema.state, schema.oldest, schema.newest), (9, 10, 13));
+        let err = st.last_error.as_deref().expect("last_error 缺失");
+        assert!(err.contains('9') && err.contains("10"), "{err:?}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let argv = fx.argv_lines();
+            assert!(
+                argv.iter().all(|l| l.contains("--print-schema")),
+                "{argv:?}"
+            );
+            if !argv.is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "探测都没跑？");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // 库 12 在范围内：正常 spawn（sleep 行为 → Starting，有 pid）。
+        let fx2 = Fixture::new("sleep");
+        fx2.set_daemon_schema(10, 13);
+        write_state_db(&fx2.supervisor.state_dir(), 12);
+        fx2.supervisor.set_enabled(true).unwrap();
+        fx2.wait_state(SuperagentState::Starting, Duration::from_secs(15));
+        let st2 = fx2.supervisor.status();
+        assert!(st2.pid.is_some());
+        assert_eq!(st2.schema, None);
+        // 假子进程落 argv.log 与父进程置 Starting 有竞态：轮询等一行 spawn 记录。
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if fx2.argv_lines().iter().any(|l| l.contains("--state-dir")) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "spawn 记录缺失：{:?}",
+                fx2.argv_lines()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn reset_state_archives_and_restarts() {
+        let _guard = env_guard();
+        let fx = Fixture::new("sleep");
+        fx.set_daemon_schema(10, 11);
+        let state_dir = fx.supervisor.state_dir();
+        write_state_db(&state_dir, 13);
+        std::fs::write(state_dir.join("daemon.pid"), "4242\n").unwrap();
+        fx.supervisor.set_enabled(true).unwrap();
+        fx.wait_state(SuperagentState::Incompatible, Duration::from_secs(15));
+        let st = fx.supervisor.reset_state().unwrap();
+        // 新状态目录是干净的：旧库不在了，守护进程（sleep 行为）正常起。
+        assert!(!state_dir.join("superagent.sqlite").exists());
+        assert_eq!(st.schema, None);
+        // 归档路径进 `archived_to`（绝对路径），`last_error` 留给新目录、不掺路径。
+        let archived_to = st.archived_to.clone().expect("archived_to 缺失");
+        assert!(
+            std::path::Path::new(&archived_to).is_absolute(),
+            "{archived_to:?}"
+        );
+        assert_eq!(st.last_error, None);
+        fx.wait_state(SuperagentState::Starting, Duration::from_secs(15));
+        assert!(fx.supervisor.status().pid.is_some());
+        // 归档目录：`<state>.schema-13-<stamp>`，旧库在里面，永不删除；
+        // 且与 `archived_to` 是同一个目录。
+        let prefix = format!(
+            "{}.schema-13-",
+            state_dir.file_name().unwrap().to_string_lossy()
+        );
+        let archived: Vec<_> = std::fs::read_dir(state_dir.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(&prefix))
+            })
+            .collect();
+        assert_eq!(archived.len(), 1, "归档目录数量不对：{archived:?}");
+        assert_eq!(archived[0].display().to_string(), archived_to);
+        assert_eq!(
+            super::super::schema::read_state_schema(&archived[0].join("superagent.sqlite")),
+            Some(13)
+        );
+        assert!(archived[0].join("daemon.pid").exists());
+        // 非 Incompatible 时拒绝。
+        let err = fx.supervisor.reset_state().unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        // 下次成功启动后旧归档路径不再残留。
+        fx.supervisor.restart().unwrap();
+        fx.wait_state(SuperagentState::Starting, Duration::from_secs(15));
+        assert_eq!(fx.supervisor.status().archived_to, None);
+    }
+
+    #[test]
+    fn reset_state_refused_when_not_incompatible() {
+        let _guard = env_guard();
+        let fx = Fixture::new("sleep");
+        let err = fx.supervisor.reset_state().unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+        // 正常启动后同样拒绝。
+        fx.supervisor.set_enabled(true).unwrap();
+        fx.wait_state(SuperagentState::Starting, Duration::from_secs(15));
+        let err = fx.supervisor.reset_state().unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn archive_name_conflicts_get_numeric_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("superagent");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::write(state_dir.join("superagent.sqlite"), b"db").unwrap();
+        let first = archive_state_dir(&state_dir, 13).unwrap();
+        assert!(first.join("superagent.sqlite").exists());
+        assert!(state_dir.is_dir());
+        assert_eq!(std::fs::read_dir(&state_dir).unwrap().count(), 0);
+        // 同一秒内再归档一次：若时间戳相同则追加 `-2`，一定得到不同目录。
+        std::fs::write(state_dir.join("superagent.sqlite"), b"db2").unwrap();
+        let second = archive_state_dir(&state_dir, 13).unwrap();
+        assert_ne!(first, second);
+        assert!(second.join("superagent.sqlite").exists());
+        for archived in [&first, &second] {
+            let name = archived.file_name().unwrap().to_string_lossy();
+            assert!(name.starts_with("superagent.schema-13-"), "{name:?}");
+        }
     }
 }

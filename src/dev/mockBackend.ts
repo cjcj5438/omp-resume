@@ -1222,7 +1222,19 @@ export async function installMockBackend(): Promise<MockHandle> {
     logPath: "/mock/superagent/logs/daemon.log",
     assetsDir: "/mock/superagent-assets",
     ompBin: "/mock/omp",
+    schema: null,
+    archivedTo: null,
   };
+  // `?superagent=incompatible`：preflight 不匹配场景，服务页展示版本横幅。
+  if (params.get("superagent") === "incompatible") {
+    superagent = {
+      ...superagent,
+      state: "incompatible",
+      lastError: "状态库 schema 13，本版本守护进程支持 10–11",
+      schema: { state: 13, oldest: 10, newest: 11 },
+      archivedTo: null,
+    };
+  }
 
   (window as unknown as { __ompMock?: unknown }).__ompMock = {
     calls: itermCalls,
@@ -1721,6 +1733,14 @@ export async function installMockBackend(): Promise<MockHandle> {
       case "superagent_restart": {
         if (!superagent.enabled) throw err("INVALID_INPUT", "Superagent 未启用");
         superagent = { ...superagent, state: "running", restarts: superagent.restarts + 1 };
+        return structuredClone(superagent);
+      }
+      case "superagent_reset_state": {
+        if (superagent.state !== "incompatible") throw err("INVALID_INPUT", "当前状态无需改用新状态目录");
+        superagent = {
+          ...superagent, state: "running", pid: 4242, startedAt: "2026-11-02T10:00:00.000Z",
+          lastError: null, schema: null, archivedTo: "/mock/superagent.schema-13-20261109-120000",
+        };
         return structuredClone(superagent);
       }
       case "superagent_request":

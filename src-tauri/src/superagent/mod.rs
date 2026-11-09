@@ -4,14 +4,15 @@
 //! - `settings`：`<data_dir>/superagent.json` 启用开关
 //! - `paths`：状态目录 / socket / 日志 / 资源目录
 //! - `proxy`：经 unix socket 的最小 HTTP/1.1 客户端
+//! - `schema`：状态库 schema 预检（spawn 前比对库版本与守护进程支持范围）
 //! - `supervisor`：守护进程监管器（Tauri 全局单例）
 //!
-//! 5 个命令（CONTRACT §4.74–§4.78）：`superagent_status`、
+//! 6 个命令（CONTRACT §4.74–§4.79）：`superagent_status`、
 //! `superagent_set_enabled`、`superagent_restart`、`superagent_request`、
-//! `superagent_log_tail`。
-
+//! `superagent_log_tail`、`superagent_reset_state`。
 pub mod paths;
 pub mod proxy;
+pub mod schema;
 pub mod settings;
 pub mod supervisor;
 
@@ -45,6 +46,16 @@ pub async fn superagent_restart(
 ) -> AppResult<SuperagentStatus> {
     let supervisor = supervisor.inner().clone();
     crate::blocking(move || supervisor.restart()).await
+}
+
+/// schema 失配时的一键恢复：归档旧状态目录并重启，返回新状态。
+/// 仅 `Incompatible` 可用，其他状态拒绝（`INVALID_INPUT`）。
+#[tauri::command]
+pub async fn superagent_reset_state(
+    supervisor: tauri::State<'_, supervisor::Supervisor>,
+) -> AppResult<SuperagentStatus> {
+    let supervisor = supervisor.inner().clone();
+    crate::blocking(move || supervisor.reset_state()).await
 }
 
 /// 经守护进程 socket 转发 API 请求。守护进程非 `Running` 时直接

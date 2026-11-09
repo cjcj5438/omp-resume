@@ -524,7 +524,8 @@ pub fn run() {
             superagent::superagent_set_enabled,
             superagent::superagent_restart,
             superagent::superagent_request,
-            superagent::superagent_log_tail
+            superagent::superagent_log_tail,
+            superagent::superagent_reset_state
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

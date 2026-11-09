@@ -18,7 +18,11 @@ pub struct Config {
 /// 解析配置：`--sessions-dir <p>` 参数 > `OMP_RESUME_SESSIONS_DIR` >
 /// `$HOME/.omp/agent/sessions`；`ownersDir` 为 `OMP_RESUME_OWNERS_DIR` >
 /// `$HOME/.omp/run/session-owners`；`extra_roots` 为 Superagent 会话目录
-/// `<data_dir>/superagent/sessions`（`data_dir` 与 `meta::data_dir` 同口径）。
+/// `<state>/sessions`，其中 `state` 与 supervisor 同规则（见
+/// `superagent::paths::state_dir_for_with_override`）：`env` 闭包提供的
+/// `OMP_RESUME_SUPERAGENT_STATE_DIR` 覆盖（绝对路径）优先，否则 debug 构建
+/// 用 `<data_dir>/superagent-dev`、release 用 `<data_dir>/superagent`
+/// （`data_dir` 与 `meta::data_dir` 同口径）。
 pub fn resolve_with(
     sessions_dir_arg: Option<String>,
     env: impl Fn(&str) -> Option<String>,
@@ -35,10 +39,18 @@ pub fn resolve_with(
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join("Library/Application Support/omp-resume"));
+    // 状态目录覆盖经可注入的 `env` 闭包读取（不碰真实进程环境）：与
+    // supervisor 同源，单测无需串行化即可覆盖各分支。
+    let override_dir = env(crate::superagent::paths::STATE_DIR_ENV).map(PathBuf::from);
     Config {
         sessions_dir,
         owners_dir,
-        extra_roots: vec![data_dir.join("superagent/sessions")],
+        extra_roots: vec![crate::superagent::paths::state_dir_for_with_override(
+            &data_dir,
+            cfg!(debug_assertions),
+            override_dir.as_deref(),
+        )
+        .join("sessions")],
     }
 }
 
@@ -251,19 +263,99 @@ mod tests {
 
     #[test]
     fn resolve_sets_superagent_extra_root() {
+        // `cargo test` 开 debug_assertions：默认进 `superagent-dev` 通道。
         let home = Path::new("/home/u");
         let c = resolve_with(None, env_of(HashMap::new()), home);
+        let channel = if cfg!(debug_assertions) {
+            "superagent-dev"
+        } else {
+            "superagent"
+        };
         assert_eq!(
             c.extra_roots,
-            vec![
-                Path::new("/home/u/Library/Application Support/omp-resume/superagent/sessions")
-                    .to_path_buf()
-            ]
+            vec![home
+                .join("Library/Application Support/omp-resume")
+                .join(channel)
+                .join("sessions")]
         );
         let mut m = HashMap::new();
         m.insert("OMP_RESUME_DATA_DIR".into(), "/d".into());
         let c = resolve_with(None, env_of(m), home);
-        assert_eq!(c.extra_roots, vec![PathBuf::from("/d/superagent/sessions")]);
+        assert_eq!(
+            c.extra_roots,
+            vec![PathBuf::from(format!("/d/{channel}/sessions"))]
+        );
+    }
+
+    #[test]
+    fn extra_root_follows_state_dir_channels() {
+        // 与 supervisor 共用的通道规则：dev → `superagent-dev`，release →
+        // `superagent`（release 路径与改动前字节一致）；经可注入内核断言，
+        // 不依赖当前构建的 `cfg!(debug_assertions)`。
+        use crate::superagent::paths::state_dir_for_with_override;
+        let data = Path::new("/d");
+        assert_eq!(
+            state_dir_for_with_override(data, false, None).join("sessions"),
+            PathBuf::from("/d/superagent/sessions")
+        );
+        assert_eq!(
+            state_dir_for_with_override(data, true, None).join("sessions"),
+            PathBuf::from("/d/superagent-dev/sessions")
+        );
+    }
+
+    #[test]
+    fn extra_root_override_wins_over_channel() {
+        // `OMP_RESUME_SUPERAGENT_STATE_DIR` 覆盖经可注入 `env` 闭包生效，
+        // 任意通道下都优先（绝对路径）；相对/空值忽略、回通道默认。
+        let home = Path::new("/home/u");
+        for (value, expected) in [
+            ("/custom/state", "/custom/state/sessions"),
+            ("relative/path", "CHANNEL"),
+            ("", "CHANNEL"),
+        ] {
+            let mut m = HashMap::new();
+            m.insert("OMP_RESUME_DATA_DIR".into(), "/d".into());
+            m.insert(crate::superagent::paths::STATE_DIR_ENV.into(), value.into());
+            let c = resolve_with(None, env_of(m), home);
+            let expected = if expected == "CHANNEL" {
+                let channel = if cfg!(debug_assertions) {
+                    "superagent-dev"
+                } else {
+                    "superagent"
+                };
+                PathBuf::from(format!("/d/{channel}/sessions"))
+            } else {
+                PathBuf::from(expected)
+            };
+            assert_eq!(c.extra_roots, vec![expected], "override={value:?}");
+        }
+    }
+
+    // 仅 debug 构建断言 dev 通道（release 下 `resolve_with` 进 release 通道）。
+    #[cfg(debug_assertions)]
+    #[test]
+    fn validate_accepts_debug_channel_extra_root() {
+        // 端到端：debug 通道 extra root 下的 `.jsonl` 通过校验
+        // （此前硬编码 release 目录时此类路径报 OUTSIDE_ROOT）。
+        let t = tempfile::tempdir().unwrap();
+        let data = t.path().join("data");
+        let sessions = t.path().join("sessions");
+        std::fs::create_dir_all(sessions.join("proj")).unwrap();
+        let dev_sessions = data.join("superagent-dev/sessions");
+        std::fs::create_dir_all(dev_sessions.join("main")).unwrap();
+        let f = dev_sessions.join("main").join("x.jsonl");
+        std::fs::write(&f, "{}\n").unwrap();
+        let mut m = HashMap::new();
+        m.insert("OMP_RESUME_DATA_DIR".into(), data.to_str().unwrap().into());
+        m.insert(
+            "OMP_RESUME_SESSIONS_DIR".into(),
+            sessions.to_str().unwrap().into(),
+        );
+        let c = resolve_with(None, env_of(m), t.path());
+        assert_eq!(c.extra_roots, vec![dev_sessions.clone()]);
+        let got = validate_session_path(&c, f.to_str().unwrap()).unwrap();
+        assert_eq!(got, std::fs::canonicalize(&f).unwrap());
     }
 
     #[test]
