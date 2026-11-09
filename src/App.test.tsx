@@ -532,7 +532,7 @@ describe("omp 版本与更新", () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
-    expect(await screen.findByText("omp 18.11.1")).toBeInTheDocument();
+    expect(await screen.findByText("omp 18.16.0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "检查更新" })).toBeEnabled();
   });
 
@@ -540,20 +540,20 @@ describe("omp 版本与更新", () => {
     window.history.replaceState(null, "", "/?omp=new");
     await installMockBackend();
     render(<App />);
-    await screen.findByText("omp 18.11.1");
+    await screen.findByText("omp 18.16.0");
 
     fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
     const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
-    expect(within(dialog).getByText("可更新到 18.12.0")).toBeInTheDocument();
+    expect(within(dialog).getByText("可更新到 18.17.0")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "更新 omp" }));
-    expect(await within(dialog).findByText(/已更新到 18\.12\.0/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/已更新到 18\.17\.0/)).toBeInTheDocument();
   });
 
   it("已是最新版本时对话框显示最新状态", async () => {
     await installMockBackend();
     render(<App />);
-    await screen.findByText("omp 18.11.1");
+    await screen.findByText("omp 18.16.0");
 
     fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
     const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
@@ -565,7 +565,7 @@ describe("omp 版本与更新", () => {
     window.history.replaceState(null, "", "/?fail=omp_update_check");
     await installMockBackend();
     render(<App />);
-    await screen.findByText("omp 18.11.1");
+    await screen.findByText("omp 18.16.0");
 
     fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
     expect(await screen.findByText("mock 强制失败：omp_update_check")).toBeInTheDocument();

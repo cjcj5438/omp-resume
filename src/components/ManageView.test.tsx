@@ -221,7 +221,7 @@ describe("全部更新", () => {
     await screen.findByRole("button", { name: "全部更新" });
     fireEvent.click(screen.getByRole("button", { name: "全部更新" }));
     const dialog = await screen.findByRole("dialog", { name: "omp 版本更新" });
-    expect(within(dialog).getByText("可更新到 18.12.0")).toBeInTheDocument();
+    expect(within(dialog).getByText("可更新到 18.17.0")).toBeInTheDocument();
   });
 
   it("omp 已是最新时只记一行，不开对话框", async () => {
