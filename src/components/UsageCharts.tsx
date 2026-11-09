@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import type { UsageHealthTimelinePoint, UsageTrendUnit } from "../types";
+import type { UsageTrendUnit } from "../types";
 import type { BenchBucket } from "../modelBench";
 import { formatRate, formatTps, formatUsd, usageNumber } from "../format";
-import { barHeights, cacheHitSeries, formatErrorRate, formatHitRate, sparseIndexes, tickLabel } from "./usageFormat";
+import { barHeights, sparseIndexes, tickLabel } from "./usageFormat";
 import "./Usage.css";
 const W = 600;
 const H = 200;
@@ -14,7 +14,7 @@ const PLOT_H = 140;
 const BASE_Y = PLOT_TOP + PLOT_H;
 const AXIS_Y = 174;
 
-/** 横轴稀疏标注（3 张图共用，行为锁步）。 */
+/** 横轴稀疏标注（bench 两张图共用，行为锁步）。 */
 function ChartAxis({ keys, unit, centers }: { keys: string[]; unit: UsageTrendUnit; centers: number[] }) {
   return (
     <g aria-hidden="true">
@@ -51,96 +51,7 @@ function ChartBucket({ i, count, tip, children }: { i: number; count: number; ti
   );
 }
 
-/** 请求趋势：请求柱 + 错误叠加（警示色）+ 兜底小圆点。 */
-export function RequestsChart({ unit, points }: { unit: UsageTrendUnit; points: UsageHealthTimelinePoint[] }) {
-  const heights = barHeights(points.map((p) => p.requests), PLOT_H);
-  const { x, w, centers } = barStep(points.length);
-  const requests = points.reduce((a, p) => a + p.requests, 0);
-  const errors = points.reduce((a, p) => a + p.errors, 0);
-  const fallbacks = points.reduce((a, p) => a + p.fallbacks, 0);
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="chart"
-      role="img"
-      aria-label={`请求趋势：${points.length} ${unit === "hour" ? "小时" : "天"}，请求 ${usageNumber(requests)} 次，错误 ${usageNumber(errors)} 次，兜底 ${usageNumber(fallbacks)} 次`}
-    >
-      <line x1={PLOT_X} y1={BASE_Y} x2={PLOT_X + PLOT_W} y2={BASE_Y} className="chart-grid" />
-      {points.map((p, i) => {
-        const errH = p.requests > 0 && p.errors > 0 ? Math.max(2, Math.round((p.errors / p.requests) * heights[i])) : 0;
-        return (
-          <ChartBucket
-            key={p.key}
-            i={i}
-            count={points.length}
-            tip={`${p.key}\n请求 ${usageNumber(p.requests)} 次\n错误 ${usageNumber(p.errors)} 次（错误率 ${formatErrorRate(p.errors, p.requests)}）\n兜底 ${usageNumber(p.fallbacks)} 次`}
-          >
-            <rect x={x(i)} y={BASE_Y - heights[i]} width={w} height={heights[i]} className="chart-bar-soft" />
-            {errH > 0 ? <rect x={x(i)} y={BASE_Y - errH} width={w} height={errH} className="chart-bar-error" /> : null}
-            {p.fallbacks > 0 ? (
-              <circle cx={x(i) + w / 2} cy={Math.max(PLOT_TOP - 2, BASE_Y - heights[i] - 6)} r={3} className="chart-fb" />
-            ) : null}
-          </ChartBucket>
-        );
-      })}
-      <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
-    </svg>
-  );
-}
-
-/** 缓存命中率折线：无请求的桶断线。 */
-export function CacheHitChart({ unit, points }: { unit: UsageTrendUnit; points: UsageHealthTimelinePoint[] }) {
-  const series = cacheHitSeries(points);
-  const { centers } = barStep(points.length);
-  const y = (v: number): number => PLOT_TOP + (1 - v) * PLOT_H;
-  const runs: { i: number; v: number }[][] = [];
-  series.forEach((v, i) => {
-    if (v === null) return;
-    const last = runs[runs.length - 1];
-    if (last && last[last.length - 1].i === i - 1) last.push({ i, v });
-    else runs.push([{ i, v }]);
-  });
-  const valid = series.filter((v): v is number => v !== null);
-  const gaps = series.length - valid.length;
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="chart"
-      role="img"
-      aria-label={`缓存命中率趋势：${valid.length} 个桶有数据${gaps > 0 ? `，${gaps} 个桶无请求断线` : ""}${valid.length > 0 ? `，最高 ${formatHitRate(Math.max(...valid))}` : ""}`}
-    >
-      {[1, 0.5, 0].map((g) => (
-        <g key={g} aria-hidden="true">
-          <line x1={PLOT_X} y1={y(g)} x2={PLOT_X + PLOT_W} y2={y(g)} className="chart-grid" />
-          <text x={PLOT_X + PLOT_W - 4} y={y(g) - 4} textAnchor="end" className="chart-tick">
-            {formatHitRate(g)}
-          </text>
-        </g>
-      ))}
-      {runs.map((run, ri) => (
-        <polyline
-          key={ri}
-          points={run.map((p) => `${centers[p.i]},${y(p.v)}`).join(" ")}
-          className="chart-line"
-        />
-      ))}
-      {points.map((p, i) => {
-        const v = series[i];
-        const tip = v === null
-          ? `${p.key}\n无请求`
-          : `${p.key}\n命中率 ${formatHitRate(v)}\n缓存读 ${usageNumber(p.cacheRead)} · 输入 ${usageNumber(p.promptTokens)}`;
-        return (
-          <ChartBucket key={p.key} i={i} count={points.length} tip={tip}>
-            {v === null ? null : <circle cx={centers[i]} cy={y(v)} r={2.5} className="chart-dot" />}
-          </ChartBucket>
-        );
-      })}
-      <ChartAxis keys={points.map((p) => p.key)} unit={unit} centers={centers} />
-    </svg>
-  );
-}
-
-/** bench 成功率柱状图：无请求的桶不断线、画空位（与花费图同构）。 */
+/** bench 成功率柱状图：无请求的桶不断线、画空位。 */
 export function BenchRateChart({ unit, buckets }: { unit: UsageTrendUnit; buckets: BenchBucket[] }) {
   const heights = barHeights(buckets.map((b) => b.rate ?? 0), PLOT_H);
   const { x, w, centers } = barStep(buckets.length);
@@ -170,7 +81,7 @@ export function BenchRateChart({ unit, buckets }: { unit: UsageTrendUnit; bucket
   );
 }
 
-/** bench tok/s 折线：无成功轮次的桶断线（与缓存命中图同构）。 */
+/** bench tok/s 折线：无成功轮次的桶断线。 */
 export function BenchTpsChart({ unit, buckets }: { unit: UsageTrendUnit; buckets: BenchBucket[] }) {
   const values = buckets.map((b) => b.tps);
   const { centers } = barStep(buckets.length);

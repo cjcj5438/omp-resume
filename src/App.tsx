@@ -44,7 +44,6 @@ import { SessionMetaDialog } from "./components/SessionMetaDialog";
 import { ForkDialog } from "./components/ForkDialog";
 import { PromptHistoryView } from "./components/PromptHistoryView";
 import { ManageView } from "./components/ManageView";
-import { StatsView } from "./components/StatsView";
 import { StageView } from "./stage/StageView";
 import { CleanupView } from "./components/CleanupView";
 import { ChartTip } from "./components/ChartTip";
@@ -88,7 +87,7 @@ function App() {
   const [superagentTarget, setSuperagentTarget] = useState<{ id: string; seq: number } | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<DeleteTarget[] | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  // 路由栈：栈顶是当前路由；同族路由（usage/health、配置类）切换时常驻组件不卸载。
+  // 路由栈：栈顶是当前路由；配置类路由切换时常驻组件不卸载。
   const [history, setHistory] = useState<Route[]>(["sessions"]);
   const route = history[history.length - 1];
   const navigate = useCallback((next: Route) => {
@@ -639,20 +638,7 @@ function App() {
   );
 
   let page: React.ReactNode;
-  if (route === "usage" || route === "health") {
-    page = (
-      <StatsView
-        key="stats"
-        tab={route}
-        onToast={addToast}
-        sessionTitle={(path) => {
-          const s = byPath.get(path);
-          return s ? (meta?.sessions[s.id]?.alias ?? s.title) : null;
-        }}
-        onOpenSession={openSession}
-      />
-    );
-  } else if (isConfigRoute(route)) {
+  if (isConfigRoute(route)) {
     page = (
       <ManageView
         key="manage"

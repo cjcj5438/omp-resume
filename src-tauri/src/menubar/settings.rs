@@ -86,9 +86,6 @@ pub struct Settings {
     /// 菜单会话标题截断宽度（默认标准 32 字）。
     #[serde(default)]
     pub title_width: TitleWidth,
-    /// 显示今日花费行（默认开）。
-    #[serde(default = "default_true")]
-    pub show_cost: bool,
     /// 会话行追加项目名（默认关）。
     #[serde(default)]
     pub show_project: bool,
@@ -121,7 +118,6 @@ impl Default for Settings {
             notify_on_finish: false,
             badge_style: BadgeStyle::Count,
             title_width: TitleWidth::Standard,
-            show_cost: true,
             show_project: false,
             show_idle: true,
             compact_rows: false,
@@ -143,7 +139,6 @@ pub struct SettingsPatch {
     pub notify_on_finish: Option<bool>,
     pub badge_style: Option<BadgeStyle>,
     pub title_width: Option<TitleWidth>,
-    pub show_cost: Option<bool>,
     pub show_project: Option<bool>,
     pub show_idle: Option<bool>,
     pub compact_rows: Option<bool>,
@@ -169,9 +164,6 @@ impl SettingsPatch {
         }
         if let Some(v) = self.title_width {
             s.title_width = v;
-        }
-        if let Some(v) = self.show_cost {
-            s.show_cost = v;
         }
         if let Some(v) = self.show_project {
             s.show_project = v;
@@ -335,7 +327,6 @@ mod tests {
         assert_eq!(s.notify_on_finish, d.notify_on_finish);
         assert_eq!(s.badge_style, d.badge_style);
         assert_eq!(s.title_width, d.title_width);
-        assert_eq!(s.show_cost, d.show_cost);
         assert_eq!(s.show_project, d.show_project);
         assert_eq!(s.show_idle, d.show_idle);
         assert_eq!(s.compact_rows, d.compact_rows);
@@ -391,22 +382,36 @@ mod tests {
     fn patch_rejects_unknown_keys_and_applies_only_given() {
         // 未知键反序列化失败。
         let bad: Result<SettingsPatch, _> =
-            serde_json::from_str(r#"{"showCost":false,"typo":true}"#);
+            serde_json::from_str(r#"{"showProject":true,"typo":true}"#);
         assert!(bad.is_err(), "{bad:?}");
         // 只改传入的字段。
         let patch: SettingsPatch =
-            serde_json::from_str(r#"{"showCost":false,"badgeStyle":"dot"}"#).unwrap();
+            serde_json::from_str(r#"{"showProject":true,"badgeStyle":"dot"}"#).unwrap();
         let mut s = Settings::default();
         patch.apply(&mut s);
-        assert!(!s.show_cost);
+        assert!(s.show_project);
         assert_eq!(s.badge_style, BadgeStyle::Dot);
         assert_eq!(
             s,
             Settings {
-                show_cost: false,
+                show_project: true,
                 badge_style: BadgeStyle::Dot,
                 ..Settings::default()
             }
         );
+    }
+
+    #[test]
+    fn legacy_show_cost_key_is_ignored() {
+        // 旧文件带 "showCost"：无 deny_unknown_fields 的 Settings 经 flatten
+        // 忽略未知键，正常加载而不是回落默认。
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            settings_path(dir.path()),
+            r#"{"version":1,"showCost":false,"showProject":true}"#,
+        )
+        .unwrap();
+        let s = load(dir.path());
+        assert!(s.show_project);
     }
 }

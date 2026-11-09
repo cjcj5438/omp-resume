@@ -443,8 +443,6 @@ pub fn run() {
             stage::get_agent_stage,
             stage::list_running_sessions,
             usage::get_session_usage,
-            usage::get_usage_stats,
-            usage::get_usage_health,
             get_conversation,
             get_tree,
             check_session,

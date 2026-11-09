@@ -299,13 +299,6 @@ export function TrayView({ sessions, onOpenSession, onToast }: TrayViewProps) {
                     onChange={(v) => void update({ showSearch: v })}
                   />
                   <Switch
-                    label="显示今日花费"
-                    description="从 usage 记录汇总，不额外请求网络"
-                    checked={settings.showCost}
-                    disabled={disabled}
-                    onChange={(v) => void update({ showCost: v })}
-                  />
-                  <Switch
                     label="显示项目名"
                     description="在状态后面补充会话所属项目"
                     checked={settings.showProject}

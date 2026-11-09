@@ -2,10 +2,10 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.7.1-2f6feb)
+![version](https://img.shields.io/badge/version-0.8.0-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
-![tests](https://img.shields.io/badge/tests-2381%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-2326%20passing-2ea043)
 ![ui](https://img.shields.io/badge/UI-Chinese%20(zh--CN)-8b949e)
 
 > UI copy ships in Chinese today; this README is English. Screenshots are from the built-in demo backend, so no real session data is shown.
@@ -35,7 +35,7 @@ The design rule is simple: **omp owns the session, omp-resume owns the view.** W
 
 ## The shell
 
-The main window is a page-based shell: a left sidebar groups every feature into **会话** (sessions), **分析** (usage / health / cleanup / prompt history), **Agent Stage** (pixel office), **Superagent** (management panel / sessions / service), **环境配置** (models / agents / plugins / skills / MCP / memory), **工具** (model tester / cheat sheet) and **设置** (appearance & behavior / menu bar). Each session opens a **workspace** with three tabs — 概览 (overview), 对话 (conversation) and 树 (tree).
+The main window is a page-based shell: a left sidebar groups every feature into **会话** (sessions), **分析** (cleanup / prompt history), **Agent Stage** (pixel office), **Superagent** (management panel / sessions / service), **环境配置** (models / agents / plugins / skills / MCP / memory), **工具** (model tester / cheat sheet) and **设置** (appearance & behavior / menu bar). Each session opens a **workspace** with three tabs — 概览 (overview), 对话 (conversation) and 树 (tree).
 
 Global keys: **⌘K** command palette (search sessions and pages), **⌘B** collapse the sidebar, **⌘N** new session, **⌘,** settings. The sidebar footer shows the update state (checking / new version / failed / up to date) with the session count badge on the Sessions entry. The titlebar keeps the native macOS traffic lights (`trafficLightPosition` in `tauri.conf.json`).
 
@@ -57,15 +57,11 @@ Global keys: **⌘K** command palette (search sessions and pages), **⌘B** coll
 ![Sessions](docs/media/sessions.jpg)
 ![Tree](docs/media/tree.jpg)
 
-### Insight
+### Cleanup and history
 
-- **Usage dashboard** — cost, tokens, cache hit rate, tool time, per-project and per-model composition, heatmap, top sessions, trend lines over today / 24h / 7d / 30d / all time. Every number is derived from `usage` records already present in the JSONL.
-- **Runtime health board** — requests, errors and error types, fallback switches with destinations, cache-hit trend and per-model hit rate, plus the recent error log. A flaky upstream is visible without grepping transcripts.
 - **Cleanup candidates** — sessions that are empty, whose `cwd` no longer exists, that are unusually large or stale. Read-only scan; deletion still goes through the guarded delete path.
 - **Prompt history** — the prompt archive from omp's `history.db`, searchable, with jump-back-to-session.
 
-![Usage](docs/media/stats.jpg)
-![Health](docs/media/health.jpg)
 ![Cleanup](docs/media/cleanup.jpg)
 ![Prompt history](docs/media/history.jpg)
 
@@ -127,7 +123,7 @@ A searchable reference pinned to **omp 18.16.0** (see [Command manual](#command-
 
 The tray icon watches **sessions that are running right now** — determined from flock ownership plus the JSONL tail, never from mtime — and classifies them as `working` / `waiting for input` / `idle` / `possibly stuck`. It shows a compact badge (`2·1`), can notify you when a session starts waiting for input, and can focus the owning iTerm2 tab.
 
-Left-click opens a real **panel window** (`tray-panel`): today's cost, running sessions with native macOS status dots, search, a "new session" CTA, recent sessions and a mode switcher inline, plus a version row with quit. The panel hides on blur and toggles on repeat clicks (with a 250 ms blur/toggle race guard). Right-click opens the native menu instead (new/recent sessions, settings, quit), and the click behavior (panel vs main window) is configurable in the Menu Bar settings page. Session rows only focus the owning tab (`activate` + `select`); the new/recent entries open a new iTerm2 tab and run the command there via the same primitive as the main window (`ops::iterm::open_tab`). The tray never kills or signals processes, and never types into an existing tab.
+Left-click opens a real **panel window** (`tray-panel`): running sessions with native macOS status dots, search, a "new session" CTA, recent sessions and a mode switcher inline, plus a version row with quit. The panel hides on blur and toggles on repeat clicks (with a 250 ms blur/toggle race guard). Right-click opens the native menu instead (new/recent sessions, settings, quit), and the click behavior (panel vs main window) is configurable in the Menu Bar settings page. Session rows only focus the owning tab (`activate` + `select`); the new/recent entries open a new iTerm2 tab and run the command there via the same primitive as the main window (`ops::iterm::open_tab`). The tray never kills or signals processes, and never types into an existing tab.
 
 ### Appearance
 
@@ -144,7 +140,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.7.1_aarch64.dmg — macOS arm64
+# omp-resume_0.8.0_aarch64.dmg — macOS arm64
 ```
 
 The bundle is ad-hoc signed (no Developer ID, not notarized), so a browser-downloaded copy is quarantined and Gatekeeper blocks the first launch. Either open **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag once:
@@ -180,7 +176,7 @@ npm run check        # typecheck + vitest (app) + typecheck + vitest (superagent
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-The mock backend is a dev-only import that simulates all 88 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships. The Superagent panel is transport-driven and unusable under the mock (every `superagent_request` returns `SUPERAGENT_UNAVAILABLE`); only the service state machine is simulated.
+The mock backend is a dev-only import that simulates all 86 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=<command>`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships. The Superagent panel is transport-driven and unusable under the mock (every `superagent_request` returns `SUPERAGENT_UNAVAILABLE`); only the service state machine is simulated.
 
 ### Release
 
@@ -188,7 +184,7 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.7.1 && git push origin v0.7.1
+git tag v0.8.0 && git push origin v0.8.0
 ```
 
 Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle (including `superagent/dist`, built first via the workspace script) and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets — `/latest` only resolves to published releases.
@@ -205,7 +201,7 @@ Three layers of commands meet in this repo. They are verified differently — do
 |---|---|---|---|
 | **omp slash commands** | 91 entries in the cheat sheet: 88 in built-in groups (incl. `/seance`) + 3 bundled extensions; `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` | `src/ompCommands.test.ts` (existence, aliases, example rules) + manual RPC/TUI spot checks, see `src/ompCommands.ts` header |
 | **omp terminal subcommands** | 51 entries (`omp <name>`) in the cheat sheet | `omp --help` COMMANDS + per-command `omp <name> --help` on 18.16.0 | `src/ompCommands.test.ts` (uniqueness, alphabetical order, example shape) |
-| **omp-resume IPC commands** | 88 Tauri commands (§4.1–§4.80, §4.1 deleted) that the UI calls | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
+| **omp-resume IPC commands** | 86 Tauri commands (§4.1–§4.80, §4.1 deleted, get_usage_stats/get_usage_health deleted) that the UI calls | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
 
 Rules that follow from this:
 
@@ -227,7 +223,7 @@ flowchart LR
     end
 
     subgraph app["omp-resume"]
-        RS["Rust core<br/>88 IPC commands"]
+        RS["Rust core<br/>86 IPC commands"]
         UI["React UI<br/>shell pages · stage · panel"]
         MB["menu bar poller<br/>flock + JSONL tail"]
         SA["Superagent daemon<br/>omp run · unix socket"]
@@ -256,14 +252,14 @@ flowchart LR
 ### Repo layout
 
 ```
-src/                 React front end (81 test files, 758 tests)
+src/                 React front end (81 test files, 727 tests)
 src/stage/           Agent Stage: sprites, layout, scene, timeline
-src/components/      Views: sessions, insight, stage, config, tools, settings, superagent
+src/components/      Views: sessions, stage, config, tools, settings, superagent
 src/ompCommands.ts   Cheat sheet: slash registry pinned to omp 18.16.0
-src-tauri/src/       Rust core (527 tests, 88 IPC commands)
+src-tauri/src/       Rust core (503 tests, 86 IPC commands)
   sessions/          JSONL scan, tree building, conversation parsing
   stage/             Incremental cursors + actor state machine
-  usage/             Cost/token aggregation, redaction, caching
+  usage/             Per-session usage, redaction, caching
   memory/            Mnemopi bank reader
   menubar/           Tray poller, classifier, notifications
   ops/               Delete, iTerm2, branch markers

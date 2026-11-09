@@ -20,7 +20,6 @@ const SETTINGS: TraySettings = {
   notifyOnFinish: false,
   badgeStyle: "count",
   titleWidth: "standard",
-  showCost: true,
   showProject: false,
   showIdle: true,
   compactRows: false,
@@ -32,8 +31,6 @@ const SETTINGS: TraySettings = {
 const PREVIEW: TrayPreview = {
   ready: true,
   trayTitle: null,
-  costUsd: 1.2,
-  requestCount: 7,
   rows: [],
   overflow: [],
   recent: [],

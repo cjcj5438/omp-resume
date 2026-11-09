@@ -20,7 +20,6 @@ const SETTINGS: TraySettings = {
   notifyOnFinish: false,
   badgeStyle: "count",
   titleWidth: "standard",
-  showCost: true,
   showProject: false,
   showIdle: true,
   compactRows: false,
@@ -32,8 +31,6 @@ const SETTINGS: TraySettings = {
 const PREVIEW: TrayPreview = {
   ready: true,
   trayTitle: "1·0",
-  costUsd: 1.2,
-  requestCount: 7,
   rows: [{ sessionId: "s1", status: "working", title: "标题", project: null, subagents: 0, elapsedSecs: 120, enabled: true, disabledReason: null }],
   overflow: [],
   recent: [],
@@ -72,7 +69,7 @@ beforeEach(() => {
   __resetPresetsStore();
 });
 
-it("关闭「显示今日花费」后，set_tray_settings 收到补丁且界面采用返回值", async () => {
+it("打开「显示项目名」后，set_tray_settings 收到补丁且界面采用返回值", async () => {
   const seen: unknown[] = [];
   let current = { ...SETTINGS };
   mockIPC((cmd, args) => {
@@ -83,24 +80,21 @@ it("关闭「显示今日花费」后，set_tray_settings 收到补丁且界面�
       current = { ...current, ...a.patch };
       return structuredClone(current);
     }
-    if (cmd === "get_tray_preview") {
-      return { ...structuredClone(PREVIEW), costUsd: current.showCost ? PREVIEW.costUsd : null, requestCount: current.showCost ? PREVIEW.requestCount : null };
-    }
+    if (cmd === "get_tray_preview") return structuredClone(PREVIEW);
     throw `no handler for ${cmd}`;
   });
   render(<TrayView sessions={[session()]} onOpenSession={() => {}} onToast={() => {}} />);
 
-  const sw = await screen.findByRole("switch", { name: "显示今日花费" });
-  expect(sw).toHaveAttribute("aria-checked", "true");
+  const sw = await screen.findByRole("switch", { name: "显示项目名" });
+  expect(sw).toHaveAttribute("aria-checked", "false");
   fireEvent.click(sw);
 
-  await waitFor(() => expect(seen).toEqual([{ showCost: false }]));
-  // 界面采用返回值：开关翻转，预览里的花费行消失。
-  expect(await screen.findByRole("switch", { name: "显示今日花费" })).toHaveAttribute(
+  await waitFor(() => expect(seen).toEqual([{ showProject: true }]));
+  // 界面采用返回值：开关翻转。
+  expect(await screen.findByRole("switch", { name: "显示项目名" })).toHaveAttribute(
     "aria-checked",
-    "false",
+    "true",
   );
-  await waitFor(() => expect(screen.queryByText("今日花费 $1.20")).toBeNull());
 });
 
 it("命令失败时出现错误 toast，并重调 get_tray_settings", async () => {
@@ -117,14 +111,14 @@ it("命令失败时出现错误 toast，并重调 get_tray_settings", async () =
   });
   render(<TrayView sessions={[session()]} onOpenSession={() => {}} onToast={onToast} />);
 
-  fireEvent.click(await screen.findByRole("switch", { name: "显示今日花费" }));
+  fireEvent.click(await screen.findByRole("switch", { name: "显示项目名" }));
 
   await waitFor(() => expect(onToast).toHaveBeenCalledWith("patch 必须为对象", "error"));
   // reload 回到真实状态：get 重调，开关保持原值。
   await waitFor(() => expect(getCalls).toBeGreaterThanOrEqual(2));
-  expect(screen.getByRole("switch", { name: "显示今日花费" })).toHaveAttribute(
+  expect(screen.getByRole("switch", { name: "显示项目名" })).toHaveAttribute(
     "aria-checked",
-    "true",
+    "false",
   );
 });
 

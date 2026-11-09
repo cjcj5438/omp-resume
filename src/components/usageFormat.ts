@@ -1,27 +1,9 @@
-import type { ErrorKind, UsageStats, UsageTokens, UsageTrendUnit } from "../types";
-import { usageMoney, usageNumber } from "../format";
-
-/** ErrorKind 中文映射（契约固定 7 种）。 */
-export const ERROR_KIND_NAME: Record<ErrorKind, string> = {
-  quota: "额度用尽",
-  rate_limit: "触发限流",
-  auth: "鉴权失败",
-  timeout: "响应超时",
-  network: "网络异常",
-  server: "服务端错误",
-  other: "其他",
-};
+import type { UsageTokens, UsageTrendUnit } from "../types";
 
 /** 缓存命中率：null 显示“—”，不画成 0%。 */
 export function formatHitRate(value: number | null): string {
   if (value === null || Number.isNaN(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
-}
-
-/** 错误率：无请求时为“—”。 */
-export function formatErrorRate(errors: number, requests: number): string {
-  if (requests <= 0) return "—";
-  return `${((errors / requests) * 100).toFixed(1)}%`;
 }
 
 /**
@@ -58,14 +40,6 @@ export function barHeights(values: number[], maxHeight: number): number[] {
   });
 }
 
-/** 每桶缓存命中率：无 prompt token 的桶为 null（折线断线，不画 0）。 */
-export function cacheHitSeries(points: { cacheRead: number; promptTokens: number }[]): (number | null)[] {
-  return points.map((p) => {
-    if (p.promptTokens <= 0) return null;
-    return Math.min(1, Math.max(0, p.cacheRead / p.promptTokens));
-  });
-}
-
 /** 紧凑数字：<1000 原样，k/M/B 保留一位小数。 */
 export function compactNumber(n: number): string {
   if (n < 1000) return String(Math.round(n));
@@ -87,145 +61,4 @@ export function cacheHitRate(t: UsageTokens): number | null {
   const denom = t.input + t.cacheRead + t.cacheWrite;
   if (denom === 0 || (t.cacheRead === 0 && t.cacheWrite === 0)) return null;
   return t.cacheRead / denom;
-}
-
-
-/**
- * 活跃度汇总：活跃天数（花费 > 0）、合计花费、最高单日（同价取最早）、
- * 截至最后一天的连续活跃天数（末尾连续 >0 的天数）。
- */
-export function activitySummary(days: { key: string; cost: number }[]): {
-  activeDays: number;
-  totalCost: number;
-  best: { key: string; cost: number } | null;
-  streak: number;
-  longest: number;
-} {
-  let activeDays = 0;
-  let totalCost = 0;
-  let best: { key: string; cost: number } | null = null;
-  let longest = 0;
-  let run = 0;
-  for (const d of days) {
-    if (d.cost <= 0) {
-      run = 0;
-      continue;
-    }
-    activeDays += 1;
-    totalCost += d.cost;
-    run += 1;
-    if (run > longest) longest = run;
-    if (best === null || d.cost > best.cost) best = { key: d.key, cost: d.cost };
-  }
-  let streak = 0;
-  for (let i = days.length - 1; i >= 0; i -= 1) {
-    if (days[i].cost <= 0) break;
-    streak += 1;
-  }
-  return { activeDays, totalCost, best, streak, longest };
-}
-
-/**
- * 较上一周期涨跌：delta = (cur − prev) / prev；prev ≤ 0 或任一缺省时为 null。
- * 成本上涨是坏事还是中性由调用方定文案，此处只给数字。
- */
-export function prevDelta(cur: number | null | undefined, prev: number | null | undefined): number | null {
-  if (cur === null || cur === undefined || prev === null || prev === undefined || prev <= 0) return null;
-  return (cur - prev) / prev;
-}
-
-/** 最长单次：毫秒 → "16m12s"（复用 s/m/h 层级，无秒时不补零）。 */
-export function formatMaxDuration(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return "—";
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  if (m < 60) return rest === 0 ? `${m}m` : `${m}m${rest}s`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return rm === 0 ? `${h}h` : `${h}h${rm}m`;
-}
-
-/** 热力指标：花费 / Token / 请求（设计稿默认请求）。 */
-export type HeatMetric = "cost" | "tokens" | "requests";
-
-/** 趋势指标：花费 / Token（面积图的 panel-head 扩展切换）。 */
-export type TrendMetric = "cost" | "tokens";
-
-export interface HeatDayDetail {
-  key: string;
-  weekday: string;
-  cost: number;
-  tokens: number;
-  requests: number;
-  topProject: string | null;
-  costDelta: number | null;
-  tokensDelta: number | null;
-  requestsDelta: number | null;
-}
-
-const HEAT_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"] as const;
-
-function heatDelta(prev: number[], value: number): number | null {
-  if (prev.length === 0) return null;
-  const mean = prev.reduce((a, b) => a + b, 0) / prev.length;
-  if (mean === 0) return null;
-  return (value - mean) / mean;
-}
-
-/**
- * 选中日详情：delta = (当日 − 前 7 个条目均值) / 均值；前面不足 7 个用实有条目；
- * 均值为 0 或没有前序条目时为 null。`activity` 是连续日序列，`key` 不存在时返回 null。
- * trend 点无 requests/topProject 字段，缺省时按 0/null 处理。
- */
-export function heatDayDetail(days: { key: string; cost: number; tokens: UsageTokens; requests?: number; topProject?: string | null }[], key: string): HeatDayDetail | null {
-  const idx = days.findIndex((d) => d.key === key);
-  if (idx < 0) return null;
-  const day = days[idx];
-  const prev = days.slice(Math.max(0, idx - 7), idx);
-  const weekday = HEAT_WEEKDAYS[new Date(`${day.key}T00:00:00`).getDay()] ?? "周一";
-  return {
-    key: day.key,
-    weekday,
-    cost: day.cost,
-    tokens: day.tokens.total,
-    requests: day.requests ?? 0,
-    topProject: day.topProject ?? null,
-    costDelta: heatDelta(
-      prev.map((d) => d.cost),
-      day.cost,
-    ),
-    tokensDelta: heatDelta(
-      prev.map((d) => d.tokens.total),
-      day.tokens.total,
-    ),
-    requestsDelta: heatDelta(
-      prev.map((d) => d.requests ?? 0),
-      day.requests ?? 0,
-    ),
-  };
-}
-
-/**
- * 用量摘要文本（复制用）：标题 + 会话/项目 + 费用 + Token + 缓存命中 + 工具/时长 + 花费前 3 项目。
- * 格式化函数与 StatsView 里已在用的同一套。
- */
-export function usageSummaryText(stats: UsageStats, rangeLabel: string): string {
-  const { total, timing } = stats;
-  const active = timing.waitMs + timing.genMs + timing.toolMs;
-  const hit = cacheHitRate(total.tokens);
-  const top3 = [...stats.byProject]
-    .sort((a, b) => b.cost - a.cost)
-    .slice(0, 3)
-    .map((p) => `${p.cwd.split("/").filter(Boolean).pop() ?? p.cwd} ${usageMoney(p.cost)}`);
-  return [
-    `omp 用量（${rangeLabel}）`,
-    `会话 ${usageNumber(stats.sessions)} · 项目 ${usageNumber(stats.byProject.length)}`,
-    `费用 ${usageMoney(total.cost.total)}（主对话 ${usageMoney(total.cost.main)} · 后台 ${usageMoney(total.cost.background)} · 子代理 ${usageMoney(total.cost.subagent)}）`,
-    `Token ${compactNumber(total.tokens.total)}（输入 ${usageNumber(total.tokens.input)} · 输出 ${usageNumber(total.tokens.output)} · 缓存读 ${usageNumber(total.tokens.cacheRead)} · 缓存写 ${usageNumber(total.tokens.cacheWrite)}）`,
-    `缓存命中 ${formatHitRate(hit)}`,
-    `工具调用 ${usageNumber(timing.toolCalls)} · 活跃时长 ${formatDuration(active)}`,
-    `花费最高项目：${top3.length > 0 ? top3.join("、") : "—"}`,
-  ].join("\n");
 }

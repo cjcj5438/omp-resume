@@ -1,15 +1,12 @@
 /**
  * 顶层路由：每个功能是一个独立页面。左侧导航按 NAV_GROUPS 渲染。
- * usage/health 同族（StatsView 常驻），配置类路由同族（ManageView 常驻），
- * 切换同族路由时组件不卸载，保住缓存与写入门禁。
+ * 配置类路由同族（ManageView 常驻），切换同族路由时组件不卸载，保住缓存与写入门禁。
  */
 import {
-  Activity,
   Book,
   Bot,
   Brain,
   Broom,
-  ChartColumn,
   Cpu,
   FlaskConical,
   History,
@@ -29,8 +26,6 @@ import {
 export type Route =
   | "sessions"
   | "session"
-  | "usage"
-  | "health"
   | "cleanup"
   | "history"
   | "stage"
@@ -70,8 +65,6 @@ export const NAV_GROUPS: {
   {
     label: "分析",
     items: [
-      { route: "usage", label: "用量", icon: ChartColumn },
-      { route: "health", label: "运行健康", icon: Activity },
       { route: "cleanup", label: "清理候选", icon: Broom },
       { route: "history", label: "提示词历史", icon: History },
     ],
@@ -116,8 +109,6 @@ export const NAV_GROUPS: {
 export const ROUTE_TITLE: Record<Route, string> = {
   sessions: "会话",
   session: "会话",
-  usage: "用量",
-  health: "运行健康",
   cleanup: "清理候选",
   history: "提示词历史",
   stage: "像素办公室",

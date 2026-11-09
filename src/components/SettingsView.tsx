@@ -195,13 +195,6 @@ export function SettingsView({
                   onChange={(v) => void tray.update({ notifyOnWaiting: v })}
                 />
                 <Switch
-                  label="显示今日花费"
-                  description="从 usage 记录汇总，不额外请求网络"
-                  checked={tray.settings.showCost}
-                  disabled={tray.saving}
-                  onChange={(v) => void tray.update({ showCost: v })}
-                />
-                <Switch
                   label="在 Dock 显示图标"
                   checked={tray.settings.showDockIcon}
                   disabled={tray.saving}

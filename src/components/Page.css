@@ -334,32 +334,6 @@
   }
 }
 
-/* 趋势：up 绿 / down 红 / flat 弱（设计稿 .trend）。 */
-.trend {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.trend.up {
-  color: var(--ok);
-}
-
-.trend.down {
-  color: var(--danger);
-}
-
-.trend.flat {
-  color: var(--text-muted);
-}
-
-.trend .ico {
-  width: 11px;
-  height: 11px;
-}
-
 /* 通用表格（设计稿 .tbl）。数字列右对齐用 .r，居中用 .c，强调用 .strong，副行用 .sub。 */
 .tbl-wrap {
   overflow-x: auto;

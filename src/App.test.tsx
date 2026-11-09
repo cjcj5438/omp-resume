@@ -244,22 +244,22 @@ describe("缺 cwd 会话", () => {
 });
 
 describe("路由导航", () => {
-  it("导航进入用量页与模型页，Esc 逐级退回", async () => {
+  it("导航进入提示词历史与模型页，Esc 逐级退回", async () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
 
-    fireEvent.click(screen.getByRole("button", { name: "用量" }));
-    await screen.findByRole("heading", { name: "用量" });
+    fireEvent.click(screen.getByRole("button", { name: "提示词历史" }));
+    await screen.findByRole("heading", { name: "提示词历史" });
     fireEvent.click(screen.getByRole("button", { name: "模型" }));
     await screen.findByRole("heading", { name: "模型" });
 
-    // Esc → 上一级（用量），不是会话页。
+    // Esc → 上一级（提示词历史），不是会话页。
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(await screen.findByRole("heading", { name: "用量" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "提示词历史" })).toBeInTheDocument();
     // 再 Esc → 会话列表页。
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "用量" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "提示词历史" })).toBeNull());
     expect(screen.getByText(S1)).toBeInTheDocument();
   });
 

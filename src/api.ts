@@ -69,9 +69,6 @@ import type {
   MemoryOverview,
   MemoryPage,
   MemoryRestoreResult,
-  UsageHealth,
-  UsageRange,
-  UsageStats,
   UpdateModelConfigResult,
 } from "./types";
 
@@ -335,14 +332,6 @@ export function handshakeMcpServer(req: McpHandshakeRequest): Promise<McpHandsha
 
 export function getSessionUsage(req: { path: string }): Promise<SessionUsage> {
   return call("get_session_usage", { path: req.path });
-}
-
-export function getUsageStats(req: { range: UsageRange }): Promise<UsageStats> {
-  return call("get_usage_stats", { range: req.range });
-}
-
-export function getUsageHealth(req: { range: UsageRange }): Promise<UsageHealth> {
-  return call("get_usage_health", { range: req.range });
 }
 
 export function getMeta(): Promise<MetaSnapshot> {

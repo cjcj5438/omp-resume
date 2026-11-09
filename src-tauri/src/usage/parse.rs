@@ -14,12 +14,10 @@ use super::io_error;
 #[derive(Default)]
 pub(super) struct ParsedFile {
     pub(super) id: String,
-    pub(super) cwd: String,
     pub(super) parent: Option<String>,
     pub(super) version: Option<u32>,
     pub(super) entries: Vec<Entry>,
     pub(super) by_id: HashMap<String, Vec<usize>>,
-    pub(super) flows: Vec<Flow>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,8 +25,6 @@ pub(super) enum Kind {
     User,
     Assistant,
     Background,
-    /// model_change 行：只用于兜底统计与 from 推断，不产生花费/消息数。
-    ModelChange,
 }
 
 #[derive(PartialEq)]
@@ -41,73 +37,8 @@ pub(super) struct Entry {
     pub(super) model: String,
     pub(super) tokens: UsageTokens,
     pub(super) cost: f64,
-    /// assistant：message.stopReason（缺省空）。
-    pub(super) stop_reason: String,
-    /// assistant：message.errorMessage 原文（缺省空；输出时截断脱敏）。
-    pub(super) error_message: String,
-    /// model_change：role（缺省空；缺 role 与空字符串同义）。
-    pub(super) change_role: String,
-    /// model_change：resolvedModelIsFallback。
-    pub(super) is_fallback: bool,
-    /// assistant 自报耗时（duration/ttft 均有效时）。
-    pub(super) timing: Option<Timing>,
-    /// assistant 自报 duration（毫秒，只要求 duration 本身有效；fork 复制整行一致，不影响去重）。
-    pub(super) duration_ms: Option<u64>,
-    /// assistant：message.retryRecovery（缺省无；行内字段，参与相等比较）。
-    pub(super) retry: Option<Retry>,
 }
 
-/// assistant 的重试恢复记录（`message.retryRecovery` 行内字段）。
-#[derive(Clone, PartialEq)]
-pub(super) struct Retry {
-    /// auto-retry（实测恒为此值；解析时保留原文）。
-    pub(super) kind: String,
-    /// recovered / superseded（其他值保留原文）。
-    pub(super) status: String,
-    /// 重试次数（缺省 0）。
-    pub(super) attempt: u64,
-}
-
-/// 工具间隔超过 10 分钟视为会话闲置，不计工具耗时。
-pub(super) const IDLE_CAP_MS: i64 = 10 * 60 * 1000;
-/// 上游自报耗时；仅 duration、ttft 均有效且 duration ≥ ttft ≥ 0 时存在。
-#[derive(Clone, Copy, PartialEq)]
-pub(super) struct Timing {
-    pub(super) wait_ms: u64,
-    pub(super) gen_ms: u64,
-}
-/// 随 entries 下标并行存放，**不进入 Entry 的相等比较**：fork 复制的同一条助手消息，
-/// 在父/子文件里后续行不同，工具次数/间隔可能不同；放进 Entry 会让副本判定失败而重复计费。
-#[derive(Default, Clone, Copy)]
-pub(super) struct Flow {
-    pub(super) tool_results: u32,
-    pub(super) tool_ms: u64,
-}
-/// 非有限/负数/duration<ttft → None。
-pub(super) fn timing_of(duration: Option<f64>, ttft: Option<f64>) -> Option<Timing> {
-    let (duration, ttft) = (duration?, ttft?);
-    if !duration.is_finite() || !ttft.is_finite() || duration < 0.0 || ttft < 0.0 || duration < ttft
-    {
-        return None;
-    }
-    Some(Timing {
-        wait_ms: ttft.round() as u64,
-        gen_ms: (duration - ttft).round() as u64,
-    })
-}
-/// 单 duration 有效性：有限非负即存（round 到毫秒），不要求 ttft。
-pub(super) fn duration_ms_of(duration: Option<f64>) -> Option<u64> {
-    let duration = duration?;
-    (duration.is_finite() && duration >= 0.0).then(|| duration.round() as u64)
-}
-/// `message.retryRecovery` 最小字段形状（多余键直接跳过）。
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-pub(super) struct RawRetry {
-    pub(super) kind: String,
-    pub(super) status: String,
-    pub(super) attempt: u64,
-}
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct Line {
@@ -117,12 +48,9 @@ pub(super) struct Line {
     pub(super) parent_id: Option<String>,
     pub(super) timestamp: Option<Timestamp>,
     pub(super) version: Option<u32>,
-    pub(super) cwd: String,
     pub(super) parent_session: Option<String>,
     pub(super) provider: String,
     pub(super) model: String,
-    pub(super) role: Option<String>,
-    pub(super) resolved_model_is_fallback: bool,
     pub(super) usage: Option<RawUsage>,
     pub(super) message: Option<Message>,
 }
@@ -135,12 +63,6 @@ pub(super) struct Message {
     pub(super) model: String,
     pub(super) usage: Option<RawUsage>,
     pub(super) timestamp: Option<Timestamp>,
-    pub(super) stop_reason: String,
-    pub(super) error_message: String,
-    pub(super) duration: Option<f64>,
-    pub(super) ttft: Option<f64>,
-    pub(super) completed_at: Option<f64>,
-    pub(super) retry_recovery: Option<RawRetry>,
 }
 
 #[derive(Deserialize)]
@@ -185,21 +107,10 @@ pub(super) struct RawCost {
     pub(super) total: Option<f64>,
 }
 
-/// 拆 model_change 的 "provider/model"（按首个 '/'；model 名本身可含 '/'）。
-/// 无 '/' 时 provider 为空、整体为 model。
-pub(super) fn split_model(combined: &str) -> (String, String) {
-    match combined.split_once('/') {
-        Some((provider, model)) => (provider.to_owned(), model.to_owned()),
-        None => (String::new(), combined.to_owned()),
-    }
-}
-
 pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
     let mut parsed = ParsedFile::default();
     let mut reader = BufReader::new(File::open(path).map_err(io_error)?);
     let mut line = Vec::new();
-    let mut last_assistant: Option<usize> = None;
-    let mut pending: Option<(usize, i64)> = None;
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line).map_err(io_error)? == 0 {
@@ -210,45 +121,16 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
         };
         if raw.kind == "session" {
             parsed.id = raw.id.unwrap_or_default();
-            parsed.cwd = raw.cwd;
             parsed.parent = raw.parent_session;
             parsed.version = raw.version;
             continue;
         }
-        // toolResult 不产生 Entry：只给上一条助手记工具次数。
+        // toolResult 不产生 Entry。
         if raw.kind == "message" && raw.message.as_ref().is_some_and(|m| m.role == "toolResult") {
-            if let Some(i) = last_assistant {
-                parsed.flows[i].tool_results += 1;
-            }
             continue;
         }
-        let timing_src = raw
-            .message
-            .as_ref()
-            .filter(|m| m.role == "assistant")
-            .map(|m| (m.duration, m.ttft, m.completed_at));
-        let retry_src = raw
-            .message
-            .as_ref()
-            .filter(|m| m.role == "assistant")
-            .and_then(|m| m.retry_recovery.as_ref())
-            .map(|r| Retry {
-                kind: r.kind.clone(),
-                status: r.status.clone(),
-                attempt: r.attempt,
-            });
         let parsed_entry = match (raw.kind.as_str(), raw.message) {
-            ("model_usage", _) => (
-                Kind::Background,
-                raw.provider,
-                raw.model,
-                raw.usage,
-                None,
-                String::new(),
-                String::new(),
-                String::new(),
-                false,
-            ),
+            ("model_usage", _) => (Kind::Background, raw.provider, raw.model, raw.usage, None),
             ("message", Some(m)) if m.role == "user" || m.role == "assistant" => {
                 let assistant = m.role == "assistant";
                 (
@@ -261,47 +143,11 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
                     m.model,
                     if assistant { m.usage } else { None },
                     m.timestamp,
-                    if assistant {
-                        m.stop_reason
-                    } else {
-                        String::new()
-                    },
-                    if assistant {
-                        m.error_message
-                    } else {
-                        String::new()
-                    },
-                    String::new(),
-                    false,
-                )
-            }
-            ("model_change", _) => {
-                let (provider, model) = split_model(&raw.model);
-                (
-                    Kind::ModelChange,
-                    provider,
-                    model,
-                    None,
-                    None,
-                    String::new(),
-                    String::new(),
-                    raw.role.unwrap_or_default(),
-                    raw.resolved_model_is_fallback,
                 )
             }
             _ => continue,
         };
-        let (
-            kind,
-            provider,
-            model,
-            usage,
-            timestamp,
-            stop_reason,
-            error_message,
-            change_role,
-            is_fallback,
-        ) = parsed_entry;
+        let (kind, provider, model, usage, timestamp) = parsed_entry;
         let usage = usage.unwrap_or_default();
         let total = usage.total_tokens.unwrap_or_else(|| {
             usage
@@ -314,7 +160,6 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
         let cost = cost
             .total
             .unwrap_or(cost.input + cost.output + cost.cache_read + cost.cache_write);
-        let index = parsed.entries.len();
         let entry = Entry {
             id: raw.id,
             parent: raw.parent_id,
@@ -337,39 +182,8 @@ pub(super) fn parse_file(path: &Path) -> AppResult<ParsedFile> {
             } else {
                 0.0
             },
-            stop_reason,
-            error_message,
-            change_role,
-            is_fallback,
-            timing: timing_src.and_then(|(d, t, _)| timing_of(d, t)),
-            duration_ms: timing_src.and_then(|(d, _, _)| duration_ms_of(d)),
-            retry: retry_src,
         };
-        let ts = entry.timestamp;
-        let stop_reason_tool_use = kind == Kind::Assistant && entry.stop_reason == "toolUse";
         parsed.entries.push(entry);
-        parsed.flows.push(Flow::default());
-        match kind {
-            Kind::User => pending = None,
-            Kind::Assistant => {
-                if let (Some((prev, done)), Some(ts)) = (pending.take(), ts) {
-                    let gap = ts - done;
-                    if (0..=IDLE_CAP_MS).contains(&gap) {
-                        parsed.flows[prev].tool_ms = gap as u64;
-                    }
-                }
-                last_assistant = Some(index);
-                pending = if stop_reason_tool_use {
-                    timing_src
-                        .and_then(|(_, _, c)| c)
-                        .filter(|c| c.is_finite())
-                        .map(|c| (index, c as i64))
-                } else {
-                    None
-                };
-            }
-            Kind::Background | Kind::ModelChange => {}
-        }
     }
     if parsed.version == Some(3) {
         for (i, entry) in parsed.entries.iter().enumerate() {

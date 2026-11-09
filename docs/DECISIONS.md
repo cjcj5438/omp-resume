@@ -246,3 +246,11 @@
   经 `extra_roots` 加入路径白名单（§6）。
 - 后果：`superagent:build` 是 `typecheck`/`build`（从而 cargo 构建）的前提；
   旧 DSH 部署若盯同一 GitHub 账号须先停掉，否则同一条评论被处理两次。
+
+## D12：删除用量/运行看板与菜单栏今日花费（2026-11-08）
+
+背景：内置 `omp stats` 看板已覆盖用量与运行健康（Overview/Costs/Requests/Errors/Models 等面板），应用内自建看板不再保留。
+
+- 删除用量页（`StatsView`，`get_usage_stats`）、运行健康页（`HealthBoard`，`get_usage_health`）与菜单栏「今日花费」（原生菜单花费行、面板头部、`showCost` 设置）；命令总数 88 → 86。
+- 保留单会话「本次用量」（`get_session_usage`）与模型测试器 bench 图表及「日常实测」列（`model_perf_list`）。
+- 旧 `settings.json` 中的 `showCost` 键仍可加载但被忽略。

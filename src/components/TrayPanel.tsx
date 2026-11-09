@@ -191,12 +191,6 @@ export function TrayPanel({
             </div>
           </div>
         </div>
-        {settings.showCost && preview.costUsd !== null ? (
-          <div className="tray-spend">
-            <strong>${preview.costUsd.toFixed(2)}</strong>
-            <span>今日 · {preview.requestCount ?? 0} 请求</span>
-          </div>
-        ) : null}
       </div>
       {settings.showSearch ? (
         <div className="tray-search-row">

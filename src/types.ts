@@ -442,8 +442,6 @@ export interface UsageModel {
   messages: number;
   cost: number;
   tokens: UsageTokens;
-  tps?: number | null;
-  ttftMs?: number | null;
 }
 
 export interface SessionUsage {
@@ -453,134 +451,7 @@ export interface SessionUsage {
   models: UsageModel[];
 }
 
-/** 用量统计范围：今天（自然日）/ 近 24 小时 / 近 7 天 / 近 30 天 / 全部。 */
-export type UsageRange = "today" | "24h" | "7d" | "30d" | "all";
-
 export type UsageTrendUnit = "hour" | "day";
-
-export interface UsageTrendPoint {
-  /** hour 桶为本地时区 "YYYY-MM-DD HH"，day 桶为 "YYYY-MM-DD"。 */
-  key: string;
-  cost: number;
-  tokens: UsageTokens;
-}
-
-/** 热力图日点（仅 UsageStats.activity 用；trend.points 仍用 UsageTrendPoint）。 */
-export interface UsageActivityPoint {
-  key: string;
-  cost: number;
-  tokens: UsageTokens;
-  /** 当日请求数（assistant 条目 + model_usage，含 error/aborted）。 */
-  requests: number;
-  /** 当日花费最高的顶层 owner header.cwd；零成本日为 null。 */
-  topProject: string | null;
-}
-
-export interface UsageTrend {
-  unit: UsageTrendUnit;
-  points: UsageTrendPoint[];
-}
-
-/** 等长上一窗口对比（CONTRACT §12.1）；all 时 UsageStats.prev 为 null。 */
-export interface UsagePrevWindow {
-  cost: number;
-  tokens: number;
-  requests: number;
-}
-
-export interface UsageTiming {
-  waitMs: number;
-  genMs: number;
-  toolMs: number;
-  toolCalls: number;
-  calls: number;
-  tps: number | null;
-  /** 范围内最长单次（仅主对话、有自报 duration 的 assistant 样本最大值；无样本为 null）。 */
-  maxDurationMs: number | null;
-}
-
-export interface UsageSession {
-  id: string;
-  path: string;
-  cwd: string;
-  cost: number;
-  tokens: number;
-  calls: number;
-  lastMs: number;
-}
-
-export interface UsageStats {
-  total: SessionUsage;
-  byProject: { cwd: string; cost: number; tokens: UsageTokens; sessions: number }[];
-  byModel: UsageModel[];
-  trend: UsageTrend;
-  sessions: number;
-  timing: UsageTiming;
-  topSessions: UsageSession[];
-  activity: UsageActivityPoint[];
-  /** 范围内请求数（assistant 条目 + model_usage，与 health.requests 同口径）。 */
-  requests: number;
-  /** 本地时区 24 小时请求分布（跟随 range），下标为小时。 */
-  hourly: number[];
-  /** 等长上一窗口（同一次扫描累加）；all 时为 null。 */
-  prev: UsagePrevWindow | null;
-}
-
-/** 运行看板错误类型。 */
-export type ErrorKind = "quota" | "rate_limit" | "auth" | "timeout" | "network" | "server" | "other";
-
-export interface UsageHealthError {
-  time: number;
-  provider: string;
-  model: string;
-  kind: ErrorKind;
-  message: string;
-  /** 重试处置（CONTRACT §12.3）；无 retryRecovery 时为 null。 */
-  retry: string | null;
-}
-
-export interface UsageHealthFallback {
-  time: number;
-  from: { provider: string; model: string } | null;
-  to: { provider: string; model: string };
-}
-
-export interface UsageHealthTimelinePoint {
-  key: string;
-  requests: number;
-  errors: number;
-  fallbacks: number;
-  cacheRead: number;
-  promptTokens: number;
-}
-
-export interface UsageHealth {
-  requests: number;
-  errors: {
-    /** 不含 aborted；aborted 为用户中断，另计。 */
-    total: number;
-    aborted: number;
-    byKind: { kind: ErrorKind; count: number }[];
-    /** ≤20 条，新→旧。 */
-    recent: UsageHealthError[];
-  };
-  fallbacks: {
-    total: number;
-    byTarget: { provider: string; model: string; count: number }[];
-    recent: UsageHealthFallback[];
-  };
-  cache: {
-    /** 0..1；null = 上游不报缓存或无数据。 */
-    hitRate: number | null;
-    read: number;
-    write: number;
-    input: number;
-    byModel: { provider: string; model: string; requests: number; hitRate: number | null }[];
-  };
-  timeline: { unit: UsageTrendUnit; points: UsageHealthTimelinePoint[] };
-  /** 范围内延迟分位（毫秒；无样本为 null）。 */
-  latencyMs: { p50: number; p95: number } | null;
-}
 
 // 会话别名 / 标签 / 备注（应用侧 meta.json，以会话 id 为键）。
 export interface SessionMeta {
@@ -1057,7 +928,6 @@ export interface TraySettings {
   notifyOnFinish: boolean;
   badgeStyle: TrayBadgeStyle;
   titleWidth: TrayTitleWidth;
-  showCost: boolean;
   showProject: boolean;
   showIdle: boolean;
   compactRows: boolean;
@@ -1104,8 +974,6 @@ export interface TrayBadgeSample {
 export interface TrayPreview {
   ready: boolean;
   trayTitle: string | null;
-  costUsd: number | null;
-  requestCount: number | null;
   rows: TrayPreviewRow[];
   overflow: TrayPreviewRow[];
   recent: TrayPreviewEntry[];

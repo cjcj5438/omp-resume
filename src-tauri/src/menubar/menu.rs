@@ -15,8 +15,6 @@ pub const TITLE_MAX_CHARS: usize = 32;
 pub const RECENT_LIMIT: usize = 5;
 /// 托盘「新建会话」子菜单最多项目数。
 pub const PROJECT_LIMIT: usize = 5;
-/// 今日花费菜单项 id，同时作为就地更新器的键（会话 id 不会与之冲突）。
-pub const COST_ITEM_ID: &str = "today-cost";
 
 /// 单个会话行的输入快照（由轮询组装）。
 #[derive(Debug, Clone)]
@@ -92,7 +90,7 @@ pub struct MenuModel {
     pub badge_count: usize,
     /// 模型模式列表；`None` = 尚未读到或读取失败（菜单不显示「模式」子菜单）。
     pub modes: Option<Vec<ModeEntry>>,
-    /// 附加数据；None = 尚未统计（不显示花费行与最近会话）。
+    /// 附加数据；None = 尚未统计（不显示最近会话）。
     pub extras: Option<Extras>,
 }
 
@@ -122,11 +120,6 @@ pub struct ProjectEntry {
 /// 60 秒慢刷新的附加数据。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Extras {
-    pub cost_text: Option<String>,
-    /// 今日花费裸值（美元；与 `cost_text` 同快照，面板头部用，前端格式化）。
-    pub cost_usd: Option<f64>,
-    /// 今日请求数（assistant 条目 + model_usage，与 health.requests 同口径）。
-    pub request_count: Option<u64>,
     pub recent: Vec<RecentEntry>,
     pub projects: Vec<ProjectEntry>,
 }
@@ -134,8 +127,7 @@ pub struct Extras {
 impl MenuModel {
     /// 结构性变化检测：会话增减 / 状态 / 排序 / 标题 / 设置勾选任一变化即 false
     /// （头部与图标标题含计数，状态变化必改它们；行的形状含标题与状态文字）。
-    /// 花费行是否出现算结构变化，但其金额数字/请求数的变化不算（由 [`refresh_decision`]
-    /// 就地更新文字）。返回 true 时两个模型只可能差行内时长文字与花费文字。
+    /// 返回 true 时两个模型只可能差行内时长文字。
     pub fn same_structure(&self, other: &MenuModel) -> bool {
         self.header == other.header
             && self.tray_title == other.tray_title
@@ -155,23 +147,7 @@ impl MenuModel {
                 .iter()
                 .zip(&other.overflow)
                 .all(|(a, b)| a.same_shape(b))
-            && self.extras.as_ref().map(|e| {
-                (
-                    &e.recent,
-                    &e.projects,
-                    e.cost_text.is_some(),
-                    e.cost_usd.is_some(),
-                    e.request_count.is_some(),
-                )
-            }) == other.extras.as_ref().map(|e| {
-                (
-                    &e.recent,
-                    &e.projects,
-                    e.cost_text.is_some(),
-                    e.cost_usd.is_some(),
-                    e.request_count.is_some(),
-                )
-            })
+            && self.extras == other.extras
     }
 }
 
@@ -182,7 +158,7 @@ pub enum Refresh {
     None,
     /// 结构不变、文字变化：`(项 id, 新完整文本)`，就地 `set_text`
     /// 更新（NSMenu 展开时改文字安全，不关闭菜单）。
-    /// 会话行用会话 id，花费行用 [`COST_ITEM_ID`]。
+    /// 会话行用会话 id。
     Texts(Vec<(String, String)>),
     /// 结构性变化：整体重建菜单（`set_menu`，会关闭已展开的菜单）。
     Rebuild,
@@ -208,16 +184,6 @@ pub fn refresh_decision(prev: Option<&MenuModel>, new: &MenuModel) -> Refresh {
     {
         if a.text() != b.text() {
             texts.push((b.session_id.clone(), b.text()));
-        }
-    }
-    if new.settings.show_cost {
-        if let (Some(a), Some(b)) = (
-            prev.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
-            new.extras.as_ref().and_then(|e| e.cost_text.as_ref()),
-        ) {
-            if a != b {
-                texts.push((COST_ITEM_ID.to_string(), b.clone()));
-            }
         }
     }
     Refresh::Texts(texts)
@@ -451,11 +417,6 @@ pub fn mode_entries(state: &crate::model::ModelPresetsState) -> Vec<ModeEntry> {
             enabled: p.invalid_reason.is_none(),
         })
         .collect()
-}
-
-/// 今日花费行文本。
-pub fn cost_text(total_usd: f64) -> String {
-    format!("今日花费 ${total_usd:.2}")
 }
 
 /// 会话摘要 → 「最近会话」条目（标题截断 + 项目末级目录名）。
@@ -910,26 +871,6 @@ mod tests {
         assert_eq!(title_part.chars().count(), 20);
         assert!(title_part.ends_with('…'), "{title_part}");
     }
-
-    #[test]
-    fn hidden_cost_skips_text_update() {
-        let s = Settings {
-            show_cost: false,
-            ..Settings::default()
-        };
-        let mut old = build_model(vec![], &s);
-        old.extras = Some(Extras {
-            cost_text: Some("今日花费 $1.20".to_string()),
-            cost_usd: Some(1.20),
-            request_count: Some(7),
-            recent: vec![],
-            projects: vec![],
-        });
-        let mut new = old.clone();
-        new.extras.as_mut().unwrap().cost_text = Some("今日花费 $1.50".to_string());
-        assert!(old.same_structure(&new));
-        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Texts(vec![]));
-    }
 }
 
 #[cfg(test)]
@@ -1019,11 +960,8 @@ mod modes_tests {
 mod extras_tests {
     use super::*;
 
-    fn extras(cost: &str) -> Extras {
+    fn extras() -> Extras {
         Extras {
-            cost_text: Some(cost.to_string()),
-            cost_usd: Some(1.20),
-            request_count: Some(7),
             recent: vec![RecentEntry {
                 session_id: "s1".into(),
                 path: "/tmp/s1.jsonl".into(),
@@ -1037,38 +975,9 @@ mod extras_tests {
     }
 
     #[test]
-    fn bare_value_change_is_not_structural() {
-        // cost_usd / request_count 只比 presence：数字变化不重建（面板走轮询）。
-        let mut old = build_model(vec![], &Settings::default());
-        old.extras = Some(extras("今日花费 $1.20"));
-        let mut new = old.clone();
-        let e = new.extras.as_mut().unwrap();
-        e.cost_usd = Some(9.99);
-        e.request_count = Some(42);
-        assert!(old.same_structure(&new));
-        // presence 翻转 → 重建（与 cost_text.is_some() 同口径）。
-        let mut gone = old.clone();
-        gone.extras.as_mut().unwrap().cost_usd = None;
-        assert!(!old.same_structure(&gone));
-    }
-
-    #[test]
-    fn cost_change_is_text_update() {
-        let mut old = build_model(vec![], &Settings::default());
-        old.extras = Some(extras("今日花费 $1.20"));
-        let mut new = old.clone();
-        new.extras = Some(extras("今日花费 $1.50"));
-        assert!(old.same_structure(&new));
-        assert_eq!(
-            refresh_decision(Some(&old), &new),
-            Refresh::Texts(vec![("today-cost".into(), "今日花费 $1.50".into())])
-        );
-    }
-
-    #[test]
     fn recent_change_rebuilds() {
         let mut old = build_model(vec![], &Settings::default());
-        old.extras = Some(extras("今日花费 $1.50"));
+        old.extras = Some(extras());
         // 最近会话变化 → 重建。
         let mut new = old.clone();
         new.extras.as_mut().unwrap().recent.clear();
@@ -1077,11 +986,6 @@ mod extras_tests {
         // 项目变化 → 重建。
         let mut new = old.clone();
         new.extras.as_mut().unwrap().projects.clear();
-        assert!(!old.same_structure(&new));
-        assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
-        // 花费行出现/消失 → 重建（但金额变化只就地更新）。
-        let mut new = old.clone();
-        new.extras.as_mut().unwrap().cost_text = None;
         assert!(!old.same_structure(&new));
         assert_eq!(refresh_decision(Some(&old), &new), Refresh::Rebuild);
         let mut new = old.clone();

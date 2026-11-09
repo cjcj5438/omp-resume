@@ -20,8 +20,8 @@ use tauri::{
 
 use super::classify::SessionStatus;
 use super::menu::{
-    badge_samples, cost_text, menu_text, project_entry, recent_entry, refresh_decision, Extras,
-    MenuModel, Refresh, RowInput, COST_ITEM_ID, PROJECT_LIMIT, RECENT_LIMIT,
+    badge_samples, menu_text, project_entry, recent_entry, refresh_decision, Extras, MenuModel,
+    Refresh, RowInput, PROJECT_LIMIT, RECENT_LIMIT,
 };
 use super::notify::{self, NotifyAction};
 use super::poller::{Poller, SystemOccupants, POLL_INTERVAL_SECS};
@@ -78,7 +78,7 @@ pub struct Shared {
     pub last_blur_hide: Mutex<Option<std::time::Instant>>,
     pub data_dir: PathBuf,
     /// 文本更新器（项 id → `set_text` 闭包）：仅文字变化时就地更新，
-    /// 结构性重建时整体替换。会话行用会话 id，花费行用 `COST_ITEM_ID`。
+    /// 结构性重建时整体替换。会话行用会话 id。
     pub row_updaters: Mutex<RowUpdaters>,
     /// 模型模式列表（`None` = 尚未读到 / 读取失败）。
     pub modes: Mutex<Option<Vec<super::menu::ModeEntry>>>,
@@ -108,7 +108,7 @@ impl Shared {
 /// 文本更新器：(项 id, `set_text` 闭包)。结构性重建时整体替换。
 pub type RowUpdaters = Vec<(String, Box<dyn Fn(&str) + Send + Sync>)>;
 
-/// 装配结果：菜单 + 文本更新器（会话行与花费项的 `set_text` 闭包）。
+/// 装配结果：菜单 + 文本更新器（会话行的 `set_text` 闭包）。
 pub type BuiltMenu<R> = (Menu<R>, RowUpdaters);
 
 /// 由 [`MenuModel`] 装配原生菜单（纯装配，文案已由模型定好）。
@@ -121,16 +121,6 @@ pub fn build_menu<R: Runtime>(
     let header = MenuItem::new(app, menu_text(&model.header), false, None::<&str>)?;
     menu.append(&header)?;
     let mut updaters: RowUpdaters = Vec::new();
-    if model.settings.show_cost {
-        if let Some(cost) = model.extras.as_ref().and_then(|e| e.cost_text.as_ref()) {
-            let item = MenuItem::with_id(app, COST_ITEM_ID, menu_text(cost), false, None::<&str>)?;
-            menu.append(&item)?;
-            let f: Box<dyn Fn(&str) + Send + Sync> = Box::new(move |text: &str| {
-                let _ = item.set_text(menu_text(text));
-            });
-            updaters.push((COST_ITEM_ID.to_string(), f));
-        }
-    }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     for row in &model.rows {
         let item = IconMenuItem::with_id_and_native_icon(
@@ -695,24 +685,11 @@ pub fn spawn_extras_refresher<R: Runtime + 'static>(app: AppHandle<R>) {
     let spawned = std::thread::Builder::new()
         .name("menubar-extras".to_string())
         .spawn(move || loop {
-            let (cfg, cache) = (
-                app.state::<crate::config::Config>().inner().clone(),
-                app.state::<std::sync::Arc<crate::usage::UsageCache>>()
-                    .inner()
-                    .clone(),
-            );
+            let cfg = app.state::<crate::config::Config>().inner().clone();
             let mut next = app
                 .try_state::<Shared>()
                 .and_then(|s| s.extras.lock().ok().and_then(|g| g.clone()))
                 .unwrap_or_default();
-            if let Ok(stats) =
-                crate::usage::usage_stats(&cfg, &cache, crate::model::UsageRange::Today)
-            {
-                let total = stats.total.cost.total;
-                next.cost_text = Some(cost_text(total));
-                next.cost_usd = Some(total);
-                next.request_count = Some(stats.requests);
-            }
             if let Ok(sessions) = crate::sessions::list::recent_sessions(&cfg, RECENT_LIMIT) {
                 next.recent = sessions.iter().map(recent_entry).collect();
             }
@@ -1042,7 +1019,7 @@ fn preview_of(model: &MenuModel, rows: &[RowInput], ready: bool) -> crate::model
     };
     let rows: Vec<TrayPreviewRow> = model.rows.iter().map(to_row).collect();
     let overflow: Vec<TrayPreviewRow> = model.overflow.iter().map(to_row).collect();
-    let (recent, projects, cost_usd, request_count) = match &model.extras {
+    let (recent, projects) = match &model.extras {
         Some(e) => (
             e.recent
                 .iter()
@@ -1058,18 +1035,8 @@ fn preview_of(model: &MenuModel, rows: &[RowInput], ready: bool) -> crate::model
                     text: p.text.clone(),
                 })
                 .collect(),
-            if model.settings.show_cost {
-                e.cost_usd
-            } else {
-                None
-            },
-            if model.settings.show_cost {
-                e.request_count
-            } else {
-                None
-            },
         ),
-        None => (Vec::new(), Vec::new(), None, None),
+        None => (Vec::new(), Vec::new()),
     };
     let modes = model.modes.as_ref().map(|ms| {
         ms.iter()
@@ -1090,8 +1057,6 @@ fn preview_of(model: &MenuModel, rows: &[RowInput], ready: bool) -> crate::model
     TrayPreview {
         ready,
         tray_title: model.tray_title.clone(),
-        cost_usd,
-        request_count,
         rows,
         overflow,
         recent,

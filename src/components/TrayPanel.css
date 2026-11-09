@@ -83,24 +83,6 @@
   height: 5px;
 }
 
-.tray-spend {
-  flex: none;
-  text-align: right;
-}
-
-.tray-spend strong {
-  display: block;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.15;
-}
-
-.tray-spend span {
-  font-size: 9px;
-  color: var(--text-faint);
-}
-
 .tray-search-row {
   display: flex;
   align-items: center;

@@ -16,7 +16,7 @@ import { deepEqual } from "../modelConfig";
 import type { AgentDefinition, AgentDetail, AppError, BenchRound, CleanupCandidate, CleanupReason, CreateAgentDefinitionResult, MarketplaceSummary, MetaSnapshot, ModelConfig, ModelInfo, ModelPerf, ModelSpec, ModelSpecPatch, ModelSpecsResult, ModelSpecUpdateResult, OmpOpResult, PluginSummary, PluginUpgradeChange, SessionMeta, SessionMetaInput, SkillSummary, SuperagentStatus } from "../types";
 import type { ModelPreset, ModelPresetSnapshot, ModelPresetsState } from "../types";
 import type { McpFileInfo, McpListResult, McpScope, McpServer, McpTransport } from "../types";
-import type { PromptHistoryEntry, UsageRange } from "../types";
+import type { PromptHistoryEntry } from "../types";
 import type { AgentStage, StageActor, StageActorKind, StageActorState, StageActivity } from "../types";
 import type { TrayPreview, TrayPreviewRow, TraySettings } from "../types";
 import {
@@ -26,7 +26,7 @@ import {
   generateLargeConversation,
   type FixtureSession,
 } from "./fixtures";
-import { mockEmptyUsageHealth, mockEmptyUsageStats, mockSessionUsage, mockUsageHealth, mockUsageStats } from "./usageMock";
+import { mockSessionUsage } from "./usageMock";
 import { createMemoryMock } from "./memoryMock";
 
 interface FailAs {
@@ -905,8 +905,6 @@ function mockTrayPreview(sessions: FixtureSession[], settings: TraySettings): Tr
   return {
     ready: true,
     trayTitle,
-    costUsd: settings.showCost ? 1.2 : null,
-    requestCount: settings.showCost ? 7 : null,
     rows,
     overflow,
     recent,
@@ -1204,7 +1202,6 @@ export async function installMockBackend(): Promise<MockHandle> {
     notifyOnFinish: false,
     badgeStyle: "count",
     titleWidth: "standard",
-    showCost: true,
     showProject: false,
     showIdle: true,
     compactRows: false,
@@ -1338,26 +1335,6 @@ export async function installMockBackend(): Promise<MockHandle> {
         if (!s) throw err("NOT_FOUND", "会话文件不存在");
         if (!s.summary.formatSupported) throw err("UNSUPPORTED_FORMAT", "该会话格式暂不支持用量统计");
         return structuredClone(mockSessionUsage);
-      }
-      case "get_usage_stats": {
-        const range = (args["range"] as UsageRange | undefined) ?? "30d";
-        const empty = params.get("usage") === "empty";
-        const stats = (empty ? mockEmptyUsageStats : mockUsageStats)(range);
-        if (!empty) {
-          stats.topSessions.forEach((s, i) => {
-            const fixture = sessions[i]?.summary;
-            if (!fixture) return;
-            s.id = fixture.id;
-            s.path = fixture.path;
-            s.cwd = fixture.cwd;
-          });
-        }
-        return stats;
-      }
-      case "get_usage_health": {
-        const range = (args["range"] as UsageRange | undefined) ?? "30d";
-        const empty = params.get("usage") === "empty";
-        return (empty ? mockEmptyUsageHealth : mockUsageHealth)(range);
       }
       case "check_session": {
         const s = find(args["path"] as string);

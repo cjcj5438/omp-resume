@@ -8,7 +8,7 @@
 管理 `omp`（oh-my-pi）的会话、CLI 版本、用户级插件与技能。功能包括：
 会话浏览（按项目分组）、只读会话预览、树视图、iTerm 一键续聊、
 永久删除、从树节点续聊、omp 版本查询与更新、插件/marketplace 管理、技能查询/更新、
-MCP 原生配置管理、用量与运行统计、清理、记忆库（Mnemopi）浏览与维护、模型测速。无会话重命名、无 fork 建文件、无导出、
+MCP 原生配置管理、清理、记忆库（Mnemopi）浏览与维护、模型测速。无会话重命名、无 fork 建文件、无导出、
 无全文搜索、无多 profile、无回收站。
 
 ## 0. 一致性规则（给后续 worker）
@@ -714,7 +714,7 @@ header `.title`、每个 `title_change` 的 `.title`。
    之后的形状校验（两段路径、`.jsonl`、非点文件、常规文件）原样不动。
    extra root 自身 canonicalize 失败就跳过；都不满足时，
    `sessions_dir` canonicalize 失败返回原来的 `IO` 错误，否则返回 `OUTSIDE_ROOT`。
-   会话列表、用量、菜单栏、清理这些扫描仍然只看 `sessions_dir`。
+   会话列表、菜单栏、清理这些扫描仍然只看 `sessions_dir`。
 
 ## 7. 错误码
 
@@ -761,10 +761,9 @@ header `.title`、每个 `title_change` 的 `.title`。
   `menubar/`（托盘菜单 / 检测 / 聚焦 / 通知 / 设置）、`mcp_config.rs`
   （MCP 原生配置读写）、`memory/`（记忆库浏览 + 备份/删除/恢复，见 §18）、
   `model_bench.rs`（模型测速与历史）、`model_specs/`（`mod` / `yaml` /
-  `validate` / `io` / `tests`，规格编辑，见 §21）、`usage/`（`mod` /
-  `cache` / `parse` / `window` / `stats` / `health` / `redact` / `tests`，
-  用量与运行看板，见 §12）、`stage/`（`mod` / `cursor` / `actor_tail` /
-  `derive` / `tests`，Agent 舞台，见 §23）。
+  `validate` / `io` / `tests`，规格编辑，见 §21）、`usage/`（`mod` / `cache` /
+  `parse` / `stats` / `redact` / `tests`，单会话用量，见 §12）、`stage/`（`mod` /
+  `cursor` / `actor_tail` / `derive` / `tests`，Agent 舞台，见 §23）。
 
 ## 9. 常量
 
@@ -868,26 +867,15 @@ bashExecution（无 content 数组）与 developer：
 
 已移至 DECISIONS.md D1
 
-## 12. 用量与花费统计（只读，omp 18.11.1）
+## 12. 单会话用量（只读，omp 18.11.1）
 
-本节定义用量/花费与运行看板能力；不改动既有会话浏览、树与写命令语义。
+本节定义单会话「本次用量」能力（`get_session_usage`）；不改动既有会话浏览、树与写命令语义。
 不调用 LLM，不启动 omp，不读取 models.yml / models.json 或其他凭据；绝不写入会话 JSONL。
 
 ### 12.1 命令与类型
 
 - `get_session_usage { path: string } -> SessionUsage`：沿用 §6 顶层路径校验，
   返回此会话归属的全部历史（非 active 路径），包含 sibling 附件目录内递归的子代理 JSONL。
-- `get_usage_stats { range: UsageRange } -> UsageStats`：`UsageRange` =
-  `"today" | "24h" | "7d" | "30d" | "all"`；UI 花费页/看板默认 `7d`。窗口按**本机时区**：
-  `today` 本地当天 0 点至今；`24h` 当前本地整点绝对时间 −23 小时起的 24 个整点桶
-  （含当前小时；起点由请求时刻的绝对时间直接截断整点，不经本地→UTC 反查）；
-  `7d` 今天及前 6 天、`30d` 今天及前 29 天（均自首日 0 点起）；`all` 不限。
-  固定窗口为 **[起点, now] 闭区间**（`now` 为请求时刻，未来时间戳一律排除），
-  按**每条消息/后台调用自身时间**比较，不是按文件 mtime；
-  固定窗口的起点恒为有界绝对时间（仅 `all` 不限）：午夜落在 DST 缺口时取缺口后
-  第一个存在的时刻，重复整点（秋季回拨）按绝对时间取请求时刻所在的一次。
-- `get_usage_health { range } -> UsageHealth`：运行看板（口径见 §12.3），
-  窗口与分桶规则同 `get_usage_stats`；UI 看板默认 `7d`。
 - `UsageTokens { input, output, cacheRead, cacheWrite, total }`：非负整数；
   total 优先使用 usage.totalTokens，缺失则四项相加；reasoningTokens 不重复加到输出或总数。
 - `UsageCost { total, main, background, subagent }`：USD 浮点数，
@@ -895,39 +883,13 @@ bashExecution（无 content 数组）与 developer：
   无 usage 时为 0，不读取价目表、不自行估价。
 - `UsageMessages { user, assistant }`：归属后全历史中对应角色的消息数（含子代理），
   toolResult / custom / developer 不计消息数；model_usage 不是 assistant 消息。
-- `UsageModel { provider, model, messages, cost, tokens, tps?, ttftMs? }`：provider/model 缺失为空字符串；
+- `UsageModel { provider, model, messages, cost, tokens }`：provider/model 缺失为空字符串；
   messages 为 assistant + model_usage 的调用条数（包括无 usage 的 assistant）。
-  `tps`/`ttftMs` 为该模型速度（`SessionUsage.models` 沿用同结构，无样本时字段缺省）：
-  速度 = Σoutput ÷ Σ(duration−ttft)，只取非 error/aborted 且 duration/ttft 均有效、
-  duration ≥ ttft ≥ 0 的调用；tps 分子再要求 gen ≥ 500ms 且 output ≥ 16，
-  无样本时为 null。统计含子代理调用（主对话+嵌套）。
 - `SessionUsage { messages: UsageMessages, tokens: UsageTokens, cost: UsageCost, models: UsageModel[] }`。
-- `UsageStats { total: SessionUsage, byProject: UsageProject[], byModel: UsageModel[],
-  trend: UsageTrend, sessions, timing: UsageTiming, topSessions: UsageSession[],
-  activity: UsageActivityPoint[], requests, hourly: [u64;24], prev: UsagePrevWindow|null }`；
-  `UsageProject { cwd, cost, tokens, sessions }`，sessions 为范围内有归属条目的顶层会话数。
-  cwd 取顶层 owner 的 header.cwd。项目/模型按花费降序（相同时按名称）。
-- `requests`：范围内请求数（assistant 条目 + `model_usage`，与 §12.3 `requests` 同口径）。
-- `hourly`：本地时区 24 小时请求分布（跟随 range，下标为小时）。
-- `prev`：等长上一窗口的 `{ cost, tokens, requests }`（同一次扫描累加；`range=all` 时为 null）。
-- `UsageTiming` 另有 `maxDurationMs: u64|null`：范围内最长单次（仅主对话、有自报 duration
-  的 assistant 样本最大值；无样本为 null）。
-- `activity`：近 364 天（含今天）的日点 `UsageActivityPoint { key, cost, tokens,
-  requests, topProject }`，稠密 364 项升序、缺桶补零，**不受 range 影响且只收带合法
-  时间戳条目**（model_change 不进）。`topProject` 为当日花费最高的顶层 owner
-  header.cwd（零成本日为 null）。end 为请求时刻 now，故末桶只收 now 之前的数据。
-- `UsageTrend { unit: "hour"|"day", points: UsageTrendPoint[] }`；
-  `UsageTrendPoint { key, cost, tokens }`：today/24h 为 hour 桶（key 为本地时区
-  `"YYYY-MM-DD HH"`），其余为 day 桶（`"YYYY-MM-DD"`；本节桶 key 例外于 §0 的
-  UTC 时间字符串规则）。升序；固定窗口（today/24h/7d/30d）补零到窗口内每个桶，
-  `all` 只含有数据的日期。不变量：固定窗口下 `sum(points.cost) == total.cost.total`。
-  `model_change` 不进趋势（也不产生花费/消息数）。
-- 无合法时间戳的条目只进 `all` 的总计与项目/模型表；带窗口的范围统计、趋势、
-  时间线与 recent 列表一律不纳入。
 
 ### 12.2 口径与 fork 归属
 
-以下归属与去重口径对 `get_usage_stats` 与 `get_usage_health` 同样适用。
+以下为单会话归属口径。
 
 1. 顶层主文件 `message.role=assistant` 的 usage.cost →「主对话」。
 2. **所有 `model_usage`（含嵌套文件里的）→「后台」**。
@@ -941,111 +903,30 @@ bashExecution（无 content 数组）与 developer：
    条目归链上最早的仍存在会话（父文件正常计，子文件跳过）。链外同 id 各自计入，
    链内同 id 但内容不符也视为无法确认来源而计自身。
 6. 父文件删除 / 无法解析 / 不在安全扫描集合 / 血缘成环 / 时间缺失，无法确认来源则计自身；
-   祖先中间文件已删时不猜测跨过它的血缘。统计筛时间之前先确定归属，避免 fork 复制重复入账。
-7. 只支持 header.version=3，详情非 v3 报 `UNSUPPORTED_FORMAT`，前端静默隐藏；
-   统计忽略非 v3 顶层会话及其附件。坏 JSON、非 UTF-8 行、形状/字段类型损坏行跳过；
+   祖先中间文件已删时不猜测跨过它的血缘。
+7. 只支持 header.version=3，非 v3 会话报 `UNSUPPORTED_FORMAT`，前端静默隐藏；
+   坏 JSON、非 UTF-8 行、形状/字段类型损坏行跳过；
    合法 user/assistant 无 usage 仍计消息数、tokens/cost 为 0。
 
-### 12.3 `get_usage_health` 运行看板
+### 12.3 `get_usage_health` 运行看板（已删除）
 
-窗口、分桶、补零/clamp 与 fork 归属口径同 §12.1/§12.2；请求、错误、兜底、缓存
-统计前均先经 `inherited()`（id + timestamp + parent + 全字段相等才认复制）去重，
-与 stats 复用同一次 scan。
+（已删除：用量/运行看板页与 `get_usage_stats`/`get_usage_health` 已移除，由 `omp stats` 替代；编号保留。）
 
-- `requests`：窗口内 assistant 消息（含子代理文件、含 stopReason 为 `error` /
-  `aborted` 的）+ `model_usage` 后台调用条目。
-- `errors`：`total` **只计** assistant 消息 `stopReason == "error"`；`model_usage`
-  的 stopReason/errorMessage 不计错误（只计 requests）。`aborted`（stopReason
-  `"aborted"`，用户中断）单独计，**不含入** `total` / `byKind` / `recent`。
-  `byKind: [{kind, count}]` 按 count 降序（同数按 kind 名升序）；`recent` ≤20 条、
-  新→旧、仅含有效时间戳条目，字段 `time`(epoch ms) / `provider` / `model` / `kind` /
-  `message`（单行、按字符截断 200；Bearer / Authorization 凭证、api_key /
-  apikey / token / secret / password 类键值、sk- / ghp_ / github_pat_ /
-  xox[bpas]- / AKIA / AIza 等密钥前缀、JWT 三段形态、≥32 位无特征长串一律
-  替换为 `[已脱敏]`）/ `retry: string|null`（`retryRecovery` 处置文案：recovered 且
-  attempt>1 →「重试 N 次后恢复」，attempt≤1 →「已重试恢复」；superseded →「被新请求
-  取代」；无 retryRecovery 时为 null）。
-- `latencyMs: { p50, p95 }|null`：范围内 assistant `duration`（毫秒，只要求 duration
-  有效，不要求 ttft；含 error/aborted，fork 去重同 timing 字段）的最近秩法分位
-  （升序后 `ceil(p*n)−1`，最小下标 0）；无样本为 null。
-- **ErrorKind**（7 值）：`quota | rate_limit | auth | timeout | network | server | other`。
-  分类为启发式：错误原文小写后**先命中先赢**，顺序 quota → rate_limit → timeout →
-  auth → network → server → other：
-  quota = 行首 `402`，或 usage limit / quota / payment / subscription / billing /
-  insufficient / out of credit（403 报文含 payment 同归 quota；「Retry budget」
-  是重试预算耗尽，不归 quota）；rate_limit = 行首 `429` 或 rate limit /
-  too many requests；timeout = timed out / timeout / stalled / deadline exceeded /
-  stream_timeout / etimedout；auth = 行首 `401`/`403` 或 unauthorized /
-  invalid api key / forbidden 等；network = econn* / connection / socket / fetch /
-  tls / certificate / stream was interrupted / closed before /
-  ended before completion 等；server = 行首 5xx 或 server_error / upstream /
-  unavailable / internal error / overloaded / try again later 等；未命中一律 other。
-- `fallbacks`：判定 = `type=="model_change"` 且 `role=="fallback"` 且
-  `resolvedModelIsFallback==true`（role 缺失 / `temporary` / `default` / `subagent:*`
-  或 resolved=false 均不计）。`to` 为该条 `model` 按**首个** `/` 拆出的
-  provider / model；`from` 为同一文件内此前最近一次 model_change（任意 role）或 assistant
-  消息所用模型，二者合并取最近；找不到为 `null`（该预查不过滤窗口、不做去重：
-  它描述切换瞬间此前生效的模型）。`byTarget` 按 count 降序（同数按 provider/model
-  升序）；`recent` ≤20 条、新→旧、仅含有效时间戳条目。
-- `cache`：`hitRate = cacheRead / (input + cacheRead + cacheWrite)`（窗口内
-  assistant + model_usage 的 token 累加）；分母为 0，或 `cacheRead + cacheWrite`
-  全为 0（上游不报缓存）时为 `null`（界面显示「—」而不是 0%）；`read` / `write` /
-  `input` 为累计值；`byModel: [{provider, model, requests, hitRate|null}]` 按
-  requests 降序（同数按 provider/model 升序），口径相同。
-- `timeline: { unit, points: [{ key, requests, errors, fallbacks, cacheRead,
-  promptTokens }] }`：unit / 桶 key / 补零 / 升序 / clamp 同 §12.1 的 trend；
-  `promptTokens = input + cacheRead + cacheWrite`；`errors` 只计 `"error"`
-  （不含 aborted）；界面按 cacheRead/promptTokens 逐桶算命中率，promptTokens=0
-  的桶断线、不画 0。
-  - 已知风险：DST 跳变导致桶 key 落到预设范围外时，由首/末桶 clamp 保住分桶合计
-  等于总计的不变量；固定窗口起点恒有界（缺口前跳、重复取绝对时间），不会因
-  DST 静默变成全量；错误分类是启发式，未见过的新报文落入 other。
+### 12.4 统计视图前端（已删除）
 
-### 12.4 前端（统计视图）
-
-侧栏视图切换条「统计」→ `StatsView`，两个标签页（手写 SVG 图表，无新增依赖）：
-
-- 「用量」（默认范围 `7d`）：页头 = 复制摘要 + 范围分段（今天 / 24 小时 / 7 天 / 30 天 /
-  全部）+ 刷新（保留扩展）；6 张 KPI 卡（成本，含趋势箭头 +「较上一周期」涨跌幅，`prev`
-  为 null 时显示中性横线 / Token / 请求数 / 缓存命中 / 工具耗时 / 最长单次
-  `timing.maxDurationMs`）；按小时请求面板（`hourly` 24 柱 + 峰值高亮 + foot 峰值/总数）；
-  成本/Token 可切换面积趋势图（按 `trend.unit` 画 hour/day 桶；该范围内全为 0 时
-  不画空坐标系，改显示「花费/Token 在该范围内为 0」）+ 项目构成横向条（原按项目/按模型
-  表格降为次级「明细」面板保留）；模型成本 donut（`byModel[].cost`，原 Token/耗时 donut
-  保留为次级行）；成本最高的会话三列表格（行可点）；活动热力图（近 52 周，指标
-  请求/Token/成本，默认请求；顶部 4 盒装 stats「活跃天数 / 当前连续 / 最长连续
-  （前端由 activity 算出）/ 峰值单日」；选中日详情面板含主要项目 `topProject`）。
-- 「运行看板」（默认范围 `7d`；KPI：请求（dot + 范围）/ 错误（值 + small 错误率，
-  另注中断数）/ 回退切换（值 + 来源→去向）/ 缓存命中（值 + `latencyMs` 的 p50/p95）；
-  范围分段 + 刷新在页头；错误类型横向条（count>3 用 danger 色否则 warn 色 + 由真实
-  数据生成的说明 note，为零隐藏）；缓存命中趋势（折线扩展）+ 按模型表（列序
-  模型/命中率/请求）；最近错误日志（时间 HH:MM:SS mono / 模型 mono / 中文 kind badge
-  （超时/服务端/网络/鉴权用 danger，限流/额度/其他用 warn）/ 消息 / 重试列 `retry`，
-  筛选 = 全部 + 后端 7 类动态项，带计数）；请求趋势与兜底去向保留为次级面板。
-  错误类型中文：额度用尽 / 触发限流 / 鉴权失败 / 响应超时 / 网络异常 / 服务端错误 / 其他。
-- 图表悬停（`UsageCharts.tsx` 的 `ChartBucket` 统一包装）：每桶 = 可见图形 + 竖向虚线
-  `line.chart-guide`（默认 `opacity: 0`，仅悬停该桶时 0.55）+ 透明全高热区 `rect.chart-hit`
-  （承 `data-tip`，`pointer-events: all`；图形本身 `pointer-events: none`，避免细柱/圆点抢命中）。
-  悬停反馈：热区填 `--accent-soft` 并描 `--accent` 边框、柱 `filter: brightness(1.15)`、
-  折线圆点 `r` 2.5→5、兜底圆点 `r` 3→4，全部 `var(--motion)` 过渡；提示浮层由全局 `ChartTip` 渲染。
-- 每个标签页各自记住范围；两个面板数据独立请求（范围/刷新按钮各自一套），
-  迟到响应不覆盖当前结果；已加载过的「范围」再切回时命中缓存不再请求（必须同时
-  复位加载态，否则刷新按钮会永久禁用）；**换范围时立刻不显示上一个范围的数据**
-  （命中过的范围用该范围缓存顶上，没命中过则清空并显示加载文案）；同范围刷新
-  （refresh nonce 变化）保留旧数据，避免闪空；加载 / 空数据 / 错误与重试状态与既有视图同风格。
+（已删除：用量/运行看板页与 `get_usage_stats`/`get_usage_health` 已移除，由 `omp stats` 替代；编号保留。）
 
 ### 12.5 IO、缓存与错误
 
 逐行复用 buffer，以 serde 最小字段结构解析，content/details 等直接跳过，不构造完整 Value 树。
-三个命令的阻塞扫描均在 spawn_blocking；`get_usage_stats` 与 `get_usage_health`
-复用同一次扫描（解析产物同进 UsageCache）。进程内缓存只保存解析结果与索引，不落盘：
+命令的阻塞扫描在 spawn_blocking。进程内缓存只保存解析结果与索引，不落盘：
 key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + inode。
 每次请求重新枚举全部顶层/嵌套 JSONL 并检查各文件 metadata（比「目录最新 mtime + 文件数」更严格，
 能覆盖旧嵌套文件追加、删除/新建及同尺寸替换），读前/读后 metadata 不一致的解析不入缓存。
 运行中的会话持续追加时下次调用必失效；这是读取过程的快照，不声称跨文件事务一致性。
 目录/文件软链接不跟随；子文件 canonicalize 后必须仍在会话根及其 owner sibling 目录内。
 失效路径 `NOT_FOUND`、顶层路径不合法/逃逸 `OUTSIDE_ROOT`、其他 IO 失败 `IO`；
-详情所有失败静默隐藏，统计与运行看板均有加载/空数据/错误与重试状态。
+详情所有失败静默隐藏。
 
 ### 12.6 真实数据只读调查（2026-10-16）
 
@@ -1182,7 +1063,7 @@ key 为每个文件的 canonical path + mtime（纳秒精度）+ size + ctime + 
 
 ### 14.4 前端
 
-- 侧栏视图切换条「清理」（与「管理」「统计」同条）→ 主区域 `CleanupView`：
+- 侧栏视图切换条「清理」（与「管理」同条）→ 主区域 `CleanupView`：
   页头 = 重新扫描（ghost + 图标）+ 删除选中（accent，「删除选中（n）」，n=0 禁用）；
   原因 KPI 四卡（可点击筛选，foot 为真实规则值「0 条有效消息 / cwd 已删除 /
   体积前 {topN} 且 ≥5MiB / 超过 {days} 天未更新」）；工具条（超过 N 天 / 体积前 N 名
@@ -1501,12 +1382,7 @@ classify:
   每轮一次 osascript **批量**取回全部 `tty → 标题`（单脚本遍历全部
   window→tab→session，绝不逐会话一次）。AppleScript 里不能直接用 `tab` 常量
   （会被解析为 iTerm 的 tab 类），用 `character id 9` 作分隔（实测验证）。
-- 最近会话 / 项目目录 / 今日花费与请求数由后台线程每 60 秒重算一次（用量统计口径，
-  首次统计完成前花费行不显示）；花费变化就地更新行文字，
-  最近会话与项目目录列表变化则重建菜单（见 §17.3）。
-  `Extras` 同时存裸值 `cost_usd`（美元）与 `request_count`（assistant 条目 +
-  model_usage，与 health.requests 同口径），供面板头部用，前端格式化；
-  `same_structure` 对裸值只比 presence（沿 `cost_text.is_some()` 模式）。
+- 最近会话 / 项目目录由后台线程每 60 秒重算一次；列表变化则重建菜单（见 §17.3）。
 
 ### 17.3 菜单结构与图标标题（`menubar::menu`，纯函数 + 单测）
 
@@ -1525,8 +1401,7 @@ classify:
 
 下拉菜单自上而下：①头部（禁用项）`omp 会话 · 占用 N · 工作中 X · 等待输入 Y`
 （含卡住时追加 `· 可能卡住 Z`；无占用：`没有运行中的 omp 会话`）；
-②今日花费行（禁用项）`今日花费 $X.XX`（用量统计的当日花费，见 §17.2；
-首次统计完成前不显示本行；设置 `showCost` 为关时不显示）；③分隔线；④会话行按 可能卡住 → 等待输入 →
+②分隔线；③会话行按 可能卡住 → 等待输入 →
 工作中 → 空闲 排序，每行 `<原生状态圆点> <标题去 π 前缀与 (omp) 后缀，`
 按设置 `titleWidth` 截断（`compact` 20 / `standard` 32 / `wide` 48 字）>[ · 项目名（`showProject` 开时追加）] · <应用名，iTerm2 时省略> · <状态> · <距上次活动>`
 （距上次活动自最后一条有意义记录起，`刚刚/X分/X小时Y分/X天`），
@@ -1537,25 +1412,25 @@ classify:
 可能卡住红、空闲灰（取代旧文本字形 ▶ ⏸ ○ ⚠）；
 点击行 = 聚焦该会话所在 iTerm 标签（`activate` + 按 tty `select`）；
 非 iTerm 占用者行置灰不可点，行内注明原因（`仅 iTerm 可聚焦` /
-`未找到占用进程` / `未找到终端`）；⑤分隔线（仅有会话行时出现）；
-⑥「新建会话 ▸」（最近 ≤5 个仍存在的项目目录，`~` 缩写，末项「选择目录…」，
+`未找到占用进程` / `未找到终端`）；④分隔线（仅有会话行时出现）；
+⑤「新建会话 ▸」（最近 ≤5 个仍存在的项目目录，`~` 缩写，末项「选择目录…」，
 点选即在该目录新开 iTerm 标签跑 `cd '<dir>' && omp`，§13.0 同一语义）；
-⑦「最近会话 ▸」（最近 ≤5 个非运行中会话 `标题 · 项目名`，无则「没有最近会话」，
+⑥「最近会话 ▸」（最近 ≤5 个非运行中会话 `标题 · 项目名`，无则「没有最近会话」，
 点选即在新 iTerm 标签跑 `omp --resume '<path>'`，§4.8 同一语义）；
-⑧「模式：<name> ▸」（不变，见 §24）；⑨分隔线；⑩「打开主窗口」；
-⑪「设置 ▸」（✓「等待输入时通知」（默认开）、✓「可能卡住时通知」（默认开，旧文件继承等待开关）、
+⑦「模式：<name> ▸」（不变，见 §24）；⑧分隔线；⑨「打开主窗口」；
+⑩「设置 ▸」（✓「等待输入时通知」（默认开）、✓「可能卡住时通知」（默认开，旧文件继承等待开关）、
 ✓「会话结束时通知」（默认关）、✓「在 Dock 显示图标」（默认关）、
 分隔线、「更多菜单栏设置…」（拉起主窗口并发出 `open-tray-settings` 事件切到菜单栏页）、
 「检查更新…」，点后拉起主窗口并发出 `check-app-update` 事件走手动检查：
 有新版弹「发现新版本 X」，已是最新 toast「已是最新版本 X」，
 失败 toast「检查更新失败：<msg>」；侧栏底部 `omp-resume <version>` 行的
 「检查应用更新」按钮走同一流程，版本经 `@tauri-apps/api/app` `getVersion` 读取，
-启动时静默检查不变）；⑫分隔线；⑬「退出 omp-resume」。
+启动时静默检查不变）；⑪分隔线；⑫「退出 omp-resume」。
 点击托盘图标的行为由设置 `clickAction` 控制：`panel`（默认）左键打开面板窗口（见 §17.11）；
 `window` 左键打开主窗口。左键永不自动弹原生菜单（`set_show_menu_on_left_click(false)` 恒定），
 右键直通原生菜单。
 菜单刷新（`menu::refresh_decision`，纯函数 + 单测）：模型一致不动；
-**仅行内文字（距上次活动 / 今日花费）变化**时用已装配菜单项的 `set_text`
+**仅行内文字（距上次活动）变化**时用已装配菜单项的 `set_text`
 **就地更新**（NSMenu 展开时改文字安全，不会关掉用户正看着的菜单）；
 **结构性变化**（会话增减 / 状态变化 / 排序变化 / 标题变化 / 设置勾选变化 /
 最近会话与项目目录列表变化，任一都会改头部计数、图标标题或行形状）才 `set_menu`
@@ -1569,7 +1444,7 @@ classify:
 
 ```json
 {"version": 1, "notifyOnWaiting": true, "notifyOnStuck": true, "notifyOnFinish": false,
- "badgeStyle": "count", "titleWidth": "standard", "showCost": true, "showProject": false,
+ "badgeStyle": "count", "titleWidth": "standard", "showProject": false,
  "showIdle": true, "compactRows": false, "clickAction": "panel", "showSearch": true, "showDockIcon": false}
 ```
 
@@ -1582,7 +1457,7 @@ classify:
 （只有 `version/notifyOnWaiting/showDockIcon`）。其中 `notifyOnStuck` 缺省时
 继承 `notifyOnWaiting`（卡住通知过去由等待输入总开关控制，继承后行为不变）；
 旧 `clickAction: "menu"` 经 `#[serde(alias = "menu")]` 反序列化为 `panel`
-（序列化写 `panel`，单测锁定）；`showSearch` 缺省开。
+（序列化写 `panel`，单测锁定）；`showSearch` 缺省开；旧文件中的 `showCost` 键被忽略。
 其余缺省字段取上表示例的默认值。
 `titleWidth` 一设两用：原生菜单按标题截断 20/32/48 字，面板按逻辑宽 316/356/396px。
 
@@ -1708,8 +1583,7 @@ classify:
   `tray-settings-changed` 事件（payload 为完整设置）。
 - `get_tray_preview() -> TrayPreview`：面板/菜单栏页的只读预览，由托盘缓存模型
   按 `session_id` join `last_rows` 映射（`RowModel` 不动，避免 `same_shape` 每轮重建）；
-  尚未完成首轮检测时 `ready=false`、行为空。`cost_usd` / `request_count` 仅 `showCost`
-  为真且已统计时有值；`modes` 为 null 表示尚未读到模式列表。
+  尚未完成首轮检测时 `ready=false`、行为空；`modes` 为 null 表示尚未读到模式列表。
   头部计数/分组/「全部 N 个」前端由 `rows + overflow` 派生。
 - 事件：`tray-settings-changed`（设置变更，payload 为完整设置；原生菜单勾选与
   `set_tray_settings` 都会发）；`open-tray-settings`（原生菜单「更多菜单栏设置…」
@@ -1996,7 +1870,7 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
 - 边界：`--border`（分割线）/ `--border-strong`（输入框与按钮边界）。
 - 强调：`--accent` / `--accent-fill`（实心按钮）/ `--accent-soft`（淡底）/ `--accent-ring`（焦点、内描边）；6 个预设由 `data-accent` 覆盖。
 - 字号 `--fs-xs..2xl`、间距 `--sp-1..6`、圆角 `--radius-xs..xl`/`full`、动效 `--motion-fast`/`--motion-base`/`--ease-out`、阴影 `--shadow-sm`/`--shadow-md`、层级 `--z-titlebar`/`--z-sticky`/`--z-popover`/`--z-overlay`。
-- 例外：舞台画布内 7/8/9px 与 §12 图形内的字号不受字号刻度约束。
+- 例外：舞台画布内 7/8/9px 与 bench 图形内的字号不受字号刻度约束。
 
 ### 19.2 形态规则
 
@@ -2316,7 +2190,10 @@ MemoryGraphEdge = { source: string; target: string; kind: "summary" | "related" 
   （符号链接在枚举阶段已跳过）。
 - 单会话最多展开 200 个附件 jsonl（超出按 mtime 降序保留），丢弃数写入 `omitted`。
 - 活动流每角色保留最近 30 条；文本经 `usage::redact::sanitize_message` 脱敏后截断
-  （活动 80 字符、派发说明 60 字符）。
+  （活动 80 字符、派发说明 60 字符）。脱敏规则：Bearer / Authorization 凭证、
+  api_key / apikey / token / secret / password 类键值、sk- / ghp_ / github_pat_ /
+  xox[bpas]- / AKIA / AIza 等密钥前缀、JWT 三段形态、≥32 位无特征长串一律替换为
+  `[已脱敏]`。
 
 ### 23.3 状态判定（`stage/derive.rs`，纯函数，按序短路）
 
@@ -2672,5 +2549,5 @@ worker 会话 id 为 `worker-<ticketId>`。
 `Config.extra_roots` 放入 `<data_dir>/superagent/sessions`
 （`data_dir` 与 §26.1 同口径）。`validate_session_path` 依次尝试
 `[sessions_dir] + extra_roots`，取第一个满足 `strip_prefix` 的根，
-之后的形状校验原样不动（见 §6 条目 4）。扫描（列表/用量/菜单栏/清理）
+之后的形状校验原样不动（见 §6 条目 4）。扫描（列表/菜单栏/清理）
 仍然只看 `sessions_dir`。

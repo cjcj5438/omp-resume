@@ -1,19 +1,12 @@
 //! 用量统计聚合。
-use std::collections::{BTreeMap, HashMap};
-
-use chrono::{DateTime, Local, TimeZone, Timelike, Utc};
+use std::collections::HashMap;
 
 use crate::config::{validate_session_path, Config};
-use crate::model::{
-    AppError, AppResult, ErrorCode, SessionUsage, UsageActivityPoint, UsageModel, UsagePrevWindow,
-    UsageProject, UsageRange, UsageSession, UsageStats, UsageTiming, UsageTokens, UsageTrend,
-    UsageTrendPoint,
-};
+use crate::model::{AppError, AppResult, ErrorCode, SessionUsage, UsageModel, UsageTokens};
 
 use super::{
     cache::{scan, UsageCache},
     parse::{Entry, Kind},
-    window::{bucketed_key, in_window, prev_window_at, trailing_days, window_at},
 };
 
 /// token 累加：损坏数据可能带极大单值，饱和加避免 debug panic / release 回绕。
@@ -29,23 +22,20 @@ pub(super) fn add_usage(usage: &mut SessionUsage, entry: &Entry, nested: bool) {
     match entry.kind {
         Kind::User => usage.messages.user += 1,
         Kind::Assistant => usage.messages.assistant += 1,
-        Kind::Background | Kind::ModelChange => {}
-    }
-    if entry.kind == Kind::ModelChange {
-        return;
+        Kind::Background => {}
     }
     add_tokens(&mut usage.tokens, &entry.tokens);
     match entry.kind {
         Kind::Background => usage.cost.background += entry.cost,
         Kind::Assistant if nested => usage.cost.subagent += entry.cost,
         Kind::Assistant => usage.cost.main += entry.cost,
-        Kind::User | Kind::ModelChange => {}
+        Kind::User => {}
     }
     usage.cost.total = usage.cost.main + usage.cost.background + usage.cost.subagent;
 }
 
 pub(super) fn add_model(models: &mut HashMap<(String, String), UsageModel>, entry: &Entry) {
-    if entry.kind == Kind::User || entry.kind == Kind::ModelChange {
+    if entry.kind == Kind::User {
         return;
     }
     let model = models
@@ -68,53 +58,6 @@ pub(super) fn sorted_models(models: HashMap<(String, String), UsageModel>) -> Ve
             .then_with(|| (&a.provider, &a.model).cmp(&(&b.provider, &b.model)))
     });
     models
-}
-
-pub(super) const ACTIVITY_DAYS: i64 = 364;
-pub(super) const TOP_SESSIONS: usize = 8;
-pub(super) const SPEED_MIN_GEN_MS: u64 = 500;
-pub(super) const SPEED_MIN_OUTPUT: u64 = 16;
-
-#[derive(Default)]
-struct ActivityAcc {
-    cost: f64,
-    tokens: UsageTokens,
-    requests: u64,
-    /// 当日各项目花费（owner cwd → cost），输出时取最大者为 top_project。
-    by_project: HashMap<String, f64>,
-}
-
-#[derive(Default)]
-pub(super) struct SpeedAcc {
-    out: u64,
-    gen_ms: u64,
-    ttft_ms: u64,
-    ttft_n: u64,
-}
-
-impl SpeedAcc {
-    fn add(&mut self, entry: &Entry) {
-        let Some(timing) = entry.timing else {
-            return;
-        };
-        if entry.stop_reason == "error" || entry.stop_reason == "aborted" {
-            return;
-        }
-        self.ttft_ms = self.ttft_ms.saturating_add(timing.wait_ms);
-        self.ttft_n = self.ttft_n.saturating_add(1);
-        if timing.gen_ms >= SPEED_MIN_GEN_MS && entry.tokens.output >= SPEED_MIN_OUTPUT {
-            self.out = self.out.saturating_add(entry.tokens.output);
-            self.gen_ms = self.gen_ms.saturating_add(timing.gen_ms);
-        }
-    }
-
-    fn tps(&self) -> Option<f64> {
-        (self.gen_ms > 0).then(|| self.out as f64 / (self.gen_ms as f64 / 1000.0))
-    }
-
-    fn ttft(&self) -> Option<f64> {
-        (self.ttft_n > 0).then(|| self.ttft_ms as f64 / self.ttft_n as f64)
-    }
 }
 
 pub fn session_usage(cfg: &Config, cache: &UsageCache, path: &str) -> AppResult<SessionUsage> {
@@ -150,240 +93,4 @@ pub fn session_usage(cfg: &Config, cache: &UsageCache, path: &str) -> AppResult<
     }
     usage.models = sorted_models(models);
     Ok(usage)
-}
-
-pub fn usage_stats(cfg: &Config, cache: &UsageCache, range: UsageRange) -> AppResult<UsageStats> {
-    stats_at(cfg, cache, range, Utc::now(), &Local)
-}
-
-pub(super) fn stats_at<Tz: TimeZone>(
-    cfg: &Config,
-    cache: &UsageCache,
-    range: UsageRange,
-    now: DateTime<Utc>,
-    timezone: &Tz,
-) -> AppResult<UsageStats>
-where
-    Tz::Offset: std::fmt::Display,
-{
-    let window = window_at(range, now, timezone);
-    let prev_window = prev_window_at(range, &window, now, timezone);
-    let activity_window = trailing_days(ACTIVITY_DAYS, now, timezone);
-    let library = scan(cfg, cache)?;
-    let mut stats = UsageStats::default();
-    let mut models = HashMap::new();
-    let mut projects: HashMap<String, UsageProject> = HashMap::new();
-    let mut trend: BTreeMap<String, (f64, UsageTokens)> = BTreeMap::new();
-    let mut activity: BTreeMap<String, ActivityAcc> = BTreeMap::new();
-    let mut hourly = [0u64; 24];
-    let mut prev = UsagePrevWindow::default();
-    let has_prev = prev_window.is_some();
-    let mut speeds: HashMap<(String, String), SpeedAcc> = HashMap::new();
-    let mut main_speed = SpeedAcc::default();
-    let mut timing = UsageTiming::default();
-    let mut sessions: HashMap<usize, UsageSession> = HashMap::new();
-    for (i, file) in library.files.iter().enumerate() {
-        if file.data.version != Some(3) || library.files[file.owner].data.version != Some(3) {
-            continue;
-        }
-        let cwd = &library.files[file.owner].data.cwd;
-        for (j, entry) in file.data.entries.iter().enumerate() {
-            let in_range = in_window(&window, entry.timestamp);
-            let in_prev = prev_window
-                .as_ref()
-                .is_some_and(|w| in_window(w, entry.timestamp));
-            let in_activity = entry.kind != Kind::ModelChange
-                && entry.timestamp.is_some()
-                && in_window(&activity_window, entry.timestamp);
-            if !(in_range || in_activity || in_prev) || library.inherited(i, entry) {
-                continue;
-            }
-            // 上一窗口：只累 cost/tokens/requests（用量条目），与主口径同去重。
-            if in_prev && entry.kind != Kind::ModelChange {
-                prev.cost += entry.cost;
-                prev.tokens = prev.tokens.saturating_add(entry.tokens.total);
-                if matches!(entry.kind, Kind::Assistant | Kind::Background) {
-                    prev.requests = prev.requests.saturating_add(1);
-                }
-            }
-            if in_activity {
-                if let Some(ms) = entry.timestamp {
-                    if let Some(key) = bucketed_key(&activity_window, ms, timezone) {
-                        let slot = activity.entry(key).or_default();
-                        slot.cost += entry.cost;
-                        add_tokens(&mut slot.tokens, &entry.tokens);
-                        if matches!(entry.kind, Kind::Assistant | Kind::Background) {
-                            slot.requests = slot.requests.saturating_add(1);
-                        }
-                        if entry.cost > 0.0 {
-                            *slot.by_project.entry(cwd.clone()).or_default() += entry.cost;
-                        }
-                    }
-                }
-            }
-            if !in_range {
-                continue;
-            }
-            add_usage(&mut stats.total, entry, i >= library.top_count);
-            add_model(&mut models, entry);
-            let project = projects.entry(cwd.clone()).or_insert_with(|| UsageProject {
-                cwd: cwd.clone(),
-                ..UsageProject::default()
-            });
-            project.cost += entry.cost;
-            add_tokens(&mut project.tokens, &entry.tokens);
-            let is_new = !sessions.contains_key(&file.owner);
-            if is_new {
-                project.sessions += 1;
-            }
-            let s = sessions.entry(file.owner).or_insert_with(|| UsageSession {
-                id: library.files[file.owner].data.id.clone(),
-                path: library.files[file.owner]
-                    .path
-                    .to_string_lossy()
-                    .into_owned(),
-                cwd: cwd.clone(),
-                ..Default::default()
-            });
-            s.cost += entry.cost;
-            s.tokens = s.tokens.saturating_add(entry.tokens.total);
-            if entry.kind == Kind::Assistant {
-                s.calls += 1;
-            }
-            if let Some(t) = entry.timestamp {
-                s.last_ms = s.last_ms.max(t);
-            }
-            // 趋势只收纳用量条目（model_change 恒零花费，不进趋势）。
-            if entry.kind == Kind::ModelChange {
-                continue;
-            }
-            if matches!(entry.kind, Kind::Assistant | Kind::Background) {
-                stats.requests = stats.requests.saturating_add(1);
-            }
-            if entry.kind == Kind::Assistant {
-                speeds
-                    .entry((entry.provider.clone(), entry.model.clone()))
-                    .or_default()
-                    .add(entry);
-                if i < library.top_count {
-                    main_speed.add(entry);
-                    if entry.timing.is_some() {
-                        timing.calls += 1;
-                    }
-                    if let Some(t) = &entry.timing {
-                        timing.wait_ms = timing.wait_ms.saturating_add(t.wait_ms);
-                        timing.gen_ms = timing.gen_ms.saturating_add(t.gen_ms);
-                    }
-                    if let Some(d) = entry.duration_ms {
-                        timing.max_duration_ms =
-                            Some(timing.max_duration_ms.map_or(d, |m| m.max(d)));
-                    }
-                    let f = file.data.flows[j];
-                    timing.tool_ms = timing.tool_ms.saturating_add(f.tool_ms);
-                    timing.tool_calls += f.tool_results as u64;
-                }
-            }
-            let Some(ms) = entry.timestamp else {
-                continue;
-            };
-            // 24 小时请求分布：请求口径（assistant + model_usage），跟随 range，本地时区小时桶。
-            if matches!(entry.kind, Kind::Assistant | Kind::Background) {
-                if let Some(hour) = Utc
-                    .timestamp_millis_opt(ms)
-                    .single()
-                    .map(|t| t.with_timezone(timezone).hour() as usize)
-                {
-                    hourly[hour] = hourly[hour].saturating_add(1);
-                }
-            }
-            let Some(key) = bucketed_key(&window, ms, timezone) else {
-                continue;
-            };
-            let slot = trend
-                .entry(key)
-                .or_insert_with(|| (0.0, UsageTokens::default()));
-            slot.0 += entry.cost;
-            add_tokens(&mut slot.1, &entry.tokens);
-        }
-    }
-    stats.by_project = projects.into_values().collect();
-    stats
-        .by_project
-        .sort_by(|a, b| b.cost.total_cmp(&a.cost).then_with(|| a.cwd.cmp(&b.cwd)));
-    stats.by_model = sorted_models(models);
-    for m in &mut stats.by_model {
-        if let Some(acc) = speeds.get(&(m.provider.clone(), m.model.clone())) {
-            m.tps = acc.tps();
-            m.ttft_ms = acc.ttft();
-        }
-    }
-    stats.total.models = stats.by_model.clone();
-    stats.sessions = sessions.len() as u64;
-    timing.tps = main_speed.tps();
-    stats.timing = timing;
-    let mut top_sessions: Vec<UsageSession> =
-        sessions.into_values().filter(|s| s.cost > 0.0).collect();
-    top_sessions.sort_by(|a, b| {
-        b.cost
-            .total_cmp(&a.cost)
-            .then_with(|| b.last_ms.cmp(&a.last_ms))
-            .then_with(|| a.path.cmp(&b.path))
-    });
-    top_sessions.truncate(TOP_SESSIONS);
-    stats.top_sessions = top_sessions;
-    stats.activity = activity_window
-        .keys
-        .iter()
-        .map(|key| match activity.remove(key) {
-            Some(acc) => {
-                let top_project = acc
-                    .by_project
-                    .into_iter()
-                    .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-                    .map(|(cwd, _)| cwd);
-                UsageActivityPoint {
-                    key: key.clone(),
-                    cost: acc.cost,
-                    tokens: acc.tokens,
-                    requests: acc.requests,
-                    top_project,
-                }
-            }
-            None => UsageActivityPoint {
-                key: key.clone(),
-                cost: 0.0,
-                tokens: UsageTokens::default(),
-                requests: 0,
-                top_project: None,
-            },
-        })
-        .collect();
-    stats.hourly = hourly;
-    stats.prev = has_prev.then_some(prev);
-    stats.trend = UsageTrend {
-        unit: window.unit,
-        points: if window.keys.is_empty() {
-            trend
-                .into_iter()
-                .map(|(key, (cost, tokens))| UsageTrendPoint { key, cost, tokens })
-                .collect()
-        } else {
-            window
-                .keys
-                .iter()
-                .map(|key| {
-                    let (cost, tokens) = trend
-                        .get(key)
-                        .cloned()
-                        .unwrap_or((0.0, UsageTokens::default()));
-                    UsageTrendPoint {
-                        key: key.clone(),
-                        cost,
-                        tokens,
-                    }
-                })
-                .collect()
-        },
-    };
-    Ok(stats)
 }
