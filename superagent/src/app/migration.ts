@@ -1,5 +1,5 @@
 /**
- * Migrates a schema 10 database to schema 11 in a single transaction so runtime readers never convert legacy shapes.
+ * Migrates older databases forward in a single transaction so runtime readers never convert legacy shapes.
  * Databases older than schema 10 are rejected: this version cannot migrate them.
  */
 import { basename } from 'node:path'
@@ -17,7 +17,7 @@ import type { SettingsVersion, Store } from './store.ts'
 import { Versions } from './versions.ts'
 import { KV, type Key } from '../kv.ts'
 
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 13
 /** The oldest database schema version this build can open and migrate directly. */
 export const OLDEST_SCHEMA = 10
 /** Returns an error message explaining why `version` cannot be opened: older schemas need a new state directory. */
@@ -182,25 +182,26 @@ const ORIGINS: Readonly<Record<string, SettingsOrigin>> = { web: 'panel', 'orche
 const REMOVED_SOURCES: readonly string[] = ['github-issue']
 /**
  * Upgrade current and historical settings records to the schema 11 structure: strip removed source kinds from active
- * settings while keeping them in historical revisions and mapping historical origin names.
+ * settings while keeping them in historical revisions and mapping historical origin names. Projects are built from each
+ * record first, while the executor directory and `prepare` command are still present for `migrateTo13` to consume.
  */
 function migrateSettingsRecords(store: Store): void {
   const stored = store.get<unknown>('settings')
   if (stored !== undefined) {
-    const settings = SettingsSchema.parse(migrateSettings(stored))
+    const settings = SettingsSchema.parse(migrateSettings(settingsWithProjects(stored)))
     store.set('settings', { ...settings, sources: Object.fromEntries(Object.entries(settings.sources).filter(([id]) => !REMOVED_SOURCES.includes(id))) })
   }
   // Preserve unparseable historical revisions as-is so a corrupt history entry does not block startup.
   for (const name of store.keys('settings-version:')) {
     const version = store.get<{ source: string; settings: unknown }>(name)!
-    const settings = SettingsSchema.safeParse(migrateSettings(version.settings))
+    const settings = SettingsSchema.safeParse(migrateSettings(settingsWithProjects(version.settings)))
     store.set(name, { ...version, source: ORIGINS[version.source] ?? version.source, ...settings.success ? { settings: settings.data } : {} })
   }
 }
 interface Member { name?: string; feishuId?: string; github?: string }
 /**
  * Convert legacy flat settings (chat lists in Policy, top-level pause flag) or pre-schema-11 domain settings into current domain blocks:
- * strips fields replaced by rule instructions and prompts (Executor reviewers and branch prefix, rule `visual` flag, `autoMergeLineLimit`, Source `authority`, GitHub `mergeCli`), extracts `paused` to the top level, and splits cross-source `members` into per-source `policy.sources` entries.
+ * strips fields replaced by rule instructions, prompts, and per-project settings (Executor reviewers, branch prefix, ticket directory, and prepare command, rule `visual` flag, `autoMergeLineLimit`, Source `authority`, GitHub `mergeCli`), extracts `paused` to the top level, and splits cross-source `members` into per-source `policy.sources` entries.
  */
 export function migrateSettings(value: unknown): unknown {
   if (!isObject(value)) return value
@@ -223,7 +224,9 @@ export function migrateSettings(value: unknown): unknown {
 function withoutRemovedFields(value: Stored): Stored {
   const { executor, policy, sources, ...rest } = value as { executor?: Stored; policy?: Stored; sources?: Record<string, Stored> }
   // `paused` is now a top-level setting rather than a field on `executor`.
-  const { reviewer: _reviewer, visualReviewer: _visualReviewer, branchPrefix: _branchPrefix, paused, ...kept } = executor ?? {}
+  // The ticket directory and `prepare` command now live on each project, so the executor fields go.
+  const { reviewer: _reviewer, visualReviewer: _visualReviewer, branchPrefix: _branchPrefix, directory: _directory,
+    prepare: _prepare, paused, ...kept } = executor ?? {}
   const { members, memberChat, autoMergeLineLimit: _limit, rules: storedRules, ...policyRest } = policy ?? {}
   const rules = Array.isArray(storedRules) ? storedRules.map((rule: unknown) => { if (!isObject(rule)) return rule; const { visual: _visual, ...fields } = rule; return fields })
     : storedRules
@@ -233,8 +236,9 @@ function withoutRemovedFields(value: Stored): Stored {
       ...(memberChat ? { syncChat: memberChat } : {}) },
     github: { allowed: people.filter(member => member.github).map(member => ({ id: member.github! })) },
   } : undefined
-  // The GitHub Source no longer configures a dedicated merge account; auto-merge policy now lives in prompts.
-  const withoutMerge = (id: string, config: unknown) => { if (id !== 'github' || !isObject(config)) return config; const { mergeCli: _mergeCli, ...fields } = config; return fields }
+  // The GitHub Source no longer configures a dedicated merge account (auto-merge policy lives in prompts) or a repository
+  // (moved into projects by settingsWithProjects before this runs); strip both so standalone output stays schema-valid.
+  const withoutMerge = (id: string, config: unknown) => { if (id !== 'github' || !isObject(config)) return config; const { mergeCli: _mergeCli, repository: _repository, ...fields } = config; return fields }
   const instances = sources ? Object.fromEntries(Object.entries(sources).map(([id, instance]) => {
     const { authority: _authority, ...fields } = instance
     return [id, 'config' in fields ? { ...fields, config: withoutMerge(id, fields.config) } : fields]
@@ -367,7 +371,8 @@ export function ticketOf(old: Stored, answers = new Map<string, string[]>(), hum
   const triggerIds = Array.isArray(meta.triggerIds) ? meta.triggerIds as string[] : triggerId ? [triggerId] : []
   const directory = text(meta.workspace)
   // Remaining `meta` fields are obsolete: schema 6 task states stay in the `task` table, and accept fields live on `execution` and `mandate`.
-  const execution: Execution | undefined = directory ? { name: text(meta.name) ?? basename(directory), directory,
+  // migrateTo13 fills `execution.project` from the current settings' first project; an empty placeholder keeps this step compiling.
+  const execution: Execution | undefined = directory ? { project: '', name: text(meta.name) ?? basename(directory), directory,
     assignment: text(meta.assignment) ?? text(meta.legacyPrompt) ?? '' } : undefined
   const inputs = ticket.inputs.map((input): TicketInput => input.kind === 'trigger' ? { ...input, ...human(input.triggerId) ? { human: true } : {} }
     : input.kind !== 'reopen' || !ticket.undelivered.includes(input.id) ? input
@@ -584,7 +589,7 @@ function issueSourceRecords(store: Store): void {
 function githubCursors(store: Store): void {
   for (const name of [...store.keys('github-thread:'), ...store.keys('thread-since:github:')]) {
     const at = store.get<string>(name as Key<string>)
-    const cursor = KV.github.cursor(Number(name.slice(name.lastIndexOf(':') + 1)))
+    const cursor = KV.github.cursor(name.slice(name.lastIndexOf(':') + 1))
     const current = store.get(cursor)
     if (at && !(current && current >= at)) store.set(cursor, at)
     store.delete(name)
@@ -608,4 +613,201 @@ function assessmentTriggers(store: Store): void {
     store.db.prepare(`INSERT INTO effect (kind, key, value, seq, due, since) VALUES ('assessment', ?, ?, ?, ?, ?) ON CONFLICT(kind, key) DO NOTHING`)
       .run(evaluation.id, JSON.stringify({ triggerId: evaluation.triggerIds[0] }), ++seq, Date.now(), new Date().toISOString())
   }
+}
+
+/** Rewrite all schema 11 GitHub records into their repository-scoped schema 12 shapes in place. */
+export function migrateTo12(store: Store): void {
+  const current = store.settingsHistory(1)[0]?.settings
+  // On a 10→13 chain the schema 11 step already built projects and dropped the configured repository, so fall back to the first project.
+  const latest = current?.sources.github?.config.repository ?? current?.projects[0]?.repository
+  const legacy = (store.get('settings' as Key<{ sources?: { github?: { config?: { repository?: unknown } } } }>)
+    ?.sources?.github?.config?.repository)
+  const configured = latest ?? legacy
+  const repo = typeof configured === 'string' ? configured.toLowerCase() : ''
+  if (!repo) return
+  // Key rewrite `k(s)`: only strings fully matching `^github:(\d+|ci:.+)$`.
+  const keyOf = (value: string): string => {
+    const match = /^github:(\d+|ci:.+)$/.exec(value)
+    if (!match) return value
+    return value.startsWith('github:ci:') ? `github:${repo}#ci:${value.slice('github:ci:'.length)}` : `github:${repo}#${match[1]}`
+  }
+  const idOf = (id: string): string => /^\d+$/.test(id) || id.startsWith('ci:') ? `${repo}#${id}` : id
+  const rewrite = (value: unknown, triggerSource: string | undefined, threadRef: boolean): unknown => {
+    if (typeof value === 'string') return keyOf(value)
+    if (Array.isArray(value)) return value.map(item => rewrite(item, triggerSource, false))
+    if (!isObject(value)) return value
+    const source = typeof value.source === 'string' ? value.source : triggerSource
+    // Only thread-ref positions (items of `threads` arrays, objects under `ref`) get id rewrites; actor ids
+    // (GitHub logins, possibly all digits) and trigger top-level ids are kept verbatim.
+    const ref = threadRef && value.source === 'github'
+    const out: Stored = {}
+    for (const [field, item] of Object.entries(value)) {
+      if (field === 'id' && typeof item === 'string') out[field] = ref ? idOf(item) : item
+      else if (field === 'threads' && Array.isArray(item)) out[field] = item.map(entry => rewrite(entry, source, true))
+      else if (field === 'ref' && isObject(item)) out[field] = rewrite(item, source, true)
+      else if (field === 'thread' && typeof item === 'string') out[field] = keyOf(item)
+      else if (field === 'address' && value.source === 'github' && isObject(item) && typeof item.number === 'string') {
+        const address: Stored = { ...Object.fromEntries(Object.entries(item).map(([k, v]) => [k, rewrite(v, source, false)])) }
+        address.repository = repo
+        out[field] = address
+      }
+      else if (field === 'meta' && value.source === 'github' && isObject(item)) {
+        out[field] = { ...Object.fromEntries(Object.entries(item).map(([k, v]) => [k, rewrite(v, source, false)])) , repository: repo }
+      }
+      else out[field] = rewrite(item, source, false)
+    }
+    return out
+  }
+  // JSON value columns.
+  const rewriteTable = (table: 'trigger' | 'disposition' | 'ticket' | 'decision' | 'outbox' | 'effect', id: string) => {
+    for (const row of store.db.prepare(`SELECT ${id}, value FROM ${table}`).all() as { value: unknown }[]) {
+      const value = JSON.parse(String(row.value)) as unknown
+      const next = rewrite(value, undefined, false)
+      if (JSON.stringify(next) === JSON.stringify(value)) continue
+      const keyValue = String((row as unknown as Record<string, unknown>)[id.split(',')[0]!.trim()!])
+      if (table === 'effect') {
+        const kind = String((row as unknown as Record<string, unknown>).kind)
+        store.db.prepare('UPDATE effect SET value = ? WHERE kind = ? AND key = ?')
+          .run(JSON.stringify(next), kind, String((row as unknown as Record<string, unknown>).key))
+      }
+      else store.db.prepare(`UPDATE ${table} SET value = ? WHERE ${id.split(',')[0]!.trim()} = ?`).run(JSON.stringify(next), keyValue)
+    }
+  }
+  rewriteTable('trigger', 'id')
+  rewriteTable('disposition', 'id')
+  rewriteTable('ticket', 'id')
+  rewriteTable('decision', 'id')
+  rewriteTable('outbox', 'id')
+  rewriteTable('effect', 'kind, key')
+  // thread.key is a primary-key change (delete old row, insert new).
+  for (const row of store.db.prepare("SELECT key, value FROM thread WHERE key GLOB 'github:*'").all()) {
+    const oldKey = String((row as { key: unknown }).key)
+    const nextKey = keyOf(oldKey)
+    if (nextKey === oldKey) continue
+    const value = JSON.parse(String((row as { value: unknown }).value)) as unknown
+    const next = rewrite(value, undefined, false)
+    store.db.prepare('DELETE FROM thread WHERE key = ?').run(oldKey)
+    store.db.prepare('INSERT OR REPLACE INTO thread VALUES (?,?)').run(nextKey, JSON.stringify(next))
+  }
+  // Remaining thread values that were not keyed by a github key (none expected, but rewrite defensively).
+  for (const row of store.db.prepare('SELECT key, value FROM thread').all()) {
+    const value = JSON.parse(String((row as { value: unknown }).value)) as unknown
+    const next = rewrite(value, undefined, false)
+    if (JSON.stringify(next) !== JSON.stringify(value)) store.db.prepare('UPDATE thread SET value = ? WHERE key = ?').run(JSON.stringify(next), String((row as { key: unknown }).key))
+  }
+  for (const row of store.db.prepare("SELECT thread, id FROM trigger_thread WHERE thread GLOB 'github:*'").all()) {
+    const next = keyOf(String((row as { thread: unknown }).thread))
+    if (next !== String((row as { thread: unknown }).thread)) {
+      store.db.prepare('UPDATE trigger_thread SET thread = ? WHERE thread = ? AND id = ?')
+        .run(next, String((row as { thread: unknown }).thread), String((row as { id: unknown }).id))
+    }
+  }
+  for (const row of store.db.prepare("SELECT id, thread FROM decision WHERE thread GLOB 'github:*'").all()) {
+    const next = keyOf(String((row as { thread: unknown }).thread))
+    if (next !== String((row as { thread: unknown }).thread)) store.db.prepare('UPDATE decision SET thread = ? WHERE id = ?').run(next, String((row as { id: unknown }).id))
+  }
+  for (const row of store.db.prepare("SELECT kind, key FROM effect WHERE key GLOB 'github:*'").all()) {
+    const next = keyOf(String((row as { key: unknown }).key))
+    if (next !== String((row as { key: unknown }).key)) {
+      store.db.prepare('UPDATE effect SET key = ? WHERE kind = ? AND key = ?')
+        .run(next, String((row as { kind: unknown }).kind), String((row as { key: unknown }).key))
+    }
+  }
+  // All kv.value JSON.
+  for (const row of store.db.prepare('SELECT key, value FROM kv').all()) {
+    const name = String((row as { key: unknown }).key)
+    let value: unknown
+    try { value = JSON.parse(String((row as { value: unknown }).value)) } catch { continue }
+    // Keys `<n>` inside the `github-retry` value -> `R#<n>`.
+    if (name === 'github-retry' && isObject(value)) {
+      const retries: Stored = {}
+      for (const [thread, retry] of Object.entries(value)) retries[/^\d+$/.test(thread) ? `${repo}#${thread}` : thread] = retry
+      store.db.prepare('UPDATE kv SET value = ? WHERE key = ?').run(JSON.stringify(retries), name)
+      continue
+    }
+    const next = rewrite(value, undefined, false)
+    if (JSON.stringify(next) !== JSON.stringify(value)) store.db.prepare('UPDATE kv SET value = ? WHERE key = ?').run(JSON.stringify(next), name)
+  }
+  // KV keys.
+  const move = (from: string, to: string) => {
+    if (from === to) return
+    const row = store.db.prepare('SELECT value FROM kv WHERE key = ?').get(from) as { value: unknown } | undefined
+    if (row === undefined) return
+    store.db.prepare('INSERT OR REPLACE INTO kv VALUES (?,?)').run(to, String(row.value))
+    store.db.prepare('DELETE FROM kv WHERE key = ?').run(from)
+  }
+  for (const name of store.keys('github-cursor:')) {
+    const suffix = name.slice('github-cursor:'.length)
+    if (/^\d+$/.test(suffix)) move(name, `github-cursor:${repo}#${suffix}`)
+  }
+  for (const name of store.keys('github-ci:')) {
+    const suffix = name.slice('github-ci:'.length)
+    if (/^\d+$/.test(suffix)) move(name, `github-ci:${repo}#${suffix}`)
+  }
+  for (const name of store.keys('github-stream:')) {
+    const suffix = name.slice('github-stream:'.length)
+    if (!suffix.includes(':')) move(name, `github-stream:${repo}:${suffix}`)
+  }
+  move('github-branch-ci', `github-branch-ci:${repo}`)
+}
+
+/** Derive a project ID from an `owner/name` repository: its lowercased name segment with other runs collapsed to `-`. */
+export function projectIdFrom(repo: string): string {
+  const name = repo.slice(repo.lastIndexOf('/') + 1).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 32)
+  return /^[a-z]/.test(name) ? name : `p-${name}`.slice(0, 32)
+}
+/**
+ * Add a `projects` list to schema 12 settings lacking one, built from the configured GitHub repository, Feishu chats, and
+ * executor directory and `prepare` command (empty when no repository is configured); settings that already list projects,
+ * or that are not objects, are returned unchanged, and no `policyVersion` is recomputed.
+ */
+function settingsWithProjects(value: unknown): unknown {
+  if (!isObject(value) || 'projects' in value) return value
+  const sources = isObject(value.sources) ? value.sources : undefined
+  const github = sources !== undefined && isObject(sources.github) ? sources.github : undefined
+  const config = github !== undefined && isObject(github.config) ? github.config : undefined
+  const repo = typeof config?.repository === 'string' && config.repository ? config.repository : ''
+  const feishu = sources !== undefined && isObject(sources.feishu) ? sources.feishu : undefined
+  const feishuConfig = feishu !== undefined && isObject(feishu.config) ? feishu.config : undefined
+  const chats = feishuConfig !== undefined && Array.isArray(feishuConfig.chats) ? feishuConfig.chats : []
+  const executor = isObject(value.executor) ? value.executor : undefined
+  const projects = !repo ? [] : [{
+    id: projectIdFrom(repo),
+    name: repo.slice(repo.lastIndexOf('/') + 1),
+    repository: repo,
+    chats: chats.flatMap(chat => isObject(chat) && typeof chat.chatId === 'string' ? [{ chatId: chat.chatId }] : []),
+    directory: text(executor?.directory) ?? '',
+    prepare: text(executor?.prepare) ?? '',
+  }]
+  let next: Stored = { ...value, projects }
+  if (config && 'repository' in config) {
+    const { repository: _repository, ...rest } = config
+    next = { ...next, sources: { ...sources, github: { ...github, config: rest } } }
+  }
+  if (executor && ('directory' in executor || 'prepare' in executor)) {
+    const { directory: _directory, prepare: _prepare, ...rest } = executor
+    next = { ...next, executor: rest }
+  }
+  return next
+}
+/**
+ * Rewrite schema 12 settings snapshots into schema 13 projects in place, then join tickets with an execution but no
+ * project to the current first project; databases without a configured repository keep their tickets unassigned.
+ */
+export function migrateTo13(store: Store): void {
+  for (const name of store.keys('settings-version:')) {
+    const version = store.get<{ settings: unknown }>(name)!
+    const settings = settingsWithProjects(version.settings)
+    if (settings !== version.settings) store.set(name, { ...version, settings })
+  }
+  const standalone = store.get<unknown>('settings')
+  if (standalone !== undefined) {
+    const settings = settingsWithProjects(standalone)
+    if (settings !== standalone) store.set('settings', settings)
+  }
+  const project = store.settings().projects[0]?.id
+  if (project === undefined) return
+  store.db.prepare(`UPDATE ticket SET value = json_set(value, '$.execution.project', ?)
+    WHERE value -> '$.execution' IS NOT NULL AND IFNULL(value ->> '$.execution.project', '') = ''`).run(project)
 }

@@ -147,11 +147,11 @@ function Pages({ route, openTab }: { route: Route; openTab: (tab: Tab) => void }
       case 'overview': return <OverviewPage />
       case 'source': return <SourceStatus />
       case 'trigger': return route.id !== undefined ? <ThreadPage key={route.id} id={route.id} target={route.query?.trigger} />
-        : <TriggerStatus filter={route.query?.filter ?? 'subscribed'} />
+        : <TriggerStatus filter={route.query?.filter ?? 'subscribed'} project={route.query?.project} />
       case 'eval': return <EvalStatus filter={route.query?.filter ?? 'work'} window={route.query?.window}
         paused={!!state?.paused} />
       case 'execution': return route.id !== undefined ? <TicketPage key={route.id} id={route.id} />
-        : state ? <ExecutionStatus filter={route.query?.filter ?? 'open'} state={state} reload={reload} /> : waiting
+        : state ? <ExecutionStatus filter={route.query?.filter ?? 'open'} project={route.query?.project} state={state} reload={reload} /> : waiting
       case 'settings': return <SettingsPage group={route.query.group} query={route.query} />
     }
   })()

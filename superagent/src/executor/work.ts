@@ -4,7 +4,7 @@ import { key, threadKey } from '../core/index.ts'
 import type { AssessmentOutcome, Execution, Mandate, PolicyEffect, Ticket, TicketInput, Trigger } from '../core/index.ts'
 import type { Settings } from '../policy.ts'
 import type { Store } from '../app/store.ts'
-import { executionRoot } from '../app/execution-environment.ts'
+import { projectWorkRoot } from '../app/projects.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { Later } from '../app/effects.ts'
 export { Later } from '../app/effects.ts'
@@ -52,9 +52,11 @@ export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string 
     + 'internal to one module within the accepted rule scope. If it requires public-interface or behavior changes, new interaction, product '
     + 'decisions or clarification, stop and report dropped; do not expand scope.' : ''
 }
-/** Builds a newly accepted ticket's Execution metadata: its worktree name, workspace directory, and assignment text. */
+/** Builds a newly accepted ticket's Execution metadata: its project, worktree name, workspace directory, and assignment text. */
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,
   stateDir: string): Execution {
+  const project = settings.projects.find(item => item.id === outcome.project)
+  if (!project) throw new Error(`Project ${outcome.project} no longer exists`)
   const name = ticketWorktreeName(outcome.name ?? '', ticket.id)
   const source = ticket.origin.triggerId
   const note = outcome.note ? `\nRouting note (not the source request): ${outcome.note}` : ''
@@ -66,7 +68,7 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
     ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
     : note.trim()
-  return { name, directory: join(executionRoot(settings, stateDir), name), assignment }
+  return { name, directory: join(projectWorkRoot(project, stateDir), name), assignment, project: project.id }
 }
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */
 export const ASSIGNMENT_CHARS = 1500, TRIGGER_CHARS = 600

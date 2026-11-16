@@ -260,12 +260,28 @@ fn iterm_command_string_and_refusals() {
     let ps = p.display().to_string();
     let valid = config::validate_session_path(&c, &ps).unwrap();
 
+    // 带身份的 opener：返回值用于把启动证据绑定到本次标签页。
     let got = RefCell::new(String::new());
-    let opener = |cmd: &str| -> Result<(), AppError> {
+    let opener = |cmd: &str| -> Result<(String, String), AppError> {
         got.replace(cmd.to_owned());
-        Ok(())
+        Ok(("tab-test".to_owned(), "/dev/ttys003".to_owned()))
     };
-    ops_cmds::open_in_iterm_impl(&c, &ps, &opener).unwrap();
+    // 注入快照/证据/诊断：不跑真实 ps、lsof、osascript，也不等 10 秒。
+    let empty_snapshot = |_: &str| Ok(std::collections::HashSet::new());
+    let started = |_: &str, _: &str, _: &str, _: &std::collections::HashSet<u32>| true;
+    let no_diag = |_: &str| String::new();
+    let open = |c: &Config, p: &str| {
+        ops_cmds::open_in_iterm_impl_observed(
+            c,
+            p,
+            &opener,
+            std::time::Duration::from_millis(150),
+            &empty_snapshot,
+            &started,
+            &no_diag,
+        )
+    };
+    open(&c, &ps).unwrap();
     assert_eq!(
         got.borrow().as_str(),
         &format!(
@@ -282,12 +298,12 @@ fn iterm_command_string_and_refusals() {
         "sess-g",
         &t.path().join("gone").display().to_string(),
     );
-    let e = ops_cmds::open_in_iterm_impl(&c, &gone.display().to_string(), &opener).unwrap_err();
+    let e = open(&c, &gone.display().to_string()).unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
     let f = t.path().join("afile");
     std::fs::write(&f, "x").unwrap();
     let gf = branch_session(&proj, "g2.jsonl", "sess-g2", &f.display().to_string());
-    let e = ops_cmds::open_in_iterm_impl(&c, &gf.display().to_string(), &opener).unwrap_err();
+    let e = open(&c, &gf.display().to_string()).unwrap_err();
     assert_eq!(e.code, ErrorCode::CwdMissing);
 
     // IN_USE 拒绝且 opener 未被调用；PROBE_FAILED 放行。
@@ -295,7 +311,7 @@ fn iterm_command_string_and_refusals() {
     let bs = b.display().to_string();
     let _guard = hold_lock(&c.owners_dir, "sess-busy2");
     got.replace(String::new());
-    let e = ops_cmds::open_in_iterm_impl(&c, &bs, &opener).unwrap_err();
+    let e = open(&c, &bs).unwrap_err();
     assert_eq!(e.code, ErrorCode::InUse);
     assert!(got.borrow().is_empty());
     drop(_guard);
@@ -307,7 +323,7 @@ fn iterm_command_string_and_refusals() {
         extra_roots: vec![],
     };
     got.replace(String::new());
-    ops_cmds::open_in_iterm_impl(&c3, &bs, &opener).unwrap();
+    open(&c3, &bs).unwrap();
     assert!(!got.borrow().is_empty(), "PROBE_FAILED 应放行");
 
     // 控制字符拒绝：cwd 含换行（目录真实存在，走到控制字符检查）。
@@ -320,7 +336,7 @@ fn iterm_command_string_and_refusals() {
         &evil_cwd.display().to_string(),
     );
     got.replace(String::new());
-    let e = ops_cmds::open_in_iterm_impl(&c, &evil.display().to_string(), &opener).unwrap_err();
+    let e = open(&c, &evil.display().to_string()).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
     assert!(got.borrow().is_empty());
 
@@ -332,9 +348,144 @@ fn iterm_command_string_and_refusals() {
         &cwd.display().to_string(),
     );
     got.replace(String::new());
-    let e = ops_cmds::open_in_iterm_impl(&c, &evil2.display().to_string(), &opener).unwrap_err();
+    let e = open(&c, &evil2.display().to_string()).unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidInput);
     assert!(got.borrow().is_empty());
+}
+
+/// 恢复成功必须有绑定本次标签页的运行证据：未确认就不报成功、不重发命令；
+/// 门禁失败时不产生任何副作用（opener 根本没被调用）。
+#[test]
+fn iterm_resume_requires_tracked_evidence() {
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    let t = tempfile::tempdir().unwrap();
+    let c = cfg(t.path());
+    let proj = t.path().join("proj");
+    let cwd = t.path().join("wd");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let none = HashSet::new();
+
+    // 证据成立 → 成功（成功路径给足 2s，避免与 100ms 轮询抢调度余量）。
+    let p = branch_session(&proj, "ok.jsonl", "sess-ok1", &cwd.display().to_string());
+    let calls = Cell::new(0);
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        calls.set(calls.get() + 1);
+        Ok(("tab-1".to_owned(), "/dev/ttys009".to_owned()))
+    };
+    ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &p.display().to_string(),
+        &opener,
+        std::time::Duration::from_secs(2),
+        &|_: &str| Ok(HashSet::new()),
+        &|_, _, _, _| true,
+        &|_: &str| String::new(),
+    )
+    .unwrap();
+    assert!(calls.get() >= 1);
+
+    // 证据始终不成立 → ITERM_FAILED（不是成功），opener 只被调用一次。
+    let q = branch_session(&proj, "slow.jsonl", "sess-slow", &cwd.display().to_string());
+    let calls = Cell::new(0);
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        calls.set(calls.get() + 1);
+        Ok(("tab-2".to_owned(), "/dev/ttys010".to_owned()))
+    };
+    let e = ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &q.display().to_string(),
+        &opener,
+        std::time::Duration::from_millis(150),
+        &|_: &str| Ok(HashSet::new()),
+        &|_, _, _, _| false,
+        &|_: &str| "command not found".to_owned(),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::ItermFailed);
+    assert!(e.message.contains("未检测到 omp 启动该会话"), "{e:?}");
+    assert_eq!(calls.get(), 1, "未确认不得自动重发命令");
+
+    // wrongTTY：证据闭包拿到的 tty 与进程 tty 不一致（别的终端抢占）→ 失败。
+    let w = branch_session(&proj, "wrongtty.jsonl", "sess-wrong", &cwd.display().to_string());
+    let calls = Cell::new(0);
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        calls.set(calls.get() + 1);
+        Ok(("tab-5".to_owned(), "/dev/ttys020".to_owned()))
+    };
+    let e = ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &w.display().to_string(),
+        &opener,
+        std::time::Duration::from_millis(150),
+        &|_: &str| Ok(none.clone()),
+        // 真实判定：观测到的进程在另一个 tty 上，不构成本次标签页的启动。
+        &|_, _, tracked: &str, _| {
+            omp_resume_lib::ops::iterm::tty_matches_start(tracked, Some("/dev/ttys021"))
+        },
+        &|_: &str| String::new(),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::ItermFailed);
+    assert!(e.message.contains("未检测到 omp 启动该会话"), "{e:?}");
+    assert_eq!(calls.get(), 1);
+
+    // 快照失败（ps 不可用）→ 失败且 opener 根本没被调用（无副作用）。
+    let r = branch_session(&proj, "nops.jsonl", "sess-nops", &cwd.display().to_string());
+    let calls = Cell::new(0);
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        calls.set(calls.get() + 1);
+        Ok(("tab-3".to_owned(), "/dev/ttys011".to_owned()))
+    };
+    let e = ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &r.display().to_string(),
+        &opener,
+        std::time::Duration::from_millis(150),
+        &|_: &str| Err("boom".to_owned()),
+        &|_, _, _, _| true,
+        &|_: &str| String::new(),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::ItermFailed);
+    assert!(e.message.contains("ps 不可用"), "{e:?}");
+    assert_eq!(calls.get(), 0, "快照失败必须早于 opener");
+
+    // opener 自身失败：错误上抛、不进入确认阶段（不会被误报成功）。
+    let s = branch_session(&proj, "noiterm.jsonl", "sess-noiterm", &cwd.display().to_string());
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        Err(AppError::new(ErrorCode::ItermFailed, "osascript 退出码 1"))
+    };
+    let e = ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &s.display().to_string(),
+        &opener,
+        std::time::Duration::from_secs(2),
+        &|_: &str| Ok(HashSet::new()),
+        &|_, _, _, _| true,
+        &|_: &str| String::new(),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::ItermFailed);
+    assert!(e.message.contains("退出码 1"), "{e:?}");
+
+    // 拿不到 tty（身份不完整）：不猜，直接失败。
+    let u = branch_session(&proj, "notty.jsonl", "sess-notty", &cwd.display().to_string());
+    let opener = |_: &str| -> Result<(String, String), AppError> {
+        Ok(("tab-4".to_owned(), String::new()))
+    };
+    let e = ops_cmds::open_in_iterm_impl_observed(
+        &c,
+        &u.display().to_string(),
+        &opener,
+        std::time::Duration::from_secs(2),
+        &|_: &str| Ok(HashSet::new()),
+        &|_, _, _, _| true,
+        &|_: &str| String::new(),
+    )
+    .unwrap_err();
+    assert_eq!(e.code, ErrorCode::ItermFailed);
+    assert!(e.message.contains("tty"), "{e:?}");
 }
 
 #[test]

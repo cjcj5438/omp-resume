@@ -116,7 +116,7 @@ it('keeps each role\'s own instructions short', () => {
   expect(workerPrompt.length).toBeLessThan(1000)
 })
 
-const trigger: Trigger = { id: 'request-1', source: 'github', threads: [{ source: 'github', id: '42' }], actor: { source: 'github', id: 'alice' }, human: true,
+const trigger: Trigger = { id: 'request-1', source: 'github', threads: [{ source: 'github', id: 'acme/widgets#42' }], actor: { source: 'github', id: 'alice' }, human: true,
   at: '2026-09-09T00:00:00Z', text: 'Please inspect the failing check.\n' + 'Additional context. '.repeat(20), meta: {} }
 const SUMMARY = 'The focused check passed.\n' + 'Detailed evidence. '.repeat(20)
 const ticket: Ticket = { id: 'ticket-1', title: 'Inspect failing check', decisionId: 'd1', channels: [], inputs: [], undelivered: [],
@@ -124,19 +124,19 @@ const ticket: Ticket = { id: 'ticket-1', title: 'Inspect failing check', decisio
   assignments: [{ id: 'a1', state: 'running', createdAt: '2026-09-09T00:00:00Z', startedAt: '2026-09-09T00:00:00Z', report: { state: 'ready', summary: SUMMARY, at: '' } }],
   createdAt: '2026-09-09T00:00:00Z', updatedAt: '2026-09-09T00:00:00Z',
   origin: { triggerId: 'request-1', triggerIds: ['request-1'] },
-  execution: { name: 'ticket-1', directory: '/worktrees/ticket-1', assignment: 'Inspect the check.' },
-  follows: [{ thread: 'github:42', own: true }] }
+  execution: { project: 'widgets', name: 'ticket-1', directory: '/worktrees/ticket-1', assignment: 'Inspect the check.' },
+  follows: [{ thread: 'github:acme/widgets#42', own: true }] }
 it('shows a trigger and a ticket as cards with a short preview and references to their bodies', () => {
   const card = triggerCard(trigger, { fanout: ['ticket-1'], evalId: 'e1', decisionId: 'd1', at: '' })
-  expect(card).toEqual({ trigger_id: 'request-1', source: 'github', actor: 'alice', thread: 'github:42', human: true, at: '2026-09-09T00:00:00Z',
+  expect(card).toEqual({ trigger_id: 'request-1', source: 'github', actor: 'alice', thread: 'github:acme/widgets#42', human: true, at: '2026-09-09T00:00:00Z',
     preview: expect.stringMatching(/^Please inspect the failing check\. Additional context\./), chars: trigger.text.length, read: 'trigger/request-1',
     disposition: { decision_id: 'd1', delivered_to: ['ticket-1'] } })
   expect(card.preview).toHaveLength(160)
   const { policyVersion: _version, ...mandate } = ticket.mandate
-  const threads = [{ thread: 'github:42', bound: true as const }]
+  const threads = [{ thread: 'github:acme/widgets#42', bound: true as const }]
   const batch = [{ ...trigger, id: 'request-2', text: 'Also the flaky one.' }]
   expect(ticketDetails(ticket, threads, batch)).toEqual({ ticket_id: 'ticket-1', title: 'Inspect failing check',
-    state: 'person/review', strength: 'explicit', pr_number: 42, read: 'ticket/ticket-1', trigger_id: 'request-1', decision_id: 'd1',
+    state: 'person/review', strength: 'explicit', pr_number: 42, pr_repository: 'acme/widgets', read: 'ticket/ticket-1', trigger_id: 'request-1', decision_id: 'd1',
     batch: [{ trigger_id: 'request-2', from: 'alice', at: trigger.at, preview: 'Also the flaky one.', read: 'trigger/request-2' }],
     threads, directory: '/worktrees/ticket-1', scope: mandate.scope, requested_by: 'alice', inputs: { items: [] },
     assignments: { items: [{ id: 'a1', state: 'running', at: '2026-09-09T00:00:00Z', report: { state: 'ready', at: '', preview: expect.stringMatching(/^The focused/),
@@ -167,7 +167,7 @@ it('shows a ticket card\'s state from a closed set: the open ticket\'s stage, th
   for (const [item, state] of cases) expect(ticketCard(item).state).toBe(state)
   expect(cases.map(([item]) => ticketCard(item).state).every(state => (TICKET_STATES as readonly string[]).includes(state))).toBe(true)
   expect(ticketCard(cases[8]![0])).toMatchObject({ ended: { at: 'e', by: 'human', reason: 'Not needed after all' } })
-  expect(ticketCard(ticket)).toMatchObject({ ticket_id: 'ticket-1', pr_number: 42, strength: 'explicit' })
+  expect(ticketCard(ticket)).toMatchObject({ ticket_id: 'ticket-1', pr_number: 42, pr_repository: 'acme/widgets', strength: 'explicit' })
   expect(ticketCard(ticket)).not.toHaveProperty('attention')
   expect(ticketCard({ ...ticket, attention: { id: 'q', question: 'Desktop too?' } })).toMatchObject({ attention: { question: 'Desktop too?' } })
 })

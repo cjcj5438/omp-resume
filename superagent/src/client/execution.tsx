@@ -1,22 +1,24 @@
-/** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and workspace environment). */
-import { useRef, useState } from 'react'
+/** Execution status view (active Tickets and pause control) and Execution settings group (Executor capacity and blocked commands). */
+import { useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
 import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
-import { TicketLine } from './rows.tsx'
+import { ProjectSelect, TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { localized } from './text.ts'
 import { ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './widgets.tsx'
 
-export function ExecutionStatus({ filter: current, state, reload }: {
-  filter: TicketFilter; state: StateView; reload: () => Promise<void>
+export function ExecutionStatus({ filter: current, project, state, reload }: {
+  filter: TicketFilter; project: string | undefined; state: StateView; reload: () => Promise<void>
 }) {
   const { t, call, navigate } = usePanel()
   const [limit, setLimit] = useState(20)
-  const { data, error, reload: reloadTickets } = usePoll(() => call('GET tickets', { query: { state: current, limit } }), [current, limit])
+  const { data, error, reload: reloadTickets } = usePoll(() => call('GET tickets', { query: { state: current, limit,
+    ...project ? { project } : {} } }), [current, limit, project])
+  const { data: settings } = usePoll(() => call('GET settings'), [])
   const { paused, load: { maxWorkers } } = state
   // Pausing uses its own block revision so toggling pause does not invalidate an open Execution settings draft.
   const pause = async () => { await call('POST executor/pause', { body: { paused: !paused } }); await reload() }
@@ -38,8 +40,11 @@ export function ExecutionStatus({ filter: current, state, reload }: {
     </div>
     <div className="dt-filters">
       {TICKET_FILTERS.map(value => <Pill key={value} active={current === value}
-        onClick={() => { setLimit(20); navigate({ page: 'execution', query: value === 'open' ? {} : { filter: value } },
-          true) }}>{t(`ticketFilter.${value}`)}</Pill>)}
+        onClick={() => { setLimit(20); navigate({ page: 'execution',
+          query: { ...value === 'open' ? {} : { filter: value }, ...project ? { project } : {} } }, true) }}>{t(`ticketFilter.${value}`)}</Pill>)}
+      <ProjectSelect projects={settings?.blocks.projects.value ?? []} value={project} onChange={next => { setLimit(20);
+        navigate({ page: 'execution', query: { ...current === 'open' ? {} : { filter: current }, ...next ? { project: next } : {} } },
+          true) }} />
     </div>
     {current === 'idle' && <Hint>{t('idleHint')}</Hint>}
     <LoadState error={error} loading={!data} />
@@ -51,7 +56,7 @@ export function ExecutionStatus({ filter: current, state, reload }: {
 }
 
 const firstSentence = (text: string): string => /^[^。；;.]*(?:[。；;]|\.(?=\s|$))?/.exec(text)?.[0] ?? text
-function EnvironmentVariables({ groups, sources,
+export function EnvironmentVariables({ groups, sources,
   onPick }: { groups: SettingsView['environment']['variables']; sources: SourceView[]; onPick: (key: string) => void }) {
   const { t } = usePanel()
   const [open, setOpen] = useState(false)
@@ -74,7 +79,7 @@ function EnvironmentVariables({ groups, sources,
 }
 export function ExecutionSettings() {
   const { t } = usePanel()
-  const { blocks, environment, sources } = useSettings().settings
+  const { blocks } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
   const saved = { ...executor, maxWorkers: String(executor.maxWorkers), blockedCommands: executor.blockedCommands.join(' ') }
@@ -82,13 +87,6 @@ export function ExecutionSettings() {
     value => ({ ...value, maxWorkers: numberOf(value.maxWorkers), blockedCommands: value.blockedCommands.split(/[\s,]+/).filter(Boolean) }))
   const value = draft.value
   const edit = (next: Partial<typeof value>) => draft.edit({ ...value, ...next })
-  const prepare = useRef<HTMLTextAreaElement>(null)
-  const insert = (key: string) => {
-    const field = prepare.current
-    const at = field?.selectionStart ?? value.prepare.length, to = field?.selectionEnd ?? at
-    edit({ prepare: `${value.prepare.slice(0, at)}"$${key}"${value.prepare.slice(to)}` })
-    requestAnimationFrame(() => { field?.focus(); const caret = at + key.length + 3; field?.setSelectionRange(caret, caret) })
-  }
   return <div className="dt-form">
     <form className="dt-form" onSubmit={event => { void draft.submit(event) }}>
       <Fields disabled={draft.busy}>
@@ -103,17 +101,6 @@ export function ExecutionSettings() {
         </div>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.environment')}<InfoTip text={t('environmentIntro')} /></h2>
-          <Field label={t('executionDirectory')} hint={t('executionDirectoryHint')} note={value.directory ? undefined
-            : t('executionDirectoryDefault', { root: environment.root })}>
-            <Input className="dt-mono" value={value.directory} placeholder={t('executionDirectoryEmpty')} spellCheck={false} pattern="/.*"
-              onChange={event => edit({ directory: event.target.value })} />
-          </Field>
-          <Field label={t('prepareCommand')} hint={t('prepareCommandHint')}>
-            <textarea ref={prepare} className="dt-textarea dt-mono" rows={3} maxLength={LIMITS.prepareCommand} spellCheck={false}
-              placeholder={t('prepareCommandEmpty')} value={value.prepare}
-              onChange={event => edit({ prepare: event.target.value })} />
-          </Field>
-          <EnvironmentVariables groups={environment.variables} sources={sources} onPick={insert} />
           <Field label={t('blockedCommands')} hint={t('blockedCommandsHint')}>
             <Input className="dt-mono" value={value.blockedCommands} placeholder={t('blockedCommandsNone')} spellCheck={false}
               onChange={event => edit({ blockedCommands: event.target.value })} />

@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { Fields } from '../src/client/settings-kit.tsx'
 import { expect, it, onTestFinished } from 'vitest'
 import { zh } from '../src/client/locales.ts'
-import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field } from './fixtures/panel.tsx'
+import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field, at } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
 
 usePanel()
@@ -23,7 +23,7 @@ it('keeps a person\'s own value where another save changed the same setting, and
   expect(server.settings.executor.maxWorkers).toBe(6)
 })
 
-it('saves the Eval block on the Policy settings and the Executor with its execution environment on the Execution settings, each against its own revision', async () => {
+it('saves the Eval block on the Policy settings and the Executor on the Execution settings, each against its own revision', async () => {
   await mount()
   await click(zh['tab.eval'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
@@ -35,27 +35,14 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   expect(server.settings.eval).toEqual({ mode: 'auto', timeoutSeconds: 180, model: { provider: 'worker-provider', model: 'worker-model' } })
   await click(find(zh['promptPart.runtime/work'], '.dt-settings-link'))
   await type(field<HTMLInputElement>(zh.maxWorkers), '5')
-  // An empty root uses the default directory, which the field names instead of looking set.
-  expect(field<HTMLInputElement>(zh.executionDirectory).closest('.dt-field')!.querySelector('small')?.textContent).toBe('留空时用 /srv/Superagent/work')
-  await type(field<HTMLInputElement>(zh.executionDirectory), '/srv/work')
-  // A variable picked from the list goes where the caret is in the prepare command.
-  const prepare = field<HTMLTextAreaElement>(zh.prepareCommand)
-  await type(prepare, 'git worktree add ')
-  prepare.setSelectionRange(17, 17)
-  await click('可用的环境变量 3')
-  expect(all('.dt-table tbody tr').map(row => row.textContent)).toEqual(['OMP_SUPERAGENT_DIR工单的执行目录执行器', 'OMP_SUPERAGENT_NAME工单短名执行器',
-    'OMP_SUPERAGENT_GITHUB_REPOSITORY仓库GitHub · 已关闭'])
-  await click('OMP_SUPERAGENT_DIR')
-  expect(field<HTMLTextAreaElement>(zh.prepareCommand).value).toBe('git worktree add "$OMP_SUPERAGENT_DIR"')
   await type(field<HTMLInputElement>(zh.blockedCommands), 'gh-personal  gh.other')
   const [workerProvider, workerModel, effort] = all('.dt-model input')
   await type(workerProvider as HTMLInputElement, 'worker-provider'); await type(workerModel as HTMLInputElement,
     'worker-model'); await type(effort as HTMLInputElement, 'high')
   expect([...document.querySelectorAll('#dt-worker-model-efforts option')].map(option => option.getAttribute('value'))).toEqual(['high'])
   await click(zh.save)
-  expect(server.settings.executor).toEqual({ maxWorkers: 5, directory: '/srv/work',
-    prepare: 'git worktree add "$OMP_SUPERAGENT_DIR"', blockedCommands: ['gh-personal', 'gh.other'], model: { provider: 'worker-provider',
-      model: 'worker-model', reasoningEffort: 'high' } })
+  expect(server.settings.executor).toEqual({ maxWorkers: 5, blockedCommands: ['gh-personal', 'gh.other'], model: { provider: 'worker-provider',
+    model: 'worker-model', reasoningEffort: 'high' } })
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/eval',
     'settings/executor'])
 })
@@ -124,12 +111,12 @@ it('gives the focus back to the field that had it once a block\'s save ends', as
   expect(document.activeElement).toBe(input)
 })
 
-it('lists the settings groups stages first, opens each stage\'s group from its status, and returns to the last group opened',
+it('lists the settings groups projects first, opens each stage\'s group from its status, and returns to the last group opened',
   async () => {
   await mount()
   await click(tab(zh['tab.settings']))
-  expect(all('.dt-settings-link').map(link => link.textContent)).toEqual(['来源', '评估', '执行', '提示词'])
-  expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['term.source'])
+  expect(all('.dt-settings-link').map(link => link.textContent)).toEqual(['项目', '来源', '评估', '执行', '提示词'])
+  expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['settingsGroup.projects'])
   for (const [tab, group] of [['来源', '来源'], ['评估', '评估'], ['执行', '执行']] as const) {
     await click(find(tab, '[role="tab"]'))
     await click(find(zh['tab.settings'], '.dt-status-head button'))
@@ -144,4 +131,66 @@ it('lists the settings groups stages first, opens each stage\'s group from its s
   await remount()
   await click(tab(zh['tab.settings']))
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['promptPart.runtime/work'])
+})
+
+it('adds a project, picks a chat, and saves the projects block', async () => {
+  at({ page: 'settings', query: { group: 'projects' } })
+  await mount()
+  const card = all('.dt-card')[0]!
+  // A saved project's id reads as locked text, not an editable input.
+  expect(card.textContent).toContain(zh.projectIdLocked)
+  expect([...card.querySelectorAll('input')].some(input => input.value === 'widgets')).toBe(false)
+  await click(find(zh.projectAdd, 'button'))
+  const added = all('.dt-card').at(-1)!
+  const inputs = [...added.querySelectorAll('input')]
+  await type(inputs[0]!, 'Gadgets')
+  await type(inputs[1]!, 'gadgets')
+  await type(inputs[2]!, 'acme/gadgets')
+  await click([...added.querySelectorAll('button')].find(button => button.textContent === zh.addRow)!)
+  const pick = added.querySelector<HTMLSelectElement>(`select[aria-label="${zh['settingsGroup.source'] === '来源'
+    ? '选择机器人已加入的群' : 'Choose a chat the bot has joined'}"]`)!
+  await type(pick, 'oc_other')
+  await click(zh.save)
+  const request = server.requests.find(request => request.path === 'settings/projects')
+  expect(request).toMatchObject({ method: 'PUT', body: { revision: 0,
+    value: [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets', chats: [{ chatId: 'oc_team' }], directory: '',
+      prepare: '' },
+      { id: 'gadgets', name: 'Gadgets', repository: 'acme/gadgets', chats: [{ chatId: 'oc_other' }], directory: '',
+        prepare: '' }] } })
+  expect(server.settings.projects.map(project => project.id)).toEqual(['widgets', 'gadgets'])
+})
+
+it('warns that a changed repository restarts Superagent, and names chats the Feishu source does not receive', async () => {
+  at({ page: 'settings', query: { group: 'projects' } })
+  await mount()
+  const card = all('.dt-card')[0]!
+  const repository = [...card.querySelectorAll('input')].find(input => input.value === 'acme/widgets')!
+  await type(repository, 'acme/renamed')
+  expect(document.querySelector('.dt-savebar')?.textContent ?? '').toContain('2 个进行中的派工会中断')
+  await type(repository, 'acme/widgets')
+  expect(document.querySelector('.dt-savebar')).toBeNull()
+  // A chat the Feishu source does not list reads with a hint to add it there.
+  server.settings.sources.feishu = { ...server.settings.sources.feishu!,
+    config: { ...server.settings.sources.feishu!.config, chats: [] } }
+  await remount()
+  await click(tab(zh['tab.settings']))
+  expect(text()).toContain(zh.projectChatMissing.replace('{chat}', '团队群'))
+})
+
+it('keeps a new card editable when its id duplicates a saved project, and shows the server duplicate error on save', async () => {
+  at({ page: 'settings', query: { group: 'projects' } })
+  await mount()
+  await click(find(zh.projectAdd, 'button'))
+  const added = all('.dt-card').at(-1)!
+  const inputs = [...added.querySelectorAll('input')]
+  await type(inputs[0]!, 'Copy')
+  await type(inputs[1]!, 'widgets')
+  await type(inputs[2]!, 'acme/copy')
+  // Typing a saved id does not lock the new card: the input stays so the id can be corrected.
+  expect([...added.querySelectorAll('input')].some(input => input.value === 'widgets')).toBe(true)
+  expect(added.textContent).not.toContain(zh.projectIdLocked)
+  await click(zh.save)
+  expect(server.requests.some(request => request.path === 'settings/projects')).toBe(true)
+  expect(document.querySelector('.dt-savebar [role="alert"]')?.textContent).toBe(zh.invalidSettings.replace('{fields}', ''))
+  expect(server.settings.projects.map(project => project.id)).toEqual(['widgets'])
 })

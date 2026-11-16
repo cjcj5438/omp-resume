@@ -434,29 +434,41 @@ function App() {
 
   const [bulkTargets, setBulkTargets] = useState<SessionSummary[] | null>(null);
   const bulkPlan = useMemo(() => (bulkTargets ? planBulkResume(bulkTargets) : null), [bulkTargets]);
+  // 每次确认最长等 10 秒 × N：同一 tick 内连点两次时 setState 还没生效，
+  // 必须用 ref 同步挡住，避免把整批 open_in_iterm 发两遍。
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const bulkBusyRef = useRef(false);
 
   /** 批量恢复确认：顺序打开 iTerm，ITERM_FAILED 立即停止，其余错误计数后继续。 */
   const runBulkResume = useCallback(
     async (open: SessionSummary[]) => {
+      if (bulkBusyRef.current) return;
+      bulkBusyRef.current = true;
+      setBulkBusy(true);
       let ok = 0;
       let fail = 0;
       let firstError: string | null = null;
-      for (const s of open) {
-        try {
-          await openInIterm({ path: s.path });
-          ok += 1;
-        } catch (e: unknown) {
-          const err = normalizeError(e);
-          if (firstError === null) firstError = errorText(err);
-          fail += 1;
-          if (err.code === "ITERM_FAILED") break;
+      try {
+        for (const s of open) {
+          try {
+            await openInIterm({ path: s.path });
+            ok += 1;
+          } catch (e: unknown) {
+            const err = normalizeError(e);
+            if (firstError === null) firstError = errorText(err);
+            fail += 1;
+            if (err.code === "ITERM_FAILED") break;
+          }
         }
+      } finally {
+        bulkBusyRef.current = false;
+        setBulkBusy(false);
       }
       setBulkTargets(null);
       const text =
         fail > 0 && firstError !== null
-          ? `已打开 ${ok} 个 iTerm 标签页，${fail} 个失败：${firstError}`
-          : `已打开 ${ok} 个 iTerm 标签页`;
+          ? `已恢复 ${ok} 个会话，${fail} 个失败：${firstError}`
+          : `已恢复 ${ok} 个会话`;
       addToast(text, fail > 0 ? "error" : "info");
     },
     [addToast],
@@ -871,6 +883,7 @@ function App() {
         <BulkResumeDialog
           total={bulkTargets.length}
           plan={bulkPlan}
+          busy={bulkBusy}
           onCancel={() => setBulkTargets(null)}
           onConfirm={() => void runBulkResume(bulkPlan.open)}
         />

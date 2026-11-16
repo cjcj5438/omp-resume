@@ -88,7 +88,7 @@ export function startExecutorHost(): ExecutorHost {
       main: { masterId: 'main', resources: { masterId: 'main' } } as never,
       // The worker tools run against the real engine so tests can report through the worker session.
       executor: { get engine() { return engine }, store, sessions, resources: { masterId: 'main' },
-        github: { deployment: { github: { login: 'agent' } } }, sendReplies: async () => {} } as never,
+        github: { deployment: { github: { login: 'agent' }, projects: [{ id: 'widgets', repository: 'acme/widgets' }] } }, sendReplies: async () => {} } as never,
     }),
   }
   sessions = new OmpSessions(sessionsHost)

@@ -25,13 +25,14 @@ Overrides use these keys:
 | Working instructions | `runtime/subscriptions`, `runtime/replies`, `runtime/dispatch`, `runtime/work`, `runtime/admission` |
 | Handoff instructions | `runtime/handoff/orchestrator`, `runtime/handoff/worker` |
 | Source skills | `skill/feishu`, `skill/github` |
-| Generated sections | `runtime/environment`, `runtime/policy`, `runtime/policy/none` |
+| Generated sections | `runtime/environment`, `runtime/policy`, `runtime/policy/none`, `runtime/projects` |
 
 The generated sections are editable templates. They must retain these placeholders:
 
 - `runtime/environment`: `{variables}`, filled with execution environment lines.
 - `runtime/policy`: `{version}`, `{mode}` and `{rules}`, with one line per enabled rule.
 - `runtime/policy/none`: `{version}` and `{mode}`, used when no rule is enabled.
+- `runtime/projects`: `{projects}`, with one line per project, for the main Session only.
 
 Editing a part changes the instructions the model receives. It does not change the gate, Mandates, tool checks or account wrappers, which remain enforced by code.
 
@@ -52,13 +53,14 @@ The system prompt is assembled in this order:
 5. `runtime/admission`, for the main Session only.
 6. Handoff instructions.
 7. `runtime/environment`.
-8. `runtime/policy`, for the main Session only.
+8. `runtime/projects`, for the main Session only.
+9. `runtime/policy`, for the main Session only.
 
 Admission instructions come from `prompts/admission.md`. They describe proactive assessment and when an irrelevant candidate can be ignored from its card. `orchestrator_eval` returns context rather than repeating these instructions.
 
-The environment section gives the main Session deployment-wide values and each Executor its Ticket-specific values. The Policy section is regenerated from settings on every model request. It contains the Policy version, accept mode, the explicit-request exemption, and enabled rules as `- <name> (<id>): <instruction>`, or a statement that none is enabled. It is last so a Policy change leaves the preceding prompt text unchanged.
+The environment section gives the main Session deployment-wide values and each Executor its Ticket-specific values. The Projects section lists each project as `- <id> (<name>): repository <owner/name>; Feishu chats: <chat names or chatIds, or none>`, so the main Session names the project for an unbound trigger. The Policy section is regenerated from settings on every model request. It contains the Policy version, accept mode, the explicit-request exemption, and enabled rules as `- <name> (<id>): <instruction>`, or a statement that none is enabled. It is last so a Policy change leaves the preceding prompt text unchanged.
 
-Executors also read omp's own coding prompt and the repository's `AGENTS.md`; the main Session does not. An inferred Ticket adds a final note limiting its Executor to the matched rules. Assignments and incoming messages arrive inline as Trigger cards, with resource pointers only for truncated content.
+Executors also read omp's own coding prompt and the Ticket's project `AGENTS.md`; the main Session does not. An inferred Ticket adds a final note limiting its Executor to the matched rules. Assignments and incoming messages arrive inline as Trigger cards, with resource pointers only for truncated content.
 
 Executors work unattended. Their tools exclude those that ask a person or present UI to them, such as `ask` and omp's UI requests, which the daemon answers headless.
 

@@ -201,7 +201,7 @@ it('changes nothing when one step fails: the database stays at schema 10 as it w
     updatedAt: '2', mandate: mandate({ via: 'listed' }), meta: { sourceTriggerId: 'trig-1', workspace: '/w/fix-1' } }
   // The current settings must validate; an invalid value aborts the migration transaction.
   schema10(path, { settings: { executor: { maxWorkers: 'many' } } }, { ticket: [ticket] })
-  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 11 failed: the settings: /)
+  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 13 failed: the settings: /)
   const db = new DatabaseSync(path)
   expect(db.prepare("SELECT value FROM kv WHERE key='schema'").get()).toEqual({ value: '10' })
   expect(JSON.parse(String(db.prepare("SELECT value FROM ticket WHERE id='t1'").get()!.value))).toMatchObject({ meta: { workspace: '/w/fix-1' } })
@@ -408,8 +408,8 @@ it('writes the Sources\' records in their current shape once, so no Source conve
   expect(store.triggers.get('issue')!.source).toBe('github')
   // The waiting mention within the polling horizon is read again; the older one is no fresh request.
   expect(store.get(KV.github.retries)).toEqual({ 12: { since: recent, pr: false } })
-  expect(store.get(KV.github.cursor(7))).toBe('2026-09-03T00:00:00.000Z')
-  expect(store.get(KV.github.cursor(8))).toBe('2026-09-04T00:00:00.000Z')
+  expect(store.get(KV.github.cursor('7'))).toBe('2026-09-03T00:00:00.000Z')
+  expect(store.get(KV.github.cursor('8'))).toBe('2026-09-04T00:00:00.000Z')
   for (const name of ['github-issue-pending', 'github-issues-since', 'github-thread:7', 'thread-since:github:7', 'github-thread:8']) {
     expect(store.get(name)).toBeUndefined()
   }
@@ -473,7 +473,7 @@ it('names the ticket it stopped at when a ticket does not read, and leaves the d
   const path = join(directory, 'db.sqlite')
   const { inputs: _inputs, ...broken } = ticket10('t9')
   schema10(path, {}, { ticket: [broken] })
-  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 11 failed: ticket t9: /)
+  expect(() => new Store(path)).toThrow(/^The orchestrator database is unchanged at schema 10: its migration to schema 13 failed: ticket t9: /)
   const db = new DatabaseSync(path)
   expect(db.prepare("SELECT value FROM kv WHERE key='schema'").get()).toEqual({ value: '10' })
   expect(JSON.parse(String(db.prepare("SELECT value FROM ticket WHERE id='t9'").get()!.value))).toEqual(broken)
@@ -533,5 +533,154 @@ it('delivers the candidate of an Eval in progress at the upgrade again, so its d
   const store = new Store(path)
   const effects = store.db.prepare("SELECT key, value FROM effect WHERE kind = 'assessment'").all().map(row => [row.key, JSON.parse(String(row.value))])
   expect(effects).toEqual([['e9', { triggerId: 'issue-9' }]])
+  store.close()
+})
+
+/** Seed a SQLite database in the schema 11 layout with the given kv records and rows. */
+function schema11(path: string, records: Record<string, unknown>, rows: { ticket?: object[]; decision?: object[]; thread?: object[]; trigger?: object[] } = {}): void {
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  const set = (name: string, value: unknown) => db.prepare('INSERT INTO kv VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name, JSON.stringify(value))
+  set('schema', 11)
+  for (const [name, value] of Object.entries(records)) set(name, value)
+  for (const ticket of rows.ticket ?? []) db.prepare('INSERT INTO ticket VALUES (?,?)').run((ticket as { id: string }).id, JSON.stringify(ticket))
+  for (const decision of rows.decision ?? []) {
+    const { id, threadKey } = decision as { id: string; threadKey: string }
+    db.prepare('INSERT INTO decision VALUES (?,?,?)').run(id, threadKey, JSON.stringify(decision))
+  }
+  for (const thread of rows.thread ?? []) db.prepare('INSERT INTO thread VALUES (?,?)').run((thread as { key: string }).key, JSON.stringify(thread))
+  for (const trigger of rows.trigger ?? []) {
+    const { id, at } = trigger as { id: string; at: string }
+    db.prepare('INSERT INTO trigger VALUES (?,?,?)').run(id, JSON.stringify(trigger), at)
+  }
+  db.close()
+}
+
+/** Seed a SQLite database in the schema 12 layout with the given kv records and rows. */
+function schema12(path: string, records: Record<string, unknown>, rows: { ticket?: object[]; decision?: object[]; thread?: object[]; trigger?: object[] } = {}): void {
+  new Store(path).close()
+  const db = new DatabaseSync(path)
+  const set = (name: string, value: unknown) => db.prepare('INSERT INTO kv VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name, JSON.stringify(value))
+  set('schema', 12)
+  for (const [name, value] of Object.entries(records)) set(name, value)
+  for (const ticket of rows.ticket ?? []) db.prepare('INSERT INTO ticket VALUES (?,?)').run((ticket as { id: string }).id, JSON.stringify(ticket))
+  for (const decision of rows.decision ?? []) {
+    const { id, threadKey } = decision as { id: string; threadKey: string }
+    db.prepare('INSERT INTO decision VALUES (?,?,?)').run(id, threadKey, JSON.stringify(decision))
+  }
+  for (const thread of rows.thread ?? []) db.prepare('INSERT INTO thread VALUES (?,?)').run((thread as { key: string }).key, JSON.stringify(thread))
+  for (const trigger of rows.trigger ?? []) {
+    const { id, at } = trigger as { id: string; at: string }
+    db.prepare('INSERT INTO trigger VALUES (?,?,?)').run(id, JSON.stringify(trigger), at)
+  }
+  db.close()
+}
+
+it('scopes GitHub records to the configured repository when migrating to schema 12, leaving Feishu records alone', () => {
+  const path = join(directory, 'db.sqlite')
+  const version = (revision: number, settings: object) => ({ revision, savedAt: '', source: 'panel', policyVersion: '', policyChanged: false, notified: [], settings })
+  const settings = { sources: { github: { enabled: true, config: { repository: 'CJ/Repo', cli: 'gh' } } } }
+  const trigger = { id: 'trig-1', source: 'github', threads: [{ source: 'github', id: '1' }], actor: { source: 'github', id: '12345' },
+    human: true, at: '2026-09-01T00:00:00.000Z', text: 'Fix it',
+    channel: { source: 'github', thread: 'github:1', address: { number: '1', url: 'https://github.com/CJ/Repo/issues/1' } },
+    url: 'https://github.com/CJ/Repo/issues/1', meta: { number: 1, isPr: false, kind: 'issue' } }
+  const ticket = { id: 't1', title: 'Fix', decisionId: 'd1', channels: [trigger.channel], assignments: [], inputs: [], undelivered: [],
+    createdAt: '1', updatedAt: '2', mandate: mandate({ via: 'listed' }), origin: { triggerId: 'trig-1', triggerIds: ['trig-1'] },
+    follows: [{ thread: 'github:1', own: false }] }
+  schema11(path, {
+    'settings-revision': 1, 'settings-version:1': version(1, settings),
+    'github-cursor:1': '2026-09-02T00:00:00.000Z', 'github-ci:1': { fingerprint: 'f', revision: 0 },
+    'github-stream:issues': { since: '2026-09-01T00:00:00.000Z', started: { issues: '2026-09-01T00:00:00.000Z' } },
+    'github-branch-ci': { branch: 'main', failures: [], revision: 0 },
+    'github-retry': { 1: { since: '2026-09-01T00:00:00.000Z', pr: false } },
+  }, {
+    ticket: [ticket],
+    decision: [{ id: 'd1', threadKey: 'github:1', triggerIds: ['trig-1'], kind: 'accept', reason: [], at: '1', ticketId: 't1', policyVersion: 'v1' }],
+    thread: [
+      { key: 'github:1', ref: { source: 'github', id: '1' }, createdAt: '', subscriptions: ['t1'], correlated: [], pending: [], meta: {} },
+      { key: 'feishu:oc_1:om_1', ref: { source: 'feishu', id: 'oc_1:om_1' }, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {} },
+    ],
+    trigger: [trigger],
+  })
+  indexed(path, [{ id: 'trig-1', at: '2026-09-01T00:00:00.000Z', threads: [{ source: 'github', id: '1' }] }])
+  const db = new DatabaseSync(path)
+  db.prepare('INSERT INTO outbox (id, value) VALUES (?, ?)').run('r1', JSON.stringify({ id: 'r1', channel: trigger.channel, text: 'Done', kind: 'reply', status: 'pending', ticketId: 't1' }))
+  db.close()
+  const store = new Store(path)
+  expect(store.get('schema')).toBe(SCHEMA_VERSION)
+  expect(store.threads.get('github:cj/repo#1')).toMatchObject({ ref: { source: 'github', id: 'cj/repo#1' }, subscriptions: ['t1'] })
+  expect(store.threads.get('github:1')).toBeUndefined()
+  expect(store.triggers.get('trig-1')).toMatchObject({ id: 'trig-1', threads: [{ source: 'github', id: 'cj/repo#1' }],
+    actor: { source: 'github', id: '12345' },
+    channel: { thread: 'github:cj/repo#1', address: { repository: 'cj/repo', number: '1' } }, meta: { repository: 'cj/repo', number: 1 } })
+  expect(store.tickets.get('t1')).toMatchObject({ follows: [{ thread: 'github:cj/repo#1', own: false }],
+    channels: [{ thread: 'github:cj/repo#1', address: { repository: 'cj/repo' } }] })
+  expect(store.decisions.get('d1')).toMatchObject({ threadKey: 'github:cj/repo#1' })
+  expect(store.db.prepare("SELECT thread FROM trigger_thread WHERE id = 'trig-1'").all()).toEqual([{ thread: 'github:cj/repo#1' }])
+  expect(store.db.prepare("SELECT thread FROM decision WHERE id = 'd1'").get()).toEqual({ thread: 'github:cj/repo#1' })
+  expect(store.receipts.get('r1')!.channel).toMatchObject({ thread: 'github:cj/repo#1', address: { repository: 'cj/repo' } })
+  expect(store.get('github-cursor:cj/repo#1')).toBe('2026-09-02T00:00:00.000Z')
+  expect(store.get('github-cursor:1')).toBeUndefined()
+  expect(store.get('github-ci:cj/repo#1')).toEqual({ fingerprint: 'f', revision: 0 })
+  expect(store.get('github-stream:cj/repo:issues')).toMatchObject({ since: '2026-09-01T00:00:00.000Z' })
+  expect(store.get('github-branch-ci:cj/repo')).toEqual({ branch: 'main', failures: [], revision: 0 })
+  expect(store.get('github-branch-ci')).toBeUndefined()
+  expect(store.get('github-retry')).toEqual({ 'cj/repo#1': { since: '2026-09-01T00:00:00.000Z', pr: false } })
+  // Feishu records are unchanged.
+  expect(store.threads.get('feishu:oc_1:om_1')).toBeDefined()
+  store.close()
+})
+
+it('builds one project from the configured repository, chats, directory, and prepare command when migrating to schema 13', () => {
+  const path = join(directory, 'db.sqlite')
+  const version = (revision: number, settings: object) => ({ revision, savedAt: '', source: 'panel', policyVersion: '', policyChanged: false, notified: [], settings })
+  const settings = { executor: { directory: '/w' },
+    sources: { github: { enabled: true, config: { repository: 'cjcj5438/omp-resume', cli: 'gh' } },
+      feishu: { enabled: true, config: { chats: [{ chatId: 'oc_team', listen: 'all' }] } } } }
+  const ticket = { id: 't1', title: 'Fix', decisionId: 'd1', channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: '1', updatedAt: '2', mandate: mandate({ via: 'listed' }), origin: { triggerId: 'trig-1', triggerIds: ['trig-1'] },
+    execution: { name: 'fix-1', directory: '/w/fix-1', assignment: 'Do it.' } }
+  schema12(path, { 'settings-revision': 1, 'settings-version:1': version(1, settings) }, { ticket: [ticket] })
+  const store = new Store(path)
+  expect(store.get('schema')).toBe(13)
+  expect(store.settings().projects).toEqual([{ id: 'omp-resume', name: 'omp-resume', repository: 'cjcj5438/omp-resume',
+    chats: [{ chatId: 'oc_team' }], directory: '/w', prepare: '' }])
+  expect(store.settings().executor).not.toHaveProperty('directory')
+  expect(store.settings().executor).not.toHaveProperty('prepare')
+  expect(store.settings().sources.github!.config).not.toHaveProperty('repository')
+  expect(store.tickets.get('t1')!.execution!.project).toBe('omp-resume')
+  store.close()
+})
+
+it('runs the schema 12 repository scoping before the schema 13 projects when opening a schema 11 database', () => {
+  const path = join(directory, 'db.sqlite')
+  const version = (revision: number, settings: object) => ({ revision, savedAt: '', source: 'panel', policyVersion: '', policyChanged: false, notified: [], settings })
+  const settings = { sources: { github: { enabled: true, config: { repository: 'cjcj5438/omp-resume', cli: 'gh' } } } }
+  schema11(path, { 'settings-revision': 1, 'settings-version:1': version(1, settings) }, {
+    thread: [{ key: 'github:1', ref: { source: 'github', id: '1' }, createdAt: '', subscriptions: [], correlated: [], pending: [], meta: {} }],
+  })
+  const store = new Store(path)
+  expect(store.get('schema')).toBe(13)
+  expect(store.threads.get('github:1')).toBeUndefined()
+  expect(store.threads.get('github:cjcj5438/omp-resume#1')).toMatchObject({ ref: { source: 'github', id: 'cjcj5438/omp-resume#1' } })
+  expect(store.settings().projects).toEqual([{ id: 'omp-resume', name: 'omp-resume', repository: 'cjcj5438/omp-resume',
+    chats: [], directory: '', prepare: '' }])
+  store.close()
+})
+
+it('binds a schema 10 workspace ticket to the first project when opening a schema 10 database', () => {
+  const path = join(directory, 'db.sqlite')
+  schema10(path, {
+    settings: { executor: {}, sources: { github: { enabled: true, config: { repository: 'cjcj5438/omp-resume', cli: 'gh' } } } },
+  }, {
+    ticket: [{ id: 't1', title: 'Fix', decisionId: 'd1', state: 'open', assignments: [], summary: '', createdAt: '1', updatedAt: '2',
+      channels: [], mandate: mandate({ via: 'listed' }), inputs: [], undelivered: [],
+      meta: { sourceTriggerId: 'trig-1', workspace: '/w/fix-1', name: 'fix-1', assignment: 'Read trigger/trig-1.' } }],
+  })
+  const store = new Store(path)
+  expect(store.get('schema')).toBe(13)
+  expect(store.settings().projects).toEqual([{ id: 'omp-resume', name: 'omp-resume', repository: 'cjcj5438/omp-resume',
+    chats: [], directory: '', prepare: '' }])
+  expect(store.tickets.get('t1')!.execution!.project).toBe('omp-resume')
   store.close()
 })

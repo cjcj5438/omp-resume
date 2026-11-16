@@ -10,6 +10,7 @@ import { RESOURCES } from '../src/app/resources.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
 import { IM_WORDS, NOTE_WORDS } from '../src/infra/text.ts'
 import type { HostToolDefinition } from '../src/omp/rpc.ts'
+import { issueTrigger } from '../src/sources/github-trigger.ts'
 import { CHAT, feishu, startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host
@@ -18,6 +19,25 @@ afterEach(async () => { await h.stop() })
 const words = (count: number) => Array.from({ length: count }, () => 'word').join(' ')
 const read = (resource: string, page: { offset?: number; limit?: number } = {}) =>
   h.runTool(h.runtime.masterId, 'orchestrator_read', { resource, ...page })
+/** Two projects for routing tests: a owns the widgets repository and the team chat, b the gadgets repository and no chat. */
+const PROJECT_AB = [
+  { id: 'a', name: 'A', repository: 'acme/widgets', chats: [{ chatId: CHAT }], directory: '', prepare: '' },
+  { id: 'b', name: 'B', repository: 'acme/gadgets', chats: [], directory: '', prepare: '' },
+]
+/** Restart the host against two projects, so unbound triggers must name one. */
+const twoProjects = async (): Promise<void> => {
+  await h.stop()
+  h = await startRuntime(store => {
+    const settings = store.settings()
+    store.saveSettings({ ...settings, projects: PROJECT_AB })
+  })
+}
+const dm = (id: string, text: string) => feishu(id, text, { chat_id: 'oc_dm1', chat_type: 'p2p', mentions: [] })
+const accept = async (trigger_id: string, extra: Record<string, unknown> = {}) => {
+  const output = await h.runTool(h.runtime.masterId, 'orchestrator_route', { decisions: [{ kind: 'accept', trigger_id, title: 'Fix',
+    worktree_name: 'fix-dm', acknowledgement: '收到，修复。', ...extra }] })
+  return (output as { results: Record<string, unknown>[] }).results
+}
 /** The host tool definitions a session registered via RPC `set_host_tools`. */
 const definitionsOf = (sessionId: string): HostToolDefinition[] => {
   const call = h.session(sessionId).commands.find(command => command.type === 'set_host_tools')
@@ -226,6 +246,50 @@ it('states each routing field\'s limit in its description, which the schema leav
     acknowledgement: [`${IM_WORDS} words`], note: [`${NOTE_WORDS} words`, 'Never add implementation instructions'], reason: ['500 characters'] }
   for (const [field, phrases] of Object.entries(limits)) for (const phrase of phrases) expect(fields[field]!.description, field).toContain(phrase)
 })
+it('refuses a direct message accept that names no project when two projects exist, and accepts it into the named project', async () => {
+  await twoProjects()
+  const message = dm('60', '修一下回归')
+  h.runtime.receive(message); await h.runtime.idle()
+  const refused = await accept(message.id)
+  expect(refused).toEqual([{ trigger_id: message.id, kind: 'accept', refused: 'Name the project: this trigger is not bound to one. Projects: a, b' }])
+  const results = await accept(message.id, { project: 'b' })
+  const ticket = h.runtime.store.tickets.get((results[0]!.ticket as { ticket_id: string }).ticket_id)!
+  expect(results[0]).toMatchObject({ trigger_id: message.id, kind: 'accept', decision: 'accept' })
+  expect(ticket.execution!.project).toBe('b')
+})
+
+it('refuses a bound trigger accept that names another project', async () => {
+  await twoProjects()
+  const mention = feishu('61', '@bot 修一下回归')
+  h.runtime.receive(mention); await h.runtime.idle()
+  const results = await accept(mention.id, { project: 'b' })
+  expect(results).toEqual([{ trigger_id: mention.id, kind: 'accept', refused: 'This trigger belongs to project a' }])
+  const accepted = await accept(mention.id)
+  const ticket = h.runtime.store.tickets.get((accepted[0]!.ticket as { ticket_id: string }).ticket_id)!
+  expect(ticket.execution!.project).toBe('a')
+  const issue = issueTrigger('acme/widgets', { number: 12, title: 'Login fails', body: '@agent-bot please fix the login',
+    created_at: '2026-09-09T00:00:00Z', html_url: 'https://github.com/acme/widgets/issues/12', user: { login: 'alice', type: 'User' } }, 'agent-bot')
+  h.runtime.receive(issue); await h.runtime.idle()
+  expect(await accept(issue.id, { project: 'b' })).toEqual([{ trigger_id: issue.id, kind: 'accept', refused: 'This trigger belongs to project a' }])
+})
+
+it('accepts a direct message without a project when one project exists', async () => {
+  const message = dm('60', '修一下回归')
+  h.runtime.receive(message); await h.runtime.idle()
+  const results = await accept(message.id)
+  const ticket = h.runtime.store.tickets.get((results[0]!.ticket as { ticket_id: string }).ticket_id)!
+  expect(results[0]).toMatchObject({ trigger_id: message.id, kind: 'accept', decision: 'accept' })
+  expect(ticket.execution!.project).toBe('widgets')
+})
+
+it('shows a candidate with its bound project, or null for a direct message', async () => {
+  await twoProjects()
+  const mention = feishu('61', '@bot 修一下回归'), message = dm('62', '修一下回归')
+  h.runtime.receive(mention); h.runtime.receive(message); await h.runtime.idle()
+  const candidates = () => h.relays(h.runtime.masterId).filter(item => item.kind === 'candidate')
+  expect(candidates().find(item => item.trigger_id === mention.id)).toMatchObject({ project: 'a' })
+  expect(candidates().find(item => item.trigger_id === message.id)).toMatchObject({ project: null })
+})
 
 it('stops one follow-up for each ticket it reached, in one call', async () => {
   const one = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
@@ -417,7 +481,7 @@ it('shows a candidate with its thread\'s tickets open first, the tickets it reac
   expect(followup).toMatchObject({ tickets_total: 2, delivered_to: [a.id], thread: `feishu:${CHAT}:om_1` })
   expect(String(followup.next_action).length).toBeLessThanOrEqual(100)
   // A message elsewhere that names a pull request reads the tickets that follow it.
-  const thread = { key: 'github:123', ref: { source: 'github', id: '123' }, createdAt: '', subscriptions: [a.id], correlated: [], pending: [], meta: {} }
+  const thread = { key: 'github:acme/widgets#123', ref: { source: 'github', id: 'acme/widgets#123' }, createdAt: '', subscriptions: [a.id], correlated: [], pending: [], meta: {} }
   h.runtime.store.threads.save(thread)
   h.runtime.receive(feishu('4', '@bot 看看 #123 的进展')); await h.runtime.idle()
   expect(relaysOf('candidate').at(-1)).toMatchObject({ related_tickets: [], tickets_total: 0, referenced_tickets: [{ ticket_id: a.id }] })
@@ -488,10 +552,10 @@ it('shows an Executor Session no id it cannot read: no Decision, no other ticket
 
 it('marks the threads a worker follows for context apart from those a Source bound its ticket to', async () => {
   const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
-  h.runtime.engine.bindThread(ticket.id, { source: 'github', id: '12' }, true)
-  await h.runTool(sessionId, 'orchestrator_thread_follow', { thread: 'github:9', reason: 'The Issue it fixes.' })
+  h.runtime.engine.bindThread(ticket.id, { source: 'github', id: 'acme/widgets#12' }, true)
+  await h.runTool(sessionId, 'orchestrator_thread_follow', { thread: 'github:acme/widgets#9', reason: 'The Issue it fixes.' })
   const { threads } = await read(`ticket/${ticket.id}`) as { threads: { thread: string }[] }
-  expect(threads).toEqual(expect.arrayContaining([{ thread: `feishu:${CHAT}:om_1` }, { thread: 'github:12', bound: true }, { thread: 'github:9', context: true }]))
+  expect(threads).toEqual(expect.arrayContaining([{ thread: `feishu:${CHAT}:om_1` }, { thread: 'github:acme/widgets#12', bound: true }, { thread: 'github:acme/widgets#9', context: true }]))
   expect(threads).toHaveLength(3)
 })
 

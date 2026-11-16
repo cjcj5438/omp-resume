@@ -831,11 +831,23 @@ fn safety_iterm_impl_uses_quoting_and_refusals() {
     std::fs::create_dir_all(&cwd).unwrap();
     let p = branch_session(&proj, "i.jsonl", "sess-i9", &cwd.display().to_string());
     let got = RefCell::new(String::new());
-    let opener = |cmd: &str| -> Result<(), omp_resume_lib::model::AppError> {
+    let opener = |cmd: &str| -> Result<(String, String), omp_resume_lib::model::AppError> {
         got.replace(cmd.to_owned());
-        Ok(())
+        Ok(("tab-safety".to_owned(), "/dev/ttys005".to_owned()))
     };
-    ops_cmds::open_in_iterm_impl(&c, &p.display().to_string(), &opener).unwrap();
+    // 确认阶段全部注入：不跑真实 ps/lsof/osascript，也不等 10 秒。
+    let open = |c: &omp_resume_lib::config::Config, p: &str| {
+        ops_cmds::open_in_iterm_impl_observed(
+            c,
+            p,
+            &opener,
+            std::time::Duration::from_millis(150),
+            &|_: &str| Ok(std::collections::HashSet::new()),
+            &|_, _, _, _| true,
+            &|_: &str| String::new(),
+        )
+    };
+    open(&c, &p.display().to_string()).unwrap();
     let valid = config::validate_session_path(&c, &p.display().to_string()).unwrap();
     assert_eq!(
         got.borrow().as_str(),
@@ -862,7 +874,7 @@ fn safety_iterm_impl_uses_quoting_and_refusals() {
         f
     };
     got.replace(String::new());
-    let e = ops_cmds::open_in_iterm_impl(&c, &b.display().to_string(), &opener).unwrap_err();
+    let e = open(&c, &b.display().to_string()).unwrap_err();
     assert_eq!(e.code, ErrorCode::InUse);
     assert!(got.borrow().is_empty());
 }

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+afterEach(() => { vi.restoreAllMocks() })
 import { z } from 'zod'
 import { CliError, Commands, commandError } from '../src/infra/commands.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
@@ -13,8 +14,8 @@ const sources = new SourceRegistry(() => SettingsSchema.parse({}))
 sources.register(feishuKind); sources.register(githubKind)
 const send = (commands: Commands, message: OutboundMessage) => sources.send(message, commands)
 const deployment = testDeployment({ github: { ...testDeployment().github, cli: '/path/agent-gh' } })
-const REPOSITORY = deployment.repository
-const reply = { id: 'stable-operation', channel: githubChannel(8), text: 'Done', kind: 'reply' as const }
+const REPOSITORY = deployment.projects[0]!.repository
+const reply = { id: 'stable-operation', channel: githubChannel(REPOSITORY, 8), text: 'Done', kind: 'reply' as const }
 describe('account-isolated operations', () => {
   it('uses the agent account\'s GitHub CLI and preserves literal shell metacharacters in argv', async () => {
     const commands = new Commands(() => deployment, {}, new AbortController().signal); const run = vi.spyOn(commands,'run').mockResolvedValue('{}')
@@ -34,23 +35,24 @@ describe('account-isolated operations', () => {
   })
   it('reconciles an uncertain GitHub send with its stable marker', async () => {
     const commands = new Commands(() => deployment, {}, new AbortController().signal)
-    vi.spyOn(commands,'pages').mockResolvedValue([{ body:'<!-- superagent:stable-operation -->',user:{login:'agent-bot'} }])
-    const gh = vi.spyOn(commands,'gh')
+    vi.spyOn(Commands.prototype, 'pages').mockResolvedValue([{ body:'<!-- superagent:stable-operation -->',user:{login:'agent-bot'} }])
+    const gh = vi.spyOn(Commands.prototype, 'gh')
     await send(commands, reply); expect(gh).not.toHaveBeenCalled()
   })
   it('posts the reply as the model wrote it, only to the fixed repository', async () => {
-    const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(commands,'pages').mockResolvedValue([])
-    const gh = vi.spyOn(commands,'gh').mockResolvedValue({})
+    const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(Commands.prototype, 'pages').mockResolvedValue([])
+    const gh = vi.spyOn(Commands.prototype, 'gh').mockResolvedValue({})
     await send(commands, reply)
     // The disclosure line is prompt text: the model writes it, and the host adds nothing.
     expect(gh).toHaveBeenCalledWith(['api',`repos/${REPOSITORY}/issues/8/comments`,'--method','POST','-f',expect.stringMatching(/^body=Done\n\n<!-- superagent:stable-operation -->$/)])
-    await expect(new Commands(() => deployment, {}, new AbortController().signal).pages(z.unknown(),
-      '../../someone/else/issues')).rejects.toThrow()
+    vi.mocked(Commands.prototype.pages).mockRestore()
+    await expect(new Commands(() => deployment, {}, new AbortController().signal).forRepository(REPOSITORY).pages(z.unknown(),
+      '../../someone/else/issues')).rejects.toThrow('restricted to the bound repository')
   })
   it('routes review-comment replies to the root review comment', async () => {
-    const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(commands,'pages').mockResolvedValue([])
-    const gh = vi.spyOn(commands,'gh').mockResolvedValueOnce({ id: 7, in_reply_to_id: 3 }).mockResolvedValueOnce({})
-    await send(commands, { ...reply, channel: githubChannel(8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })
+    const commands = new Commands(() => deployment, {}, new AbortController().signal); vi.spyOn(Commands.prototype, 'pages').mockResolvedValue([])
+    const gh = vi.spyOn(Commands.prototype, 'gh').mockResolvedValueOnce({ id: 7, in_reply_to_id: 3 }).mockResolvedValueOnce({})
+    await send(commands, { ...reply, channel: githubChannel(REPOSITORY, 8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })
     expect(gh.mock.calls[1]![0]).toEqual(['api', `repos/${REPOSITORY}/pulls/8/comments/3/replies`, '--method', 'POST', '-f', expect.stringContaining('Done')])
   })
   it('uses Feishu bot identity and one idempotency key on retries', async () => {
@@ -91,8 +93,8 @@ describe('Channels', () => {
   })
   it('drop a GitHub reply to an Issue that is deleted or locked, and keep others for a retry', async () => {
     const value = commands()
-    vi.spyOn(value, 'pages').mockResolvedValue([])
-    const gh = vi.spyOn(value, 'gh')
+    vi.spyOn(Commands.prototype, 'pages').mockResolvedValue([])
+    const gh = vi.spyOn(Commands.prototype, 'gh')
     for (const stderr of ['gh: This issue was deleted (HTTP 410)', 'gh: Unable to create comment because issue is locked. (HTTP 403)']) {
       gh.mockRejectedValueOnce(commandError({ stderr, code: 1 }))
       expect(await send(value, reply)).toBe('gone')
@@ -105,22 +107,22 @@ describe('Channels', () => {
   })
   it('reply on the PR\'s conversation when the review comment a reply points at is gone', async () => {
     const value = commands()
-    const pages = vi.spyOn(value, 'pages').mockResolvedValue([])
-    const gh = vi.spyOn(value, 'gh')
+    const pages = vi.spyOn(Commands.prototype, 'pages').mockResolvedValue([])
+    const gh = vi.spyOn(Commands.prototype, 'gh')
       .mockRejectedValueOnce(commandError({ stderr: 'gh: Not Found (HTTP 404)', code: 1 })).mockResolvedValueOnce({})
-    expect(await send(value, { ...reply, channel: githubChannel(8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })).toBe('sent')
+    expect(await send(value, { ...reply, channel: githubChannel(REPOSITORY, 8, `https://github.com/${REPOSITORY}/pull/8#discussion_r7`) })).toBe('sent')
     expect((pages.mock.calls[0] as unknown[])[1]).toBe('issues/8/comments')
     const post = ['api', `repos/${REPOSITORY}/issues/8/comments`, '--method', 'POST', '-f', expect.stringContaining('Done')]
     expect(gh.mock.calls[1]![0]).toEqual(post)
   })
   it('link each address to its page with its label', () => {
     const links = { repository: REPOSITORY, feishu: deployment.feishu! }
-    expect(githubKind.channel!.link(githubChannel(8).address, links)).toEqual({ url: `https://github.com/${REPOSITORY}/issues/8`,
+    expect(githubKind.channel!.link(githubChannel(REPOSITORY, 8).address, links)).toEqual({ url: `https://github.com/${REPOSITORY}/issues/8`,
       label: { zh: 'GitHub #8', en: 'GitHub #8' } })
     const review = `https://github.com/${REPOSITORY}/pull/8#discussion_r7`
-    expect(githubKind.channel!.link(githubChannel(8, review).address, links))
+    expect(githubKind.channel!.link(githubChannel(REPOSITORY, 8, review).address, links))
       .toEqual({ url: review, label: { zh: 'GitHub #8 的 review 讨论', en: 'Review discussion on GitHub #8' } })
-    expect(githubKind.channel!.link(githubChannel(8).address, {}).url).toBe('')
+    expect(githubKind.channel!.link({ number: '8' }, {}).url).toBe('')
     const message = feishuChannel('oc_1', 'om_1').address
     expect(feishuKind.channel!.link(message, links)).toEqual({ url: 'https://applink.feishu.cn/client/chat/open?openChatId=oc_1',
       label: { zh: '飞书消息', en: 'Feishu message' }, triggerId: key('feishu', 'om_1') })
@@ -129,14 +131,15 @@ describe('Channels', () => {
 
 describe('GitHub calls', () => {
   const commands = () => new Commands(() => deployment, {}, new AbortController().signal)
-  it('go only to paths inside the configured repository, and validate what GitHub answers', async () => {
-    const value = commands()
-    const run = vi.spyOn(value, 'run').mockResolvedValue('{"number":12,"title":"Login fails","extra":true}')
+  it('go only to paths inside the bound repository, and validate what GitHub answers', async () => {
+    await expect(commands().api(z.unknown(), 'issues/12')).rejects.toThrow('GitHub calls need a repository')
+    const value = commands().forRepository(REPOSITORY)
+    const run = vi.spyOn(Commands.prototype, 'run').mockResolvedValue('{"number":12,"title":"Login fails","extra":true}')
     expect(await value.api(z.looseObject({ number: z.number() }), 'issues/12')).toEqual({ number: 12, title: 'Login fails', extra: true })
     expect(run).toHaveBeenLastCalledWith('/path/agent-gh', ['api', `repos/${REPOSITORY}/issues/12`])
     await expect(value.api(z.looseObject({ number: z.string() }), 'issues/12')).rejects.toThrow()
     for (const path of ['../other/repo/issues', 'issues/../../x', '/repos/x/y', 'https://api.github.com/x']) {
-      await expect(value.api(z.unknown(), path)).rejects.toThrow('restricted to the configured repository')
+      await expect(value.api(z.unknown(), path)).rejects.toThrow('restricted to the bound repository')
     }
     expect(run).toHaveBeenCalledTimes(2)
     // An empty path targets the repository root.
@@ -147,8 +150,8 @@ describe('GitHub calls', () => {
     expect(await value.api('contents/README.md', '-H', 'Accept: application/vnd.github.raw')).toBe('raw file')
   })
   it('read every page of a list, and skip and count an item that does not validate', async () => {
-    const value = commands()
-    const run = vi.spyOn(value, 'run').mockResolvedValue('[[{"id":1}],[{"id":2}]]')
+    const value = commands().forRepository(REPOSITORY)
+    const run = vi.spyOn(Commands.prototype, 'run').mockResolvedValue('[[{"id":1}],[{"id":2}]]')
     expect(await value.pages(z.looseObject({ id: z.number() }), 'issues/12/comments?per_page=100')).toEqual([{ id: 1 }, { id: 2 }])
     expect(run).toHaveBeenLastCalledWith('/path/agent-gh', ['api', `repos/${REPOSITORY}/issues/12/comments?per_page=100`, '--paginate',
       '--slurp'])

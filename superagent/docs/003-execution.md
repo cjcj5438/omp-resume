@@ -22,7 +22,7 @@ An `idle` Ticket has finished its turn without an outstanding question. A Trigge
 
 ## The Executor
 
-Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the configured execution root, which defaults to `<stateDir>/work`.
+Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory named after the Ticket's short name. Directories are created under the Ticket's project directory, which defaults to `<stateDir>/work/<project id>`.
 
 Executor Sessions run commands without approval as the operator's OS user. Each runs as its own `omp --mode rpc` process with the tools needed for work, and foreground shell commands move to the background after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
 
@@ -48,7 +48,7 @@ Worker subagents, including nested ones, run inside the worker's process with th
 
 ### Preparing a Ticket directory
 
-Before the first Assignment, if the Ticket directory does not exist, the prepare command runs once with `sh` in the execution root. It has ten minutes to finish. Without a prepare command, the worker starts in an empty directory.
+Before the first Assignment, if the Ticket directory does not exist, the Ticket's project prepare command runs once with `sh` in the project directory. It has ten minutes to finish. Without a prepare command, the worker starts in an empty directory.
 
 A failed command fails the Ticket and records its output. A retry or a person's message on one of the Ticket's Threads tries preparation again. A typical command uses `git worktree` to create a checkout. A pull request belongs to the Ticket when its branch's last path segment matches the Ticket's short name.
 
@@ -67,8 +67,9 @@ The prepare command and Executor instructions receive the same execution variabl
 | Variable | Registered by | Value |
 | --- | --- | --- |
 | `OMP_SUPERAGENT_DIR`, `OMP_SUPERAGENT_NAME`, `OMP_SUPERAGENT_TICKET` | Executor | The Ticket's directory, short name and id |
+| `OMP_SUPERAGENT_PROJECT` | Executor | The Ticket's project id |
 | `OMP_SUPERAGENT_BLOCKED_COMMANDS` | Executor | Commands the Executor may not run |
-| `OMP_SUPERAGENT_GITHUB_REPOSITORY` | GitHub | The repository the Source watches, `owner/name` |
+| `OMP_SUPERAGENT_GITHUB_REPOSITORY` | GitHub | The Ticket's project repository, `owner/name` |
 | `OMP_SUPERAGENT_GITHUB_ACCOUNT`, `OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL` | GitHub | The agent account and its commit email |
 | `OMP_SUPERAGENT_GITHUB_NUMBER`, `OMP_SUPERAGENT_GITHUB_PR_HEAD` | GitHub | The Issue or pull request that started the Ticket, and its head ref when it is a pull request |
 | `OMP_SUPERAGENT_FEISHU_BOT`, `OMP_SUPERAGENT_FEISHU_CHAT` | Feishu | The bot, and the chat that started the Ticket |

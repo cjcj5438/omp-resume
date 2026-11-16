@@ -119,8 +119,7 @@ it('drops a delivery whose ticket a person stopped while it waited for the worke
 it('runs prepare commands in the background, side by side, while accepts, intake and passes go on', async () => {
   const settings = h.runtime.store.settings()
   const gate = join(h.directory, 'prepare-gate'), started = join(h.directory, 'prepare-started')
-  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor,
-    prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } })
+  h.runtime.store.saveSettings({ ...settings, projects: settings.projects.map(project => project.id === 'widgets' ? { ...project, prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } : project) })
   const prepares = () => existsSync(started) ? readFileSync(started, 'utf8').trim().split('\n').length : 0
   const first = [feishu('1', '@bot 修一'), feishu('2', '@bot 修二')]
   for (const trigger of first) h.runtime.receive(trigger)
@@ -150,8 +149,7 @@ it('runs prepare commands in the background, side by side, while accepts, intake
 it('keeps a launch that a pause cut short queued, and finishes it once processing resumes', async () => {
   const settings = h.runtime.store.settings()
   const gate = join(h.directory, 'prepare-gate'), started = join(h.directory, 'prepare-started')
-  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor,
-    prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } })
+  h.runtime.store.saveSettings({ ...settings, projects: settings.projects.map(project => project.id === 'widgets' ? { ...project, prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } : project) })
   const trigger = feishu('1', '@bot 修一')
   h.runtime.receive(trigger); await h.runtime.idle()
   await h.session(h.runtime.masterId).callTool('orchestrator_route', { decisions: [{ kind: 'accept', trigger_id: trigger.id, title: 'fix', worktree_name: 'fix-one', acknowledgement: '收到。' }] })
@@ -204,8 +202,7 @@ it('counts a launch under way against maxWorkers, so a bot\'s Input for an idle 
   h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, maxWorkers: 1 } })
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
   // Ticket two's launch holds the only slot while its prepare command runs, before its worker's Session does.
-  h.runtime.store.saveSettings({ ...h.runtime.store.settings(), executor: { ...h.runtime.store.settings().executor,
-    prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } })
+  h.runtime.store.saveSettings({ ...h.runtime.store.settings(), projects: h.runtime.store.settings().projects.map(project => project.id === 'widgets' ? { ...project, prepare: `echo started >> '${started}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` } : project) })
   h.runtime.receive(feishu('5', '@bot 修二')); await h.runtime.idle()
   await h.session(h.runtime.masterId).callTool('orchestrator_route', { decisions: [{ kind: 'accept', trigger_id: feishu('5', '').id, title: 'two', worktree_name: 'fix-two', acknowledgement: '收到。' }] })
   await waitUntil(() => existsSync(started))
@@ -631,12 +628,12 @@ describe("the Executor's parts", () => {
   })
 
   it('words an assignment, and the limits an inferred mandate sets, from the ticket alone', () => {
-    const settings = SettingsSchema.parse({ policy: { rules: [{ id: 'copy', name: 'Copy fixes', enabled: true,
-      instruction: 'Fix typos only.' }] } })
+    const settings = SettingsSchema.parse({ projects: [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets' }],
+      policy: { rules: [{ id: 'copy', name: 'Copy fixes', enabled: true, instruction: 'Fix typos only.' }] } })
     const ticket = { id: 'ticket-0123456789abcdef', origin: { triggerId: 'tr1', triggerIds: [] },
       mandate: { strength: 'inferred', policyVersion: 'v1', basis: { rules: ['copy'] }, actor: { source: 'github', id: 'alice' },
         scope: '' } } as unknown as Ticket
-    const execution = ticketExecution(ticket, { kind: 'accept', title: 'Fix', scope: 'the typo', reason: 'r', name: 'fix-typo' } as never,
+    const execution = ticketExecution(ticket, { kind: 'accept', project: 'widgets', title: 'Fix', scope: 'the typo', reason: 'r', name: 'fix-typo' } as never,
       settings, '/state')
     expect(execution).toEqual(expect.objectContaining({ name: 'fix-typo-ticket-01234' }))
     expect(execution).not.toHaveProperty('session')
@@ -644,7 +641,7 @@ describe("the Executor's parts", () => {
     expect(execution.assignment).toContain('Scope: the typo.')
     expect(execution.assignment).not.toContain('trigger/tr1')
     expect(ticketExecution({ ...ticket, mandate: { ...ticket.mandate, strength: 'explicit' } } as Ticket,
-      { kind: 'accept', title: 'Fix', scope: 'Fix', reason: 'r', name: 'fix-login', note: 'the login page' } as never, settings, '/state').assignment)
+      { kind: 'accept', project: 'widgets', title: 'Fix', scope: 'Fix', reason: 'r', name: 'fix-login', note: 'the login page' } as never, settings, '/state').assignment)
       .toBe('Routing note (not the source request): the login page')
     // The worker's system prompt holds the limits an inferred Mandate sets, so the assignment does not repeat them.
     expect(execution.assignment).not.toContain(mandateInstructions(ticket.mandate))

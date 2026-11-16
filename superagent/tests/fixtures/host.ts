@@ -135,10 +135,11 @@ export async function startRuntime(seedOrOptions?: ((store: Store) => void) | St
   const logger = { info: (message: string) => { logs.push({ level: 'info', message }) },
     warn: (message: string) => { logs.push({ level: 'warn', message }) }, error: (message: string) => { logs.push({ level: 'error', message }) } }
   const seeded = new Store(join(directory, 'superagent.sqlite'))
-  const sources = { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } },
+  const sources = { github: { enabled: true, config: { cli: AGENT } },
     feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } }
   const base = seeded.settings()
   seeded.saveSettings(SettingsSchema.parse({ ...base, sources, eval: { ...base.eval, mode: 'auto' },
+    projects: [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets', chats: [{ chatId: CHAT }], directory: '', prepare: '' }],
     policy: { ...base.policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT },
       github: { allowed: [{ id: 'alice' }] } } } }))
   options.seed?.(seeded)

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'nod
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { machineFor } from './deployment.ts'
+import { OLDEST_SCHEMA, SCHEMA_VERSION } from './app/migration.ts'
 import { spawnLauncher } from './omp/rpc.ts'
 import { prunePlugins } from './omp/sessions.ts'
 import { Runtime } from './app/runtime.ts'
@@ -25,7 +26,9 @@ const log = (level: 'info' | 'warn' | 'error', message: string): void => {
 const logger = { info: (message: string) => log('info', message), warn: (message: string) => log('warn', message),
   error: (message: string) => log('error', message) }
 
-const args = (argv: string[]): { stateDir: string; socket: string; omp: string } => {
+const PRINT_SCHEMA = `schema ${JSON.stringify({ schema: SCHEMA_VERSION, oldest: OLDEST_SCHEMA })}\n`
+const args = (argv: string[]): { stateDir: string; socket: string; omp: string; printOnly: boolean } => {
+  if (argv.includes('--print-schema')) return { stateDir: '', socket: '', omp: '', printOnly: true }
   const value = (flag: string): string | undefined => {
     const at = argv.indexOf(flag)
     return at >= 0 && at + 1 < argv.length ? argv[at + 1] : undefined
@@ -35,7 +38,20 @@ const args = (argv: string[]): { stateDir: string; socket: string; omp: string }
     process.stderr.write('usage: daemon.js --state-dir <dir> --socket <path> --omp <omp-bin>\n')
     process.exit(2)
   }
-  return { stateDir, socket, omp }
+  return { stateDir, socket, omp, printOnly: false }
+}
+
+/**
+ * The one-line stderr report when the state database schema is newer than this
+ * build supports or older than it can migrate; anything else is not a mismatch.
+ */
+const schemaMismatch = (error: unknown): string | undefined => {
+  const message = error instanceof Error ? error.message : String(error)
+  const newer = message.match(/Unsupported orchestrator database version (\d+)/)
+  if (newer) return `orchestrator schema mismatch: state=${newer[1]} supported=${OLDEST_SCHEMA}..${SCHEMA_VERSION}`
+  const older = message.match(/Orchestrator database schema (\d+) predates schema (\d+)/)
+  if (older) return `orchestrator schema mismatch: state=${older[1]} supported=${older[2]}..${SCHEMA_VERSION}`
+  return undefined
 }
 
 /** Rejects when another daemon answers on `socket`, unlinks it when the listener is gone. */
@@ -55,6 +71,8 @@ const claimSocket = (socket: string): Promise<void> => {
 }
 
 async function main(): Promise<void> {
+  // `--print-schema` answers before any state-dir access, lock, or logging side effect.
+  if (process.argv.slice(2).includes('--print-schema')) { process.stdout.write(PRINT_SCHEMA); process.exit(0) }
   // The one sanctioned environment mutation: `BUN_BE_BUN=1` is only the `omp run` launch trampoline.
   // Every omp/gh/git/worker child breaks when it inherits the flag (Bun reinterprets their argv), so it dies here.
   delete process.env.BUN_BE_BUN
@@ -67,6 +85,11 @@ async function main(): Promise<void> {
     try {
       runtime = new Runtime({ machine: machineFor(stateDir), ompBin: omp, launcher: spawnLauncher, logger, restart })
     } catch (error) {
+      const mismatch = schemaMismatch(error)
+      if (mismatch !== undefined) {
+        process.stderr.write(`${mismatch}\n`)
+        process.exit(78)
+      }
       if ((error as NodeJS.ErrnoException)?.code === 'ELOCKED') {
         logger.error(`another Superagent daemon holds ${stateDir}`)
         process.exit(3)

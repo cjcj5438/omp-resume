@@ -12,13 +12,14 @@ import { SourceRegistry } from '../src/sources/registry.ts'
 
 /** Assessor fixture backed by in-memory repositories and fake GitHub Issue and file reads. */
 function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.from({ length: 5 }, (_, i) => `comment ${i}`),
-  threadContext?: AssessorHost['threadContext']) {
+  threadContext?: AssessorHost['threadContext'], settings: AssessorHost['settings'] = () => SettingsSchema.parse({ projects: [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets' }] })) {
   const comments = bodies.map((body, i) => ({ id: i, html_url: `https://github.com/acme/widgets/issues/1#c${i}`,
     user: { login: 'bob' }, created_at: '2026-09-09T00:00:00Z', body }))
   const gate = { issue: undefined as Promise<void> | undefined }
   const commands = {
     repository: 'acme/widgets', deployment: testDeployment(),
     withSignal() { return commands },
+    forRepository() { return commands },
     gh: vi.fn(async (args: string[]) => {
       await gate.issue
       const number = Number(/issues\/(\d+)/.exec(args[1]!)?.[1])
@@ -36,7 +37,7 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   sources.register(githubKind)
   let engine!: Engine
   const host: AssessorHost = {
-    get engine() { return engine }, commands, deployment: testDeployment(), settings: () => SettingsSchema.parse({}),
+    get engine() { return engine }, commands, deployment: testDeployment(), settings,
     threadContext: threadContext ?? (trigger => sources.threadContext(trigger)),
     effects: { enqueue: () => {}, handle: () => {} }, paused: () => false, deliver: async () => {}, candidateCard: async candidate => ({ eval_id: candidate.evalId }),
   }
@@ -59,7 +60,7 @@ function setup(strength: 'explicit' | 'inferred' = 'inferred', bodies = Array.fr
   return { repo, engine, assessor, tools, size, gate }
 }
 const issue = (n: number): Trigger => ({ id: `issue-${n}`, source: 'github', threads: [{ source: 'github', id: String(n) }], actor: { source: 'github', id: 'bob' }, human: true,
-  at: new Date(Date.UTC(2026, 8, 9, 0, 0, n)).toISOString(), text: `issue ${n}`, url: `https://github.com/acme/widgets/issues/${n}`, meta: { number: n } })
+  at: new Date(Date.UTC(2026, 8, 9, 0, 0, n)).toISOString(), text: `issue ${n}`, url: `https://github.com/acme/widgets/issues/${n}`, meta: { repository: 'acme/widgets', number: n } })
 const signal = new AbortController().signal
 
 it('keeps nothing for an Eval once it is decided, as for one that timed out', async () => {
@@ -179,4 +180,50 @@ it('lets the main Session read on from the cursor its loaded window ends with, a
   s2.engine.receive(long); s2.engine.receive({ ...issue(3), threads: issue(1).threads }); s2.engine.evaluateDue()
   const other = await s2.assessor.context('issue-3', signal) as { batch: Record<string, unknown>[] }
   expect(other.batch).toEqual([expect.objectContaining({ trigger_id: 'long', chars: long.text.length, read: 'trigger/long' })])
+})
+
+const assessed = (extra: Record<string, unknown> = {}) => ({ decision: 'accept' as const,
+  rule_assessments: [{ rule_id: 'copy', matched: true, reason: 'copy change' }, { rule_id: 'visual', matched: false, reason: 'not visual' }],
+  direction: { implementation_requested: true, target_basis: 'specified', requires_design_decision: false, evidence: 'it names the text' },
+  title: '文案修订', worktree_name: 'copy-fix', scope: '改副标题', reason: 'explicit copy change', intent_evidence: 'quoted',
+  acknowledgement: '收到。', ...extra })
+const two = () => SettingsSchema.parse({ eval: { mode: 'auto' },
+  projects: [{ id: 'a', name: 'A', repository: 'acme/widgets' }, { id: 'b', name: 'B', repository: 'acme/gadgets' }] })
+const unbound = (n: number): Trigger => ({ ...issue(n), id: `feishu-${n}`, source: 'feishu',
+  threads: [{ source: 'feishu', id: `oc_dm:om_${n}` }], actor: { source: 'feishu', id: 'ou_alice' }, meta: { chatId: 'oc_dm', direct: true } })
+
+it('decides an unbound assessment by the named project, refusing one that names none when two projects exist', async () => {
+  const s = setup('inferred', undefined, undefined, two)
+  s.engine.receive(unbound(1)); s.engine.evaluateDue()
+  await expect(s.tools.orchestrator_eval_decide!({ trigger_id: 'feishu-1', ...assessed() }, signal))
+    .rejects.toThrow('Name the project: this trigger is not bound to one. Projects: a, b')
+  const decided = await s.tools.orchestrator_eval_decide!({ trigger_id: 'feishu-1', ...assessed({ project: 'b' }) }, signal) as
+    { state: string; ticket_id: string }
+  expect(decided.state).toBe('accept')
+  expect(s.repo.tickets.get(decided.ticket_id)).toBeDefined()
+})
+
+it('records the named project in an inferred would-accept proposal outside auto mode', async () => {
+  const observed = () => ({ ...two(), eval: { ...two().eval, mode: 'observe' as const } })
+  const s = setup('inferred', undefined, undefined, observed)
+  s.engine.receive(unbound(2)); s.engine.evaluateDue()
+  await s.tools.orchestrator_eval_decide!({ trigger_id: 'feishu-2', ...assessed({ project: 'b' }) }, signal)
+  expect(s.repo.decisions.byThread('feishu:oc_dm:om_2')[0]!.audit).toMatchObject({ would_accept: true,
+    proposal: expect.objectContaining({ project: 'b' }) })
+})
+
+it('reads a repository file from the named project, or the trigger\'s bound project', async () => {
+  const s = setup('inferred', undefined, undefined, two)
+  s.engine.receive(unbound(3)); s.engine.evaluateDue()
+  await expect(s.tools.orchestrator_eval_read!({ trigger_id: 'feishu-3', resource: 'file', path: 'src/value.ts', offset: 0 }, signal))
+    .rejects.toThrow('Name the project: this trigger is not bound to one. Projects: a, b')
+  await expect(s.tools.orchestrator_eval_read!({ trigger_id: 'feishu-3', resource: 'file', path: 'src/value.ts', project: 'nope', offset: 0 },
+    signal)).rejects.toThrow('Unknown project nope; projects: a, b')
+  expect(await s.tools.orchestrator_eval_read!({ trigger_id: 'feishu-3', resource: 'file', path: 'src/value.ts', project: 'b', offset: 0 },
+    signal)).toMatchObject({ text: expect.stringContaining('export const value') })
+  s.engine.receive(issue(4)); s.engine.evaluateDue()
+  await expect(s.tools.orchestrator_eval_read!({ trigger_id: 'issue-4', resource: 'file', path: 'src/value.ts', project: 'b', offset: 0 },
+    signal)).rejects.toThrow('This trigger belongs to project a')
+  expect(await s.tools.orchestrator_eval_read!({ trigger_id: 'issue-4', resource: 'file', path: 'src/value.ts', offset: 0 }, signal))
+    .toMatchObject({ text: expect.stringContaining('export const value') })
 })

@@ -161,3 +161,16 @@
   text-overflow: clip;
   word-break: break-all;
 }
+
+/* 版本不匹配横幅：warn 底上放两行说明 + 右侧主按钮。 */
+.sa-mismatch {
+  justify-content: space-between;
+  color: var(--text);
+}
+
+.sa-mismatch-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}

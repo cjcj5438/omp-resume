@@ -1,9 +1,10 @@
 /** Settings view combining versioned configuration blocks, per-source forms and policy metadata, and execution environment details. */
+import { join } from 'node:path'
 import { SETUP_FIELDS } from '../../deployment.ts'
 import { KV } from '../../kv.ts'
 import { policyVersion } from '../../policy.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
-import { declaredVariables, executionRoot } from '../execution-environment.ts'
+import { declaredVariables } from '../execution-environment.ts'
 import type { Store } from '../store.ts'
 import { problemOf, sourceHealth, type HealthMap, type SetupState } from './sources.ts'
 
@@ -22,11 +23,11 @@ function policyOf(sources: SourceRegistry, id: string, health: HealthMap) {
  */
 export function settingsView(store: Store, sources: SourceRegistry, health: HealthMap, setup: SetupState, stateDir: string) {
   const settings = store.settings()
-  const block = <V>(name: 'policy' | 'eval' | 'executor', value: V) => ({ value, revision: store.blockRevision(name) })
+  const block = <V>(name: 'policy' | 'eval' | 'executor' | 'projects', value: V) => ({ value, revision: store.blockRevision(name) })
   return {
     policyVersion: policyVersion(settings),
     blocks: { policy: block('policy', settings.policy), eval: block('eval', settings.eval), executor: block('executor',
-      settings.executor) },
+      settings.executor), projects: block('projects', settings.projects) },
     sources: sources.instances(settings).map(instance => {
       const kind = sources.kind(instance.kind)
       const problem = problemOf(instance.id, setup)
@@ -36,7 +37,7 @@ export function settingsView(store: Store, sources: SourceRegistry, health: Heal
         restarts: SETUP_FIELDS[instance.id] ?? [], fields: kind?.fields ?? [], facts: kind?.facts?.(setup.deployment) ?? {},
         labels: store.get(KV.sources.labels(instance.id)) ?? {}, ...problem ? { problem } : {}, ...policyOf(sources, instance.id, health) }
     }),
-    environment: { root: executionRoot(settings, stateDir), variables: declaredVariables(sources, settings) },
+    environment: { workRoot: join(stateDir, 'work'), variables: declaredVariables(sources, settings) },
   }
 }
 export type SettingsView = ReturnType<typeof settingsView>

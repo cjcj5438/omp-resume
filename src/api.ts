@@ -607,6 +607,11 @@ export function superagentRestart(): Promise<SuperagentStatus> {
   return call("superagent_restart");
 }
 
+/** 改用新状态目录：旧目录改名保留，守护进程从空库启动（只在 `incompatible` 时可用）。 */
+export function superagentResetState(): Promise<SuperagentStatus> {
+  return call("superagent_reset_state");
+}
+
 /** 经 unix socket 代理到守护进程 HTTP 的请求（面板与会话列表都走它）。 */
 export function superagentRequest(
   method: SuperagentHttpMethod,

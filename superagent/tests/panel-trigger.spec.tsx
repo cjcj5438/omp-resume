@@ -3,7 +3,7 @@
 import { act } from 'react'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
-import { usePanel, mount, remount, settle, all, find, click, text, at } from './fixtures/panel.tsx'
+import { usePanel, mount, remount, settle, all, find, click, type, text, at } from './fixtures/panel.tsx'
 import { server, trigger, threadSummary, ticketSummary } from './fixtures/panel-server.ts'
 
 usePanel()
@@ -43,6 +43,8 @@ it('filters the Thread list by activity, and unsubscribes from a Thread page aft
   await click(zh['threadFilter.recent'])
   expect(server.requests.some(request => request.path === 'threads?filter=recent&limit=20')).toBe(true)
   expect(document.querySelector('select[aria-label="来源"]')).toBeNull()
+  await type(document.querySelector<HTMLSelectElement>('select[aria-label="项目"]')!, 'widgets')
+  expect(server.requests.some(request => request.path === 'threads?filter=recent&limit=20&project=widgets')).toBe(true)
   await click('这个文案好奇怪')
   await click(zh.unsubscribe)
   await click(zh.confirm)
@@ -88,8 +90,9 @@ it('shows a follow-up delivered to its Ticket without an Eval, a hand-back with 
   expect(events()).toEqual([['message f2', [zh.dispositionQueued], '“修复回归”的执行器把这条触发交回评估：Asks for a new page'],
     ['message f1', [zh.dispositionDelivered], undefined]])
   expect(document.querySelector(`.dt-tag[title="${zh.dispositionDeliveredHint}"]`)).not.toBeNull()
-  expect(all('.dt-list .dt-ticket').map(row => [row.querySelector('.dt-open')?.textContent, row.querySelector('.dt-tag')?.textContent]))
-    .toEqual([['修复回归', undefined], ['相关工单', zh.contextOnly]])
+  expect(all('.dt-list .dt-ticket').map(row => [row.querySelector('.dt-open')?.textContent,
+    [...row.querySelectorAll('.dt-tag')].map(tag => tag.textContent)]))
+    .toEqual([['修复回归', ['Widgets']], ['相关工单', ['Widgets', zh.contextOnly]]])
   await remount(en)
   expect(events()[1]).toEqual(['message f1', [en.dispositionDelivered], undefined])
   expect(events()[0]![2]).toBe('The Executor of “修复回归” handed it back for an Eval: Asks for a new page')

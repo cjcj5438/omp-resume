@@ -437,7 +437,7 @@ fn resume_recent<R: Runtime>(app: &AppHandle<R>, session_id: String) {
     std::thread::spawn(move || {
         let cfg = app.state::<crate::config::Config>().inner().clone();
         if let Err(e) =
-            crate::ops::commands::open_in_iterm_impl(&cfg, &path, &crate::ops::iterm::open_tab)
+            crate::ops::commands::open_in_iterm_impl(&cfg, &path, &crate::ops::iterm::open_tab_tracked)
         {
             send_plain(&app, "续聊失败", &e.message);
         }
@@ -1153,7 +1153,7 @@ pub async fn tray_resume_recent(
     }
     crate::blocking(move || {
         let cfg = app.state::<crate::config::Config>().inner().clone();
-        crate::ops::commands::open_in_iterm_impl(&cfg, &path, &crate::ops::iterm::open_tab)
+        crate::ops::commands::open_in_iterm_impl(&cfg, &path, &crate::ops::iterm::open_tab_tracked)
     })
     .await
 }

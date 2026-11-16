@@ -10,6 +10,7 @@ import type { Effects } from '../app/effects.ts'
 import type { Variable } from '../app/execution-environment.ts'
 import type { Setup } from '../app/setup.ts'
 import { resultRelay } from '../app/notices.ts'
+import { projectOfTicket } from '../app/projects.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import type { OmpSessions, SessionEvent } from '../omp/sessions.ts'
 import { ASSIGNMENT_CHARS, BACKGROUND_LIMIT_MS, batchLine, batchOf, inputMessage, inputResource, Later, PREPARE_TIMEOUT_MS,
@@ -88,7 +89,7 @@ export class OmpExecutor implements Executor {
     return { ...ticket, execution: ticketExecution(ticket, outcome, this.host.store.settings(), this.host.machine.stateDir) }
   }
   /**
-   * Runs the configured `executor.prepare` command for a new ticket workspace in its parent directory with the ticket's
+   * Runs the ticket's project `prepare` command for a new ticket workspace in its parent directory with the ticket's
    * execution environment variables, then verifies the directory as the worker sees it.
    * A failed prepare command throws `PrepareFailed`, which is not retried automatically; an empty directory it left is removed, a non-empty one kept.
    * @throws PrepareFailed with the command's output when the prepare command fails.
@@ -96,7 +97,10 @@ export class OmpExecutor implements Executor {
   private async prepareDirectory(ticket: Ticket): Promise<void> {
     const directory = ticket.execution?.directory ?? ''
     await mkdir(dirname(directory), { recursive: true })
-    const command = this.host.store.settings().executor.prepare.trim()
+    const projectId = ticket.execution?.project
+    const project = projectId ? projectOfTicket(this.host.store.settings(), ticket) : undefined
+    if (projectId && !project) throw new PrepareFailed(`Project ${projectId} no longer exists`)
+    const command = project?.prepare.trim() ?? ''
     // The prepare command runs as the worker would: shim PATH and isolated git config plus the ticket's variables.
     const env = { ...this.host.setup.workerEnv(),
       ...Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value])) }

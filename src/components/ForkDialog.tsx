@@ -39,7 +39,7 @@ export function ForkDialog({ session, nodeId, onClose, onDone, onToast }: ForkDi
         setNotice(outcome.notice);
         return;
       }
-      onToast(`已打开 iTerm2 标签页 · ${session.title}`, "info");
+      onToast(`已从节点继续「${session.title}」· omp 已启动`, "info");
       onDone(outcome);
       onClose();
     } catch (e: unknown) {
@@ -57,7 +57,7 @@ export function ForkDialog({ session, nodeId, onClose, onDone, onToast }: ForkDi
           将追加一个 <code>custom</code> 分支标记，再用 <code>omp --resume</code> 从该节点继续。
         </>
       }
-      onClose={onClose}
+      onClose={busy ? () => {} : onClose}
       footer={
         <>
           <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>

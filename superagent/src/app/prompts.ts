@@ -8,6 +8,7 @@ import { promptsNotice } from './notices.ts'
 import type { OmpSessions } from '../omp/sessions.ts'
 import type { Store } from './store.ts'
 import { Versions } from './versions.ts'
+import { SOURCE as FEISHU_SOURCE } from '../sources/feishu-trigger.ts'
 import { KV } from '../kv.ts'
 
 /** Prompt sections the team writes; the built-in parts follow Superagent's text until the team overrides them. */
@@ -23,7 +24,7 @@ const SkillNameSchema = z.string().regex(SKILL_NAME).refine(name => !(Object.key
 /** The built-in parts a team may override, by key: both roles' parts, the Source skills, and the generated parts' templates. */
 const PART_KEYS = ['runtime/shared', 'runtime/orchestrator', 'runtime/worker', 'runtime/subscriptions', 'runtime/replies',
   'runtime/dispatch', 'runtime/work', 'runtime/admission', 'runtime/handoff/orchestrator', 'runtime/handoff/worker', 'runtime/environment',
-  'runtime/policy', 'runtime/policy/none', 'skill/feishu', 'skill/github'] as const
+  'runtime/policy', 'runtime/policy/none', 'runtime/projects', 'skill/feishu', 'skill/github'] as const
 export type PartKey = typeof PART_KEYS[number]
 /** A team's text for a built-in part, and `base`, the key of the built-in text it was edited from. */
 const OverrideSchema = z.object({ text: z.string(),
@@ -43,6 +44,7 @@ export const defaultPrompts = (): PromptConfig => ({ ...teamDefaults, skills: {}
 
 const ENVIRONMENT_HEADING = 'Execution environment (from this installation\'s settings; it takes precedence over any repository or account named elsewhere in these instructions; an empty value means that part is not configured here). The prepare command of a ticket directory reads the same variables:'
 const POLICY_HEAD = '## Policy\nPolicy version {version}; accept mode {mode}. The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.'
+const PROJECTS_HEAD = 'Projects. Each piece of work belongs to one project: its repository, its Feishu chats and its ticket directory. A GitHub trigger belongs to the project of its repository, and a message in a chat a project lists belongs to that project; the host binds those. For a direct message or a chat no project lists, name the project in accept or orchestrator_eval_decide from what the request says. When it does not settle the project, answer the requester with orchestrator_reply purpose=answer and that trigger_id asking which project, then ignore the candidate with that reason; their reply arrives as a new candidate. With one project, it is always used.\n{projects}'
 type Role = 'orchestrator' | 'worker'
 /** A built-in part a team may override: the roles that read it, its text, and the placeholders a template's override keeps. */
 interface BuiltInPart { roles: readonly Role[]; text: string; placeholders?: readonly string[] }
@@ -65,6 +67,7 @@ export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts 
   'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} The enabled rules, by name and id:\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
   'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} No rule is enabled: a proactive candidate can only be ignored.`,
     placeholders: ['{version}', '{mode}'] },
+  'runtime/projects': { roles: MAIN, text: PROJECTS_HEAD, placeholders: ['{projects}'] },
   'skill/feishu': { roles: BOTH, text: `${sourceSkills.feishu}\n\n## CLI usage\n${cliNotes}` },
   'skill/github': { roles: BOTH, text: `${sourceSkills.github}\n\n## CLI usage\n${cliNotes}` },
 }
@@ -96,10 +99,22 @@ export function policySection(settings: Settings, config: PromptConfig = default
   return { key: part, text: fill(builtIn(config, part), { version: policyVersion(settings), mode: settings.eval.mode, rules: rules.join('\n') }) }
 }
 /**
- * Assemble a role's system prompt sections in order from fixed templates, team sections, the generated execution environment
- * and, last, the main Session's generated Policy section, which nothing follows, and whose change leaves the rest unchanged.
+ * The main Session's Projects section: each project on one line with its repository and Feishu chats, so the Session
+ * names the project for an unbound trigger. `labels` maps Feishu chat ids to their display names; unknown chats read
+ * as their id. `key` names the template it was filled from.
  */
-export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }) {
+export function projectsSection(settings: Settings, labels: Record<string, string> = {}, config: PromptConfig = defaultPrompts()): { key: string; text: string } {
+  const line = (text: string) => text.replace(/\s*\n\s*/g, ' ')
+  const projects = settings.projects.map(project => `- ${line(project.id)} (${line(project.name)}): repository ${line(project.repository)}; Feishu chats: ${project.chats.length ? project.chats.map(chat => line(labels[chat.chatId] ?? chat.chatId)).join(', ') : 'none'}`)
+  return { key: 'runtime/projects', text: fill(builtIn(config, 'runtime/projects'), { projects: projects.join('\n') }) }
+}
+/**
+ * Assemble a role's system prompt sections in order from fixed templates, team sections, the generated execution environment
+ * and, for the main Session, the generated Projects and Policy sections; the Policy is last, which nothing follows, and
+ * whose change leaves the rest unchanged.
+ */
+export function promptParts(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string },
+  projects?: { key: string; text: string }) {
   // A built-in part names the key its text is overridden by, which for the handoff names the role.
   const fixed = (name: string, part = name) => ({ name, kind: 'fixed' as const, key: part, text: builtIn(config, part as PartKey) })
   const team = (name: TeamSection) => ({ name, kind: 'team' as const, heading: `## ${TEAM_HEADINGS[name]}`,
@@ -111,11 +126,13 @@ export function promptParts(config: PromptConfig, role: Role, environment?: stri
     ...role === 'orchestrator' ? [fixed('runtime/admission')] : [],
     fixed('runtime/handoff', `runtime/handoff/${role}`),
     ...environment ? [{ name: 'runtime/environment', kind: 'generated' as const, key: 'runtime/environment', text: environment }] : [],
+    ...role === 'orchestrator' && projects ? [{ name: 'runtime/projects', kind: 'generated' as const, ...projects }] : [],
     ...role === 'orchestrator' && policy ? [{ name: 'runtime/policy', kind: 'generated' as const, ...policy }] : [],
   ].filter(part => part.text)
 }
-export function composePrompt(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string }): string {
-  return promptParts(config, role, environment, policy).map(part => part.text).join('\n\n')
+export function composePrompt(config: PromptConfig, role: Role, environment?: string, policy?: { key: string; text: string },
+  projects?: { key: string; text: string }): string {
+  return promptParts(config, role, environment, policy, projects).map(part => part.text).join('\n\n')
 }
 export function composeSkill(config: PromptConfig, name: string): string {
   return name === 'feishu' || name === 'github' ? builtIn(config, `skill/${name}`) : config.skills[name] ?? ''
@@ -138,9 +155,12 @@ export class Prompts {
     private readonly feishu: () => boolean) {
     this.versions = new Versions(store, KV.prompts.revision, KV.prompts.version)
   }
-  /** A role's prompt; the main Session's Policy section follows the settings as they are now, at each model request. */
+  /** A role's prompt; the main Session's Policy and Projects sections follow the settings as they are now, at each model request. */
   compose(config: PromptConfig, role: Role, variables = this.environment()): string {
-    return composePrompt(config, role, environmentSection(config, variables), role === 'orchestrator' ? policySection(this.store.settings(), config) : undefined)
+    const settings = role === 'orchestrator' ? this.store.settings() : undefined
+    return composePrompt(config, role, environmentSection(config, variables),
+      settings ? policySection(settings, config) : undefined,
+      settings ? projectsSection(settings, this.store.get(KV.sources.labels(FEISHU_SOURCE)) ?? {}, config) : undefined)
   }
   /** Returns skills to register in every Session: built-in Source skills (`feishu` only when a Feishu bot is configured) followed by team skills. */
   skills(config: PromptConfig): [string, string][] {
@@ -194,9 +214,11 @@ export class Prompts {
   }
   preview(value: unknown) {
     const config = this.validate(value)
-    const environment = environmentSection(config, this.environment()), policy = policySection(this.store.settings(), config)
-    return { orchestrator: composePrompt(config, 'orchestrator', environment, policy), worker: composePrompt(config, 'worker', environment),
-      parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy), worker: promptParts(config, 'worker', environment) },
+    const settings = this.store.settings()
+    const environment = environmentSection(config, this.environment()), policy = policySection(settings, config),
+      projects = projectsSection(settings, this.store.get(KV.sources.labels(FEISHU_SOURCE)) ?? {}, config)
+    return { orchestrator: composePrompt(config, 'orchestrator', environment, policy, projects), worker: composePrompt(config, 'worker', environment),
+      parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy, projects), worker: promptParts(config, 'worker', environment) },
       skills: Object.fromEntries(this.skills(config)), scope: 'Team sections, skills, and overrides of built-in parts, which follow their built-in text until overridden. Workers additionally inherit the host prompt and repository AGENTS.md. Prompt text changes what the agents are told, not what Superagent allows: tool permissions, the gate and account wrappers stay.' }
   }
   save(value: unknown, baseRevision: number, source: SettingsOrigin): PromptVersion {

@@ -1,11 +1,23 @@
 /** Shared list rows for Tickets, Threads, and Decisions, plus Source fact chips and automated-message run folding. */
 import { useState } from 'react'
-import type { DecisionRow, ThreadFacts, ThreadRow, TicketRow } from './api.ts'
+import type { DecisionRow, Settings, ThreadFacts, ThreadRow, TicketRow } from './api.ts'
 import { Icon, Tag } from './controls.tsx'
 import { decisionMark, threadMark, ticketMark } from './marks.ts'
 import { usePanel } from './provider.tsx'
 import { actorName, localized, readableMarkers, reasonLabel, valueLabel } from './text.ts'
 import { ActionLink, ConfirmButton, LabelValue, SessionButton, StageMark, When } from './widgets.tsx'
+
+export function ProjectSelect({ projects, value, onChange }: {
+  projects: Settings['projects']; value: string | undefined; onChange: (next: string | undefined) => void
+}) {
+  const { t } = usePanel()
+  if (!projects.length) return null
+  return <select className="dt-select dt-project-select" aria-label={t('projectFilter')} value={value ?? ''}
+    onChange={event => onChange(event.target.value || undefined)}>
+    <option value="">{t('projectAll')}</option>
+    {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+  </select>
+}
 
 export function TicketLine({ ticket, question, onChanged, context }: {
   ticket: TicketRow; question?: boolean; onChanged?: () => Promise<void>; context?: boolean
@@ -21,6 +33,7 @@ export function TicketLine({ ticket, question, onChanged, context }: {
       <div className="dt-row-title"><button type="button" className="dt-open" onClick={() => navigate({ page: 'execution',
         id: ticket.id })}>{ticket.title}</button></div>
       <div className="dt-row-meta dt-ticket-meta">
+        {ticket.project && <Tag tone="quiet">{ticket.project.name}</Tag>}
         {ticket.threads.map(thread => <ThreadChip key={thread.key} thread={thread} />)}
         {context && <ContextTag />}
         {ticket.undelivered > 0 && <LabelValue label={t('ticketUndeliveredLabel')} value={ticket.undelivered} />}

@@ -4,7 +4,7 @@ import { createHandler, fail } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
-import { SettingsSchema } from '../src/policy.ts'
+import { ProjectsSchema, SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
 
 /** Mount management HTTP routes and return a request helper. */
@@ -50,6 +50,19 @@ it('answers each kind of failure with its own status', async () => {
   expect(await call('POST', 'executor/pause', 'not json')).toMatchObject({ status: 400, body: { error: 'The request body is not JSON' } })
 })
 
+it('refuses a projects block with one chat in two projects, naming the conflict', async () => {
+  const call = serve({
+    store: { tickets: { get: () => undefined }, blockRevision: () => 0 },
+    sources: { instances: () => [{ id: 'github' }] },
+    settings: { save: async (_block: unknown, value: unknown) => { ProjectsSchema.parse(value); return { saved: true, revision: 1, restarting: false } } },
+  })
+  const projects = [{ id: 'one', name: 'One', repository: 'acme/one', chats: [{ chatId: 'oc_shared' }] },
+    { id: 'two', name: 'Two', repository: 'acme/two', chats: [{ chatId: 'oc_shared' }] }]
+  const response = await call('PUT', 'settings/projects', { value: projects, revision: 0 })
+  expect(response.status).toBe(400)
+  expect((response.body.issues as { message: string }[]).map(issue => issue.message)).toContain('A chat belongs to one project')
+})
+
 it('decodes path parameters and parses each route\'s query', async () => {
   const seen: unknown[] = []
   const call = serve({
@@ -58,6 +71,7 @@ it('decodes path parameters and parses each route\'s query', async () => {
     links: () => () => ({ url: '', label: { zh: '', en: '' } }),
     engine: { unsubscribe: (key: string) => { seen.push(key); return true } },
     sessions: { delivery: async () => 'injected' },
+    configured: () => false,
   })
   expect(await call('POST', `threads/${encodeURIComponent('feishu:oc_1:om/root')}/unsubscribe`)).toMatchObject({ status: 200, body: { context_delivery: 'injected' } })
   // Invalid offsets default to 0, and limits above the route maximum are clamped.

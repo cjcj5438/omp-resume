@@ -2,7 +2,8 @@
 import { z } from 'zod'
 import type { ThreadFact } from '../core/index.ts'
 import { validItems, type Commands, type Tally } from '../infra/commands.ts'
-import { CommentSchema, IssueSchema, isHumanLogin, reviewPlace, type GithubComment } from './github-trigger.ts'
+import { sameName } from '../infra/text.ts'
+import { CommentSchema, IssueSchema, githubRepo, isHumanLogin, reviewPlace, type GithubComment } from './github-trigger.ts'
 import type { ContextMessage, ThreadContext } from './kind.ts'
 
 const CheckSchema = z.looseObject({ name: z.string(), status: z.string(), conclusion: z.string().nullable() })
@@ -99,45 +100,54 @@ function threadMessages(thread: GithubComment[], id: (comment: GithubComment) =>
  * Reads an Issue or PR, a page of its comments or reviews, a review thread, or a CI snapshot as model-facing
  * `{ id, from, at, text, reply_to?, path?, line?, url }` messages rather than raw GitHub API records.
  */
-export async function readGithub(commands: Commands, resource: string): Promise<unknown> {
-  // A commit's CI, such as the default branch's, which no PR names.
-  const commit = /^github\/commits\/([0-9a-f]{7,40})\/checks$/.exec(resource)
-  if (commit) return pullChecks(commands, commit[1]!)
-  const match = /^github\/(issues|pulls)\/([1-9]\d*)(?:\/(comments|reviews|checks|thread)(?:\/([1-9]\d*))?)?$/.exec(resource)
-  if (!match) {
-    throw new Error('Use github/issues/<number>, github/pulls/<number>, or append /comments/<page>, /reviews/<page>, /thread/<comment-id> or /checks; or github/commits/<sha>/checks')
+export async function readGithub(commands: Commands, resource: string, repositories: string[]): Promise<unknown> {
+  const repo = '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)'
+  const commit = new RegExp(`^github\\/${repo}\\/commits\\/([0-9a-f]{7,40})\\/checks$`).exec(resource)
+  if (commit) {
+    const [, repository, sha] = commit
+    return pullChecks(commands.forRepository(watched(repositories, repository!)), sha!)
   }
-  const [, kind, number, section, page = '1'] = match
+  const match = new RegExp(`^github\\/${repo}\\/(issues|pulls)\\/([1-9]\\d*)(?:\\/(comments|reviews|checks|thread)(?:\\/([1-9]\\d*))?)?$`).exec(resource)
+  if (!match) {
+    throw new Error('Use github/<owner>/<repo>/issues/<number>, github/<owner>/<repo>/pulls/<number>, or append /comments/<page>, /reviews/<page>, /thread/<comment-id> or /checks; or github/<owner>/<repo>/commits/<sha>/checks')
+  }
+  const [, repository, kind, number, section, page = '1'] = match
+  const bound = commands.forRepository(watched(repositories, repository!))
   if (kind === 'issues' && (section === 'reviews' || section === 'checks' || section === 'thread')) {
     throw new Error('Reviews, review threads and checks require a pull request')
   }
   const path = `${kind}/${number}`
   if (section === 'checks') {
-    if (match[4]) throw new Error('Checks do not take a page number')
-    const pr = await commands.api(z.looseObject({ head: z.looseObject({ sha: z.string() }) }), path)
-    return pullChecks(commands, pr.head.sha)
+    if (match[5]) throw new Error('Checks do not take a page number')
+    const pr = await bound.api(z.looseObject({ head: z.looseObject({ sha: z.string() }) }), path)
+    return pullChecks(bound, pr.head.sha)
   }
   if (section === 'thread') {
-    if (!match[4]) throw new Error('Name the review thread by one of its comments: github/pulls/<number>/thread/<comment-id>')
-    const thread = await reviewThread(commands, Number(number), Number(match[4]))
+    if (!match[5]) throw new Error('Name the review thread by one of its comments: github/<owner>/<repo>/pulls/<number>/thread/<comment-id>')
+    const thread = await reviewThread(bound, Number(number), Number(match[5]))
     if (!thread.length) throw new Error('No review comment of this PR has that id')
     return { messages: threadMessages(thread, item => String(item.id)) }
   }
   if (!section) {
-    const item = await commands.api(DescriptionSchema, path)
+    const item = await bound.api(DescriptionSchema, path)
     const branches = item.head && item.base ? { head: item.head.ref, base: item.base.ref } : {}
     const labels = item.labels?.length ? { labels: item.labels.map(label => label.name) } : {}
     return { number: item.number, title: item.title, state: item.state, ...item.merged ? { merged: true } : {},
       ...item.draft ? { draft: true } : {}, ...branches, ...labels, ...githubMessage(item, item.body ?? '', String(item.number)) }
   }
-  const listed = await commands.api(z.array(z.unknown()), `${path}/${section}?per_page=20&page=${page}`)
+  const listed = await bound.api(z.array(z.unknown()), `${path}/${section}?per_page=20&page=${page}`)
   const tally = { skipped: 0 }
   const items = validItems(CommentSchema, listed, tally)
   const messages = items.map(item => section === 'reviews'
     ? githubMessage({ ...item, created_at: item.submitted_at ?? item.created_at }, reviewText(item), String(item.id))
     : { ...githubMessage(item, item.body ?? '', String(item.id)), ...item.in_reply_to_id ? { reply_to: String(item.in_reply_to_id) } : {} })
   return { messages, ...tally.skipped ? { skipped: tally.skipped } : {},
-    ...listed.length === 20 ? { next_resource: `github/${kind}/${number}/${section}/${Number(page) + 1}` } : {} }
+    ...listed.length === 20 ? { next_resource: `github/${githubRepo(repository!)}/${kind}/${number}/${section}/${Number(page) + 1}` } : {} }
+}
+function watched(repositories: string[], repository: string): string {
+  const match = repositories.find(item => sameName(item, repository))
+  if (!match) throw new Error(`Repository ${githubRepo(repository)} is not watched`)
+  return match
 }
 /** Reads one page of an Issue or PR conversation (with the Issue/PR description first on page 1), using comment URLs as message IDs. */
 async function conversationPage(commands: Commands, number: number, page: number) {
@@ -164,14 +174,15 @@ export const githubThreadContext: ThreadContext<unknown> = {
       const message = { id: trigger.url ?? trigger.id, from: 'CI', at: trigger.at, text: trigger.text, bot: true as const }
       return { messages: [message], body: { status: 'branch_ci', messages: [message] }, status: 'branch_ci' }
     }
+    const bound = commands.forRepository(String(trigger.meta.repository))
     const number = Number(trigger.meta.number)
     if (trigger.meta.kind === 'inline' && typeof trigger.meta.commentId === 'number') {
-      const thread = await reviewThread(commands, number, trigger.meta.commentId)
+      const thread = await reviewThread(bound, number, trigger.meta.commentId)
       const messages = threadMessages(thread, item => item.html_url ?? String(item.id))
       const read = part === 'thread' ? messages : messages.slice(0, 1)
       return { messages: read, body: { status: 'review_thread', messages: read }, status: 'review_thread' }
     }
-    const body = await conversationPage(commands, number, Number(cursor ?? '1'))
+    const body = await conversationPage(bound, number, Number(cursor ?? '1'))
     return { messages: body.messages, next: body.next_resource ?? undefined, body }
   },
 }

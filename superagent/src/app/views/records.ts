@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { canRetry, followupOwners, latestReport, liveTicket, settled, threadKey, ticketStage, type ActorRef, type ChannelRef, type Decision,
   type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
 import { allowedSender, listedBot } from '../../policy.ts'
+import type { Deployment } from '../../deployment.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { workerSessionId } from '../../executor/work.ts'
@@ -10,7 +11,7 @@ import type { Store } from '../store.ts'
 import { attribute, markdown, plain, preview, readable } from './text.ts'
 
 export type LinkTarget = (channel: ChannelRef) => ChannelLink
-export interface ViewHost { store: Store; sources: SourceRegistry; links: LinkTarget }
+export interface ViewHost { store: Store; sources: SourceRegistry; links: LinkTarget; deployment?: Deployment | undefined }
 export const page = <T>(items: T[], offset: number, limit: number) => ({ items: items.slice(offset, offset + limit), total: items.length, next_offset: offset + limit < items.length ? offset + limit : null })
 const DAY = 86_400_000
 export const dayAgo = () => new Date(Date.now() - DAY).toISOString()
@@ -42,6 +43,8 @@ export interface Snapshot extends ViewHost {
   actor(actor: ActorRef, human?: boolean): ActorView
   /** The owners of follow-ups (see `ownersOf`). */
   owners: Owners
+  /** Current project name, falling back to `id` once a project has been removed; `null` for tickets accepted before projects. */
+  project(id: string | undefined): { id: string; name: string } | null
 }
 export function snapshot(host: ViewHost): Snapshot {
   const { store, sources } = host
@@ -56,6 +59,7 @@ export function snapshot(host: ViewHost): Snapshot {
   }
   const settings = store.settings()
   const rules = new Map(settings.policy.rules.map(rule => [rule.id, rule.name]))
+  const projects = new Map(settings.projects.map(project => [project.id, project.name]))
   const named = (name: string) => ({ zh: name, en: name })
   const actor = ({ source, id }: ActorRef, human?: boolean): ActorView => {
     if (!id) return { source, id }
@@ -64,7 +68,8 @@ export function snapshot(host: ViewHost): Snapshot {
     const unnamed = sources.kind(source)?.policy?.unnamed
     return { source, id, name: unnamed ? human === false ? unnamed.bot : unnamed.person : named(id) }
   }
-  return { ...host, threadsOf, rule: id => ({ id, name: rules.get(id) ?? id }), actor, owners: ownersOf(store) }
+  return { ...host, threadsOf, rule: id => ({ id, name: rules.get(id) ?? id }), actor, owners: ownersOf(store),
+    project: id => id ? { id, name: projects.get(id) ?? id } : null }
 }
 
 /**
@@ -139,6 +144,7 @@ export function threadFacts(store: Store, thread: Thread) {
 }
 export type ThreadFactsView = ReturnType<typeof threadFacts>
 export const ticketLine = (view: Snapshot, ticket: Ticket) => ({ ...ticketSummary(ticket),
+  project: view.project(ticket.execution?.project),
   threads: view.threadsOf(ticket.id).map(thread => threadFacts(view.store, thread)) })
 export function threadTitle(store: Pick<Store, 'read'>, thread: Thread): string {
   const label = attribute(thread.meta.label)

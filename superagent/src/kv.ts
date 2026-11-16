@@ -48,10 +48,10 @@ export const KV = {
    * counts reported CI changes so each produces a distinct Trigger ID).
    */
   github: { since: record<string>('github-since'), retries: record<Record<string, Retry>>('github-retry'),
-    cursor: family<string, [number: number]>('github-cursor:'),
-    stream: family<{ since: string; started: Record<string, string>; etag?: string }, [stream: string]>('github-stream:'),
-    branchCi: record<{ branch?: string; failures?: string[]; revision: number }>('github-branch-ci'),
-    ci: family<{ fingerprint: string; revision: number }, [number: number]>('github-ci:') },
+    cursor: family<string, [thread: string]>('github-cursor:'),
+    stream: family<{ since: string; started: Record<string, string>; etag?: string }, [repository: string, stream: string]>('github-stream:'),
+    branchCi: family<{ branch?: string; failures?: string[]; revision: number }, [repository: string]>('github-branch-ci:'),
+    ci: family<{ fingerprint: string; revision: number }, [thread: string]>('github-ci:') },
   /**
    * Feishu Source: known chats (`true` for direct messages); per-chat history cursor and active topics mapped from topic ID
    * to last-seen timestamp; and per-polled-thread seen message IDs and initialization flag.

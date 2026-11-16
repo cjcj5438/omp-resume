@@ -3,8 +3,10 @@
 //! - 无 Tauri 依赖：输入为 `&Config` 与显式参数，可在集成测试中直接调用。
 //! - 薄 `#[tauri::command]` 包装在 `crate` 根（`lib.rs`），只做
 //!   `State` 取值 + `spawn_blocking`。
-//! - `open_in_iterm_impl` 的终端 opener 可注入（`&dyn Fn`），
-//!   生产传 `super::iterm::open_tab`，测试断言精确命令串而不启动 iTerm。
+//! - `open_in_iterm_impl` 的终端 opener 可注入（`&dyn Fn`），生产传
+//!   `super::iterm::open_tab_tracked`（返回本次新标签页的 `id`/`tty`），
+//!   测试注入桩断言精确命令串而不启动 iTerm；成功判定见
+//!   [`open_tracked_and_confirm`]（必须有绑定本次 tty 的启动证据）。
 
 use std::path::Path;
 
@@ -189,12 +191,55 @@ fn resume_target(cfg: &Config, path: &str) -> Result<ResumeTarget, AppError> {
     })
 }
 
-/// 在 iTerm 开新 tab 续聊。`opener` 为实际打开器（生产用
-/// [`super::iterm::open_tab`]），测试注入桩以断言精确命令串。
+/// 在 iTerm 开新 tab 续聊，并确认**这个标签页里真的启动了 omp**。
+///
+/// `opener` 为带身份的打开器（生产用 [`super::iterm::open_tab_tracked`]）：
+/// 返回本次新建标签页的 `(session id, tty)`。门禁顺序：路径/cwd/控制字符校验
+/// → 租约 `IN_USE` 拒绝（`PROBE_FAILED` 放行，§4.8）→ `ps` 快照（不可用即
+/// `ITERM_FAILED`，此时尚未产生任何副作用）→ 开标签页 → 等待启动证据
+/// （见 [`started_evidence`]）。没有任何证据不报成功。
+///
+/// 10 秒上限 + 100ms 轮询：每轮只做一次廉价 flock 探测，只有探测到占用
+/// 才 `lsof` 解析持有者、只有 `ps` 有候选才查该进程 tty。
 pub fn open_in_iterm_impl(
     cfg: &Config,
     path: &str,
-    opener: &dyn Fn(&str) -> Result<(), AppError>,
+    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+) -> Result<(), AppError> {
+    open_in_iterm_impl_observed(
+        cfg,
+        path,
+        opener,
+        super::iterm::RESUME_CONFIRM_TIMEOUT,
+        &|session_path: &str| super::iterm::matching_pids(session_path),
+        &|session_id, session_path, tty, before| {
+            started_evidence(&cfg.owners_dir, session_id, session_path, tty, before)
+        },
+        &super::iterm::diagnostic_tail_for_session,
+    )
+}
+
+/// [`open_in_iterm_impl`] 的测试缝：可注入确认超时、启动证据、失败诊断与
+/// `ps` 快照。所有参数默认由 [`open_in_iterm_impl`] 传生产实现。
+///
+/// `snapshot(session_path)` 为开标签页前的进程快照（生产
+/// `matching_pids`；返回 `Err` 即 `ITERM_FAILED` 且不开标签页）；
+/// `evidence(session_id, session_path, tracked_tty, before)` 判断本次标签页
+/// 是否已有启动证据（`before` 为该快照）；`diagnostic(tab_id)` 取该标签页
+/// 尾部输出（生产 `diagnostic_tail_for_session`）。
+pub fn open_in_iterm_impl_observed(
+    cfg: &Config,
+    path: &str,
+    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+    timeout: std::time::Duration,
+    snapshot: &dyn Fn(&str) -> Result<std::collections::HashSet<u32>, String>,
+    evidence: &dyn Fn(
+        &str,
+        &str,
+        &str,
+        &std::collections::HashSet<u32>,
+    ) -> bool,
+    diagnostic: &dyn Fn(&str) -> String,
 ) -> Result<(), AppError> {
     let target = resume_target(cfg, path)?;
     // 只读打开不占租约：IN_USE 拒绝，PROBE_FAILED 允许继续（CONTRACT §4.8）。
@@ -205,11 +250,116 @@ pub fn open_in_iterm_impl(
             "会话正被 omp 进程占用，拒绝在 iTerm 中打开",
         ));
     }
-    opener(&super::iterm::resume_command(
-        &target.cwd,
-        &target.path.to_string_lossy(),
-    ))?;
-    Ok(())
+    let session_path = target.path.to_string_lossy().into_owned();
+    // 启动前的 `omp --resume <该路径>` 进程快照：ps 不可用时在此失败，
+    // 早于开标签页/写键等一切副作用。
+    let before = snapshot(&session_path).map_err(|e| {
+        AppError::new(
+            ErrorCode::ItermFailed,
+            format!("无法校验 omp 是否启动（ps 不可用）：{e}"),
+        )
+    })?;
+    let command = super::iterm::resume_command(&target.cwd, &session_path);
+    open_tracked_and_confirm(
+        &command,
+        timeout,
+        opener,
+        &|tty: &str| evidence(&target.session_id, &session_path, tty, &before),
+        diagnostic,
+    )
+}
+
+/// 开标签页 + 轮询启动证据；成功只在证据成立时返回。
+///
+/// 也作为测试缝：`evidence` 收到本次新建标签页的 `tty`（返回是否有绑定该
+/// tty 的启动证据），`diagnostic` 收到该标签页 session `id`。生产由
+/// [`open_in_iterm_impl`] 传真实实现。
+///
+/// 超时**保留**标签页、不重发任何按键、不猜根因：错误里给出确切命令与该
+/// 标签页尾部输出（只取本次 session，不合并其他标签页）。
+pub fn open_tracked_and_confirm(
+    command: &str,
+    timeout: std::time::Duration,
+    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+    evidence: &dyn Fn(&str) -> bool,
+    diagnostic: &dyn Fn(&str) -> String,
+) -> Result<(), AppError> {
+    let (tab_id, tty) = opener(command)?;
+    if tty.is_empty() {
+        return Err(AppError::new(
+            ErrorCode::ItermFailed,
+            format!(
+                "已创建 iTerm2 标签页，但未能读回其终端 tty，无法确认 omp 是否启动。\n\
+                 执行的命令：{command}"
+            ),
+        ));
+    }
+    let started = super::iterm::wait_until_started(
+        timeout,
+        super::iterm::RESUME_CONFIRM_INTERVAL,
+        || evidence(&tty),
+    );
+    if started {
+        return Ok(());
+    }
+    let mut message = format!(
+        "已创建 iTerm2 标签页，但 {} 秒内未检测到 omp 启动该会话。\n执行的命令：{command}",
+        timeout.as_secs()
+    );
+    let tail = diagnostic(&tab_id);
+    if !tail.is_empty() {
+        message.push_str(&format!("\n标签页当前输出：\n{tail}"));
+    }
+    message.push_str("\n可再次点击「打开标签页」重试，或先在该标签页里手动执行上面显示的命令。");
+    Err(AppError::new(ErrorCode::ItermFailed, message))
+}
+
+/// 本次新建标签页的启动证据（保守，必须能归属到**这一个 tab**）：
+///
+/// 1. 租约：先做一次廉价 flock 探测；被占用才 `lsof` 解析持有者，持有者
+///    是启动前不存在的新进程且控制终端就是本次 tty → 成功；
+/// 2. 进程：一次 `ps` 快照，过滤启动前已有/已查过的 pid，逐个查控制终端，
+///    有命中即成功。
+///
+/// 只看「有锁」「有 omp 进程」「app 名是 iTerm2」都不算证据：别的窗口/终端
+/// 抢占同一会话时 tty 不同，必须判否（否则会假成功）。轮询期间任何观测
+/// 失败都按「未确认」处理，继续重试。
+fn started_evidence(
+    owners_dir: &Path,
+    session_id: &str,
+    session_path: &str,
+    tracked_tty: &str,
+    before: &std::collections::HashSet<u32>,
+) -> bool {
+    use crate::menubar::iterm::{tty_of_pid, SystemRunner};
+
+    // 至多一个租约持有者 pid 需要去重，用 Option 而不是 HashMap/Set。
+    let mut lease_pid: Option<u32> = None;
+    if crate::lock::probe(owners_dir, session_id).in_use {
+        let ids = [session_id.to_owned()];
+        if let Some(occ) = crate::occupant::resolve_occupants(owners_dir, &ids).remove(session_id) {
+            lease_pid = Some(occ.pid);
+            if !before.contains(&occ.pid)
+                && super::iterm::tty_matches_start(
+                    tracked_tty,
+                    tty_of_pid(occ.pid, &SystemRunner).as_deref(),
+                )
+            {
+                return true;
+            }
+        }
+    }
+    match super::iterm::matching_pids(session_path) {
+        Ok(now) => now.iter().any(|pid| {
+            !before.contains(pid)
+                && lease_pid != Some(*pid)
+                && super::iterm::tty_matches_start(
+                    tracked_tty,
+                    tty_of_pid(*pid, &SystemRunner).as_deref(),
+                )
+        }),
+        Err(_) => false,
+    }
 }
 
 /// 只生成续聊命令（右键菜单「复制 ▸ 续聊命令」用），不做占用探测：
@@ -383,3 +533,4 @@ pub fn focus_iterm_tab_impl(
     crate::menubar::iterm::focus_tty(&tty, run)
         .map_err(|e| AppError::new(ErrorCode::ItermFailed, e.message()))
 }
+

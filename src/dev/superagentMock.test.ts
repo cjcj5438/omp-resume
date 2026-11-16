@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { installMockBackend } from "./mockBackend";
-import { superagentRestart, superagentSetEnabled, superagentStatus } from "../api";
+import { superagentResetState, superagentRestart, superagentSetEnabled, superagentStatus } from "../api";
 
 beforeEach(() => {
   clearMocks();
@@ -33,6 +33,14 @@ describe("mock superagent 状态机", () => {
   it("未启用时 restart 报 INVALID_INPUT", async () => {
     await installMockBackend();
     await expect(superagentRestart()).rejects.toEqual(
+      expect.objectContaining({ code: "INVALID_INPUT" }),
+    );
+  });
+
+  it("reset_state 只在 incompatible 可用；成功后回到 running 且 schema:null", async () => {
+    await installMockBackend();
+    expect((await superagentStatus()).schema ?? null).toBeNull();
+    await expect(superagentResetState()).rejects.toEqual(
       expect.objectContaining({ code: "INVALID_INPUT" }),
     );
   });

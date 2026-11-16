@@ -17,8 +17,11 @@ it('lists Tickets under Execution by who they wait on, with the Executor state a
   expect(server.requests.some(request => request.path === 'tickets?state=open&limit=20')).toBe(true)
   expect(text()).toContain(zh.executorRunning)
   expect(all('.dt-chip').map(chip => chip.textContent)).toContain('GitHub#7自动合并已开启')
+  expect(all('.dt-tag').map(tag => tag.textContent)).toContain('Widgets')
+  await type(document.querySelector<HTMLSelectElement>('select[aria-label="项目"]')!, 'widgets')
+  expect(server.requests.some(request => request.path === 'tickets?state=open&limit=20&project=widgets')).toBe(true)
   await click(zh.idleLabel)
-  expect(server.requests.some(request => request.path === 'tickets?state=idle&limit=20')).toBe(true)
+  expect(server.requests.some(request => request.path === 'tickets?state=idle&limit=20&project=widgets')).toBe(true)
   expect(text()).toContain('执行器结束了当前回合')
   await click(zh['ticket.ended'])
   expect(text()).toContain('旧工单')
@@ -61,7 +64,7 @@ it('shows a Ticket with its stage, its Mandate details with the Trigger and Deci
   // A Thread this Ticket follows reads as subscribed on its page, though no other Ticket follows it.
   expect(all('.dt-list .dt-ticket .dt-stage').map(stage => stage.textContent)).toContain(zh.threadSubscribed)
   expect(all('.dt-list .dt-ticket .dt-stage').map(stage => stage.textContent)).not.toContain(zh.threadUnsubscribed)
-  expect(all('.dt-status-line .dt-lv').map(item => item.textContent)).toEqual(['授权 明确', '发起 飞书 · Alice', expect.stringMatching(/^更新 /)])
+  expect(all('.dt-status-line .dt-lv').map(item => item.textContent)).toEqual(['项目 Widgets', '授权 明确', '发起 飞书 · Alice', expect.stringMatching(/^更新 /)])
   for (const expected of ['修复登录页回归', '点名方式@ 智能体', '名单里的人明确请求，由主 Session 接单', '未送达：等待派工运行',
     'Alice：顺便改标题']) expect(text()).toContain(expected)
   expect(all('.dt-chip').map(chip => chip.textContent)).toContain('飞书团队群')
@@ -123,20 +126,17 @@ it('keeps what a person types in the Execution settings, converting it once on s
   await mount()
   await click(zh['tab.execution'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
-  const blocked = () => field<HTMLInputElement>(zh.blockedCommands), root = () => field<HTMLInputElement>(zh.executionDirectory),
-    workers = () => field<HTMLInputElement>(zh.maxWorkers)
-  // A separator typed before the next command, a space inside a path and a cleared number stay as typed.
+  const blocked = () => field<HTMLInputElement>(zh.blockedCommands), workers = () => field<HTMLInputElement>(zh.maxWorkers)
+  // A separator typed before the next command and a cleared number stay as typed.
   await type(blocked(), 'gh-personal ')
   expect(blocked().value).toBe('gh-personal ')
   await type(blocked(), 'gh-personal, gh-other')
-  await type(root(), '/srv/my work ')
-  expect(root().value).toBe('/srv/my work ')
   await type(workers(), '')
   expect(workers().value).toBe('')
   await type(workers(), '2')
   await click(zh.save)
-  expect(server.requests.find(request => request.path === 'settings/executor')?.body).toMatchObject({ value: { blockedCommands: ['gh-personal', 'gh-other'], directory: '/srv/my work ', maxWorkers: 2 } })
-  expect(server.settings.executor).toMatchObject({ blockedCommands: ['gh-personal', 'gh-other'], directory: '/srv/my work', maxWorkers: 2 })
+  expect(server.requests.find(request => request.path === 'settings/executor')?.body).toMatchObject({ value: { blockedCommands: ['gh-personal', 'gh-other'], maxWorkers: 2 } })
+  expect(server.settings.executor).toMatchObject({ blockedCommands: ['gh-personal', 'gh-other'], maxWorkers: 2 })
 })
 
 it('says why an Input was not delivered on its Ticket\'s page, in either language', async () => {

@@ -160,6 +160,7 @@ it('sets the Feishu admission table per receiving scope, offering only the cells
 it('lists each Source\'s bots next to its people and saves them, and sets the GitHub admission table by its receiving scopes', async () => {
   await mount()
   await click(tab(zh['tab.settings']))
+  await click(find(zh['settingsGroup.source'], '.dt-settings-link'))
   // The GitHub Source receives only what is addressed to the agent until a switch opens a scope of the repository.
   const github = all('.dt-card').find(card => card.querySelector('.dt-card-title')?.textContent === 'GitHub')!
   expect([...github.querySelectorAll('.dt-switch-row')].map(row => row.textContent)).toEqual(['接收仓库里的新 Issue', '接收仓库里的新 PR',
@@ -195,6 +196,7 @@ it('shows the GitHub Source\'s switches for what it receives across the reposito
     observeIssues: true, observeCi: true } }
   await mount(en)
   await click(tab(en['tab.settings']))
+  await click(find(en['settingsGroup.source'], '.dt-settings-link'))
   const github = all('.dt-card').find(card => card.querySelector('.dt-card-title')?.textContent === 'GitHub')!
   expect([...github.querySelectorAll('.dt-switch-row')].map(row => [row.textContent, row.querySelector('[role="switch"]')
     ?.getAttribute('aria-checked')])).toEqual([['Receive new Issues in the repository', 'true'],

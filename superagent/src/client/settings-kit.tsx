@@ -163,7 +163,7 @@ type Row = Record<string, string>
 type Column = Extract<FieldSpec, { type: 'rows' }>['columns'][number]
 const ROWS_SHOWN = 6
 const byName = ([, a]: [string, string], [, b]: [string, string]) => a.localeCompare(b)
-function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
+export function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
   field: Extract<FieldSpec, { type: 'rows' }>; value: unknown; saved: unknown; onChange: (next: unknown) => void; labels: Record<string,
     string>
   refreshLabels: (() => Promise<string[]>) | undefined

@@ -10,7 +10,7 @@ Throughout this guide, `data_dir` is `$OMP_RESUME_DATA_DIR` when set and non-emp
 - **An agent GitHub account.** The agent comments, pushes branches and opens pull requests as this account, through a GitHub CLI signed in only as that account.
 - **Optional:** a Feishu bot for chat requests.
 
-Use the panel for everything else: Sources for the repository and accounts, Policy for allowed lists, and Execution for worker directories and commands.
+Use the panel for everything else: Projects for repositories, chats and Ticket directories, Sources for the accounts, Policy for allowed lists, and Execution for worker settings.
 
 ### Permissions and isolation
 
@@ -27,11 +27,11 @@ omp --mode rpc --no-ui --no-title --no-extensions \
 
 - `--no-extensions -e <plugin>` loads only the generated Superagent plugin directory: the `superagent-inject` command and the session skills. Nothing else from your omp setup is loaded as an extension.
 - `--config <overlay>` applies `S/omp-overlay.yml`, which switches the memory backend off, disables the advisor, and moves shell commands to the background after 5 seconds. The overlay affects only the processes Superagent starts.
-- Superagent never writes your `~/.omp/agent` configuration; it reads it read-only. The child processes read your `config.yml`, `models.yml`, credentials, global skills and rules, and the repository's `AGENTS.md`, which is what lets them use your models and login. They still write omp's own runtime files (usage database, logs, caches, possibly prompt history); those writes change no configuration.
+- Superagent never writes your `~/.omp/agent` configuration; it reads it read-only. The child processes read your `config.yml`, `models.yml`, credentials, global skills and rules, and each project's `AGENTS.md`, which is what lets them use your models and login. They still write omp's own runtime files (usage database, logs, caches, possibly prompt history); those writes change no configuration.
 
 Sessions run with full access as the operator's OS user. Account wrappers choose the agent's credentials by default; they do not isolate the process. A worker can execute programs by path and read the operator's home directory. For isolation, use a dedicated OS account containing only the agent's credentials.
 
-Do not run two deployments against the same GitHub agent account and repository at the same time — for example a previous deployment and this one. Both would poll the same notifications, and the same request would be processed twice. Stop the old deployment first.
+Do not run two deployments against the same GitHub agent account at the same time — for example a previous deployment and this one. Both would poll the same account-wide notifications, and the same request would be processed twice. Stop the old deployment first.
 
 ## Where state lives
 
@@ -40,7 +40,7 @@ Do not run two deployments against the same GitHub agent account and repository 
 | `S/superagent.sqlite` | The Store: Triggers, Threads, Tickets, settings, prompts, effects, receipts and the `kv` records |
 | `<data_dir>/superagent.lock` | The process lock; a second daemon refuses to start while it is held |
 | `S/sessions/<sessionId>/*.jsonl` | One directory per session, passed as `--session-dir`; the main session is `main`, workers are `worker-<ticket>` |
-| `S/work/<name>/` | The default root for Ticket directories |
+| `S/work/<project id>/<name>/` | The default root for Ticket directories, per project |
 | `S/worker-bin/`, `S/worker-gitconfig` | The agent's `gh`/`lark-cli` shims and the isolated git configuration |
 | `S/prompts/<sessionId>.r<rev>.md` | The prompt file passed with `--append-system-prompt` |
 | `S/plugin/r<rev>/` | The generated omp plugin directory: extension plus skills |
@@ -54,7 +54,7 @@ There is no machine configuration file. The machine limits (largest saved prompt
 
 - An `omp` binary where omp-resume can resolve it. The 服务 page shows the resolved path; without one the daemon cannot start.
 - GitHub CLI (`gh`) 2.48 or later. Source CLI fields must point to `gh` or `lark-cli` wrappers; the daemon relies on their subcommands and output formats.
-- A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
+- One repository on github.com per project; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the project's prepare command can add worktrees. Install `git-lfs` if a repository uses Git LFS.
 - git 2.32 or later.
 - A model provider configured for omp. Superagent uses omp's default model unless the Eval or Execution settings name another.
 - For Feishu: `lark-cli` (tested with 1.0.90) and a Feishu or Lark app with a bot.
@@ -63,7 +63,7 @@ There is no machine configuration file. The machine limits (largest saved prompt
 
 ### Agent GitHub account
 
-1. Create a GitHub user account for the agent and give it write access to the repository. A GitHub App cannot be the agent, because Superagent reads the account's notifications.
+1. Create a GitHub user account for the agent and give it write access to every project's repository. A GitHub App cannot be the agent, because Superagent reads the account's notifications.
 2. Give it a GitHub CLI that uses only its own credentials:
 
    ```sh
@@ -125,16 +125,16 @@ BUN_BE_BUN=1 <ompBin> run <assets>/dist/daemon.js --state-dir <S> --socket <sock
 
 Setup must succeed before polling or work starts. Overview lists missing requirements and links to their settings. A settings change runs setup again. If you fix something outside the application, such as CLI authentication, choose **Check again**.
 
-1. **Sources.** Set the GitHub repository (`owner/name`) and the agent's `gh` command: the wrapper's absolute path, or a command name on `PATH`, whose config directory holds only the agent's login. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
-2. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
-3. **Execution.** The directory root and a prepare command. A typical command gives each Ticket a checkout of the repository: `git -C <repo> worktree add "$OMP_SUPERAGENT_DIR"`, for example:
+1. **Projects.** Add one project per repository: an id, a name, the GitHub repository (`owner/name`), the Feishu chats whose group messages bind to it, and the Ticket directory and prepare command. A typical command gives each Ticket a checkout of the repository:
 
    ```sh
    git -C /home/me/src/widgets worktree add "$OMP_SUPERAGENT_DIR"
    ```
 
-   List personal CLIs, such as one signed in to your own account, as blocked commands.
-4. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
+2. **Sources.** Set the agent's `gh` command: the wrapper's absolute path, or a command name on `PATH`, whose config directory holds only the agent's login. The GitHub Source watches every project's repository. Requests normally arrive through the agent account's notifications. A new Issue or comment mentioning the account arrives on the next poll; adding a mention by editing an existing Issue body does not. Post a new comment instead. For Feishu, set the bot CLI, chats, each chat's receive-all or mentions-only mode, and whether to receive direct messages.
+3. **Policy.** The two example rules can be edited or removed. Under **On each Source**, add the GitHub accounts and Feishu users who may ask for work; until a list has someone, no request can become a Ticket. With Feishu, a chat can be chosen to sync the list from, at startup and on **Sync now**.
+4. **Execution.** List personal CLIs, such as one signed in to your own account, as blocked commands.
+5. **Prompts.** Set the team sections: the GitHub disclosure line, review bots, the commit author and the auto-merge condition.
 
 ### Management API
 
@@ -155,7 +155,7 @@ Agents may rely on these routes and fields. The other routes in `src/app/api.ts`
 | --- | --- |
 | `GET state` | What every page reads: `setup`, with `problem` and `feishuProblem`, each `null` or a setup problem with `place`, `code`, `values` and `detail`, and `accounts` once setup resolved them; `health`, an entry per part, below, with `state` (`starting`, `ready`, `paused` or `error`), `detail` and `at`; `load`, the Executor Sessions `running`, the Tickets `queued` and `maxWorkers`; `paused`; and `masterId` |
 | `GET sessions` | The sessions: `items`, each with `id`, `role`, `ticketId`, `title`, `sessionFile` and `state` |
-| `GET settings` | `blocks`: `policy`, `eval` and `executor`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `root` and `variables` |
+| `GET settings` | `blocks`: `policy`, `eval`, `executor` and `projects`, each with its `value` and its `revision`; `sources`: the Source instances, each with `id`, `kind`, `installed`, its block's `value`, `{"enabled": …, "config": {…}}`, and `revision`, its kind's form, and its setup `problem` when it has one; `policyVersion`; and `environment`, the execution environment's `workRoot` and `variables` |
 | `GET sources` | Each Source's status: `state` (`missing`, `off`, `error`, `setup`, `starting`, `paused` or `ready`), the `health` of its parts, its setup `problem`, the last day's `stats`, the Triggers it `filtered` in that day, and the messages it `dropped` in that day, newest drop first, each with its `channel`, `preview`, `ticket` (`id` and `title`) when it was for one, its `thread` when the store has it, and `dropped.at` and `dropped.reason`, `channelGone` or `channelIgnored` |
 | `PUT settings/<block>` with `{"value": …, "revision": n}` | Saves one block: `saved`, the block's new `revision`, `policy_changed` and `restarting`. `value` is the whole block, as `GET settings` holds it; a missing key takes its default |
 | `POST executor/pause` with `{"paused": true}` or `false` | Pauses or resumes processing: `paused` |
@@ -185,25 +185,26 @@ A refusal has a status and `error`, its English text:
 
 The blocks:
 
-- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `repository` and `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in the repository and the default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
+- `source:github`, `source:feishu`: `{"enabled": true, "config": {…}}`. GitHub's config has `cli`, and the switches `observeIssues`, `observePulls`, `observeComments` and `observeCi`, off by default, which receive every new Issue, new pull request and comment in every project's repository and each default branch's CI; Feishu's has `cli`, `chats` as `[{"chatId": "oc_…", "name": "…", "listen": "mentions"}]` (or `"all"`), `directMessages`, and `otherChats` as `"none"` or `"mentions"`.
 - `policy`: `{"rules": […], "sources": {"github": {"allowed": [{"id": "<login>"}], "bots": [{"id": "dependabot[bot]"}]}, "feishu": {"allowed": [{"id": "ou_…", "name": "…"}], "syncChat": "oc_…", "admission": {"oc_…": {"unlistedAddressed": "explicit"}}}}}`. `bots` lists the bots whose messages may become inferred candidates. An `admission` row is keyed by chat id, `other` or `direct` for Feishu, and by `issues`, `pulls`, `comments` or `ci` for GitHub; an unset cell takes its default (see [002 Authorization](002-authorization.md)).
 - `eval`: `mode`, `timeoutSeconds` and `model`.
-- `executor`: `model`, `maxWorkers`, `directory`, `prepare` and `blockedCommands`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `executor`: `model`, `maxWorkers` and `blockedCommands`. The processing pause is a setting of its own, `paused`, which `POST executor/pause` sets.
+- `projects`: `[{"id": "widgets", "name": "Widgets", "repository": "acme/widgets", "chats": [{"chatId": "oc_…"}], "directory": "", "prepare": ""}]`. The `id` matches `^[a-z][a-z0-9-]{0,31}$` and never changes after its save; `repository` is unique, case-insensitively, and a chat belongs to at most one project. Only the panel may change this block.
 
-Changing a repository or CLI runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A successful account change, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
+Changing an account CLI or the repository set runs the corresponding setup check first. A failed check returns 400 with details in `setup`. A save that changes an account CLI or the repository set, or any save while setup is pending, returns `restarting: true`. The API is temporarily unavailable while the application restarts.
 
 ```sh
 sock="$HOME/Library/Application Support/omp-resume/superagent/daemon.sock"
 rev=$(curl -s --unix-socket "$sock" http://x/orchestrator/api/settings | jq '.sources[] | select(.id == "github") | .revision')
 curl -s -X PUT --unix-socket "$sock" -H 'content-type: application/json' http://x/orchestrator/api/settings/source:github \
-  -d "{\"value\": {\"enabled\": true, \"config\": {\"repository\": \"acme/widgets\", \"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
+  -d "{\"value\": {\"enabled\": true, \"config\": {\"cli\": \"$HOME/.local/bin/gh-agent\"}}, \"revision\": $rev}"
 ```
 
 ## Setup checks
 
 Setup probes run the way worker shells do. Setup removes environment variables whose names contain KEY, PASSWORD, SECRET or TOKEN.
 
-Setup verifies the GitHub repository and the agent's push access, writes the worker environment, and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
+Setup first checks the agent GitHub CLI, then the projects: with no project configured it reports `No project is configured.`; otherwise it checks each project's repository for read and push access (`Project <id>: …`), then writes the worker environment and checks that git uses only the agent credentials for github.com. A Feishu setup failure disables only the Feishu Source.
 
 The process environment that setup writes:
 
@@ -239,8 +240,8 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | `The agent GitHub CLI is not set.` | Set the agent's CLI on the GitHub card |
 | `The agent GitHub CLI was not found.` | Set the wrapper's absolute path, or a command name on `PATH` |
 | `The agent GitHub CLI cannot read its account` | Sign the wrapper in with `auth login` |
-| `@… cannot read …` or `@… cannot push to …` | Give the agent account write access to the repository |
-| `The GitHub Source names no repository.` | Set the repository, `owner/name`, on the GitHub card |
+| `Project <id>: @… cannot read …` or `Project <id>: @… cannot push to …` | Give the agent account write access to the project's repository |
+| `No project is configured.` | Add a project on the Projects page |
 | A Ticket fails with `The prepare command failed: …` | The output names the cause, such as a wrong clone path; fix the command, then retry the Ticket |
 | `git does not read the github.com credential configuration Superagent writes` | Install git 2.32 or later |
 | A Ticket fails with `The git configuration of the repository in … sets …` | Remove the named credential or `http.*.extraheader` settings from the clone's `.git/config` |
@@ -254,5 +255,5 @@ Setup problems appear on the overview with a link to the fix, in the panel's lan
 | The 服务 page reports the resource directory is missing | `dist/daemon.js` is not in the assets directory; reinstall omp-resume |
 | The panel cannot reach the Superagent service | The daemon is disabled, restarting or crashed; the 服务 page shows its state and log |
 | `… timed out after 90 s`, `… was stopped by …`, `… exited with code …` or `… could not run: …` | A CLI failed without printing why; run the named program by hand as the operator's user to see its own message |
-| The same request is processed twice | Two deployments poll the same GitHub account and repository, or two consumers read the same Feishu app; stop one of them, or give each deployment its own Feishu app |
+| The same request is processed twice | Two deployments poll the same GitHub account, or two consumers read the same Feishu app; stop one of them, or give each deployment its own Feishu app |
 | Nothing happens after a mention | Check that the author is on the Source's allowed list, the Source is on, and processing is not paused. On GitHub, a mention added by editing an Issue's body is not received; mention the agent in a comment |

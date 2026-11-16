@@ -8,8 +8,8 @@ import { SourceRegistry } from '../src/sources/registry.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { snapshot, threadSummary, ticketSummary, triggerView } from '../src/app/views/records.ts'
-import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
-import { threadDetail } from '../src/app/views/threads.ts'
+import { basisFacts, ticketDetail, ticketList } from '../src/app/views/tickets.ts'
+import { threadDetail, threadList } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { markdown, plain } from '../src/app/views/text.ts'
@@ -28,7 +28,7 @@ beforeEach(() => {
   store = new Store(join(directory, 'superagent.sqlite'))
 })
 afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }) })
-const links = (channel: ChannelRef) => (channel.source === 'feishu' ? feishuLink : githubLink)(channel.address, {})
+const links = (channel: ChannelRef) => channel.source === 'feishu' ? feishuLink(channel.address, {}) : githubLink(channel.address)
 const drop = (id: string, channel: ChannelRef, ticketId?: string) => {
   const message = { id, channel, text: id, kind: 'reply' as const, ...ticketId ? { ticketId } : {} }
   store.receipts.add(message)
@@ -39,14 +39,14 @@ it('names the Thread of each dropped message: the one of the Trigger its Channel
   // A Feishu Channel names its chat; the message it answers belongs to the Thread of the topic's root message.
   store.triggers.save({ id: feishuTriggerId('om_reply'), source: 'feishu', threads: [{ source: 'feishu', id: 'oc_1:om_root' }],
     actor: { source: 'feishu', id: 'ou_a' }, human: true, at: new Date().toISOString(), text: 'please', meta: {} })
-  store.threads.save({ key: 'github:42', ref: { source: 'github', id: '42' }, createdAt: '', subscriptions: [], correlated: [], pending: [],
+  store.threads.save({ key: 'github:acme/widgets#42', ref: { source: 'github', id: 'acme/widgets#42' }, createdAt: '', subscriptions: [], correlated: [], pending: [],
     meta: {} })
   drop('a', feishuChannel('oc_1', 'om_reply'))
-  drop('b', githubChannel(42))
+  drop('b', githubChannel('acme/widgets', 42))
   // A message whose Trigger and Thread the store no longer has links nowhere.
   drop('c', feishuChannel('oc_2', 'om_gone'))
   expect(Object.fromEntries(droppedReplies({ store, links }).map(item => [item.id, item.thread])))
-    .toEqual({ a: 'feishu:oc_1:om_root', b: 'github:42', c: undefined })
+    .toEqual({ a: 'feishu:oc_1:om_root', b: 'github:acme/widgets#42', c: undefined })
 })
 
 function views() {
@@ -201,7 +201,8 @@ it('words each settings save by what it changed from the one before, and nothing
   const alice = { id: 'ou_alice', name: 'Alice Liu' }, bob = { id: 'ou_bob', name: 'Bob' }
   store.saveSettings({ ...first, policy: allowed([alice, bob, { id: 'ou_carol' }]), paused: true,
     sources: { ...first.sources, feishu: { enabled: false, config: {} } },
-    executor: { ...first.executor, directory: '/srv/work', prepare: 'npm ci', blockedCommands: ['rm', 'curl'] } })
+    projects: [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets', chats: [], directory: '', prepare: '' }],
+    executor: { ...first.executor, blockedCommands: ['rm', 'curl'] } })
   const second = store.settings()
   store.saveSettings({ ...second, policy: allowed([alice, { id: 'ou_carol' }]), paused: false, sources: { ...second.sources,
     feishu: { enabled: true, config: {} } } })
@@ -210,8 +211,8 @@ it('words each settings save by what it changed from the one before, and nothing
   expect(changes(revision - 1)).toEqual([
     { code: 'sourceRowsAdded', source: 'feishu', part: true, field: 'allowed', items: ['Bob', 'ou_carol'] },
     { code: 'sourceRowsChanged', source: 'feishu', part: true, field: 'allowed', items: ['Alice Liu'] },
-    { code: 'paused' }, { code: 'executionDirectory', from: '', to: '/srv/work' }, { code: 'prepareCommand' },
-    { code: 'blockedCommands', from: '', to: 'rm curl' }, { code: 'sourceDisabled', source: 'feishu' }])
+    { code: 'paused' },
+    { code: 'blockedCommands', from: '', to: 'rm curl' }, { code: 'projects' }, { code: 'sourceDisabled', source: 'feishu' }])
   expect(changes(revision)).toEqual([{ code: 'sourceRowsRemoved', source: 'feishu', part: true, field: 'allowed', items: ['Bob'] },
     { code: 'resumed' }, { code: 'sourceEnabled', source: 'feishu' }])
   // A save whose predecessor is missing from the history has nothing to compare with.
@@ -318,4 +319,30 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
   const records = { tickets: { get: vi.fn() }, threads: { get: vi.fn() }, triggers: store.triggers }
   expect(followupOwners(store.triggers.get('f3')!, records)).toEqual([])
   expect([records.tickets.get, records.threads.get].map(read => read.mock.calls.length)).toEqual([0, 0])
+})
+
+it('lists one project\'s Tickets with their project, and one project\'s Threads by repository and chats', () => {
+  const host = views()
+  store.saveSettings(SettingsSchema.parse({ projects: [
+    { id: 'a', name: 'Alpha', repository: 'acme/alpha', chats: [{ chatId: 'oc_a' }] },
+    { id: 'b', name: 'Beta', repository: 'acme/beta', chats: [{ chatId: 'oc_b' }] }] }))
+  for (const [id, project] of [['t1', 'a'], ['t2', 'b']] as const) {
+    store.tickets.save({ id, title: id, decisionId: 'd', channels: [], undelivered: [], createdAt: at, updatedAt: at,
+      mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'feishu',
+        id: 'ou_alice' }, scope: '' },
+      origin: { triggerId: 'e0', triggerIds: ['e0'] }, assignments: [], inputs: [],
+      execution: { name: id, directory: `/w/${id}`, assignment: '', project } })
+  }
+  store.threads.save({ key: 'github:acme/alpha#1', ref: { source: 'github', id: 'acme/alpha#1' }, createdAt: at,
+    subscriptions: [], correlated: [], pending: [], meta: {} })
+  store.threads.save({ key: 'github:acme/beta#2', ref: { source: 'github', id: 'acme/beta#2' }, createdAt: at,
+    subscriptions: [], correlated: [], pending: [], meta: {} })
+  store.threads.save({ key: 'feishu:oc_b:om_root', ref: { source: 'feishu', id: 'oc_b:om_root' }, createdAt: at, subscriptions: [],
+    correlated: [], pending: [], meta: {} })
+  expect(ticketList(host, 'open', 0, 20, 'a').items.map(ticket => [ticket.id, ticket.project])).toEqual([['t1',
+    { id: 'a', name: 'Alpha' }]])
+  expect(ticketDetail(host, 't2')!.project).toEqual({ id: 'b', name: 'Beta' })
+  expect(threadList(host, 'all', 0, 20, 'b').items.map(thread => thread.key).sort()).toEqual(['feishu:oc_b:om_root',
+    'github:acme/beta#2'])
+  expect(threadList(host, 'all', 0, 20, 'missing')).toEqual({ items: [], total: 0, next_offset: null })
 })

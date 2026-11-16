@@ -54,7 +54,7 @@ export function ResumeDialog({ session, onClose, onOpened, onToast }: ResumeDial
     setBusy(true);
     try {
       await openInIterm({ path: session.path });
-      onToast(`已打开 iTerm2 标签页 · ${session.title}`, "info");
+      onToast(`已恢复「${session.title}」· omp 已启动`, "info");
       onOpened();
       onClose();
     } catch (e: unknown) {
@@ -81,10 +81,10 @@ export function ResumeDialog({ session, onClose, onOpened, onToast }: ResumeDial
       title="在 iTerm2 中恢复会话"
       sub={
         <>
-          将在新的 iTerm2 标签页中执行真实的 <code>omp --resume</code>。完成后不再向标签页输入任何按键。
+          将在新的 iTerm2 标签页中执行真实的 <code>omp --resume</code>，并确认 omp 已在该标签页启动才算成功。完成后不再向标签页输入任何按键。
         </>
       }
-      onClose={onClose}
+      onClose={busy ? () => {} : onClose}
       footer={
         inUse ? (
           <>
@@ -109,7 +109,7 @@ export function ResumeDialog({ session, onClose, onOpened, onToast }: ResumeDial
           </>
         ) : (
           <>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={onClose}>
               取消
             </button>
             <button
@@ -121,7 +121,7 @@ export function ResumeDialog({ session, onClose, onOpened, onToast }: ResumeDial
               onClick={() => void doOpen()}
             >
               <Ico icon={SquareTerminal} size={13} />
-              打开标签页
+              {busy ? "启动中…" : "打开标签页"}
             </button>
           </>
         )

@@ -7,11 +7,13 @@ interface BulkResumeDialogProps {
   /** 勾选总数（标题用）。 */
   total: number;
   plan: BulkResumePlan;
+  /** 正在批量打开（每个会话最多等 10 秒）：期间禁止重复确认与关闭。 */
+  busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
-export function BulkResumeDialog({ total, plan, onCancel, onConfirm }: BulkResumeDialogProps) {
+export function BulkResumeDialog({ total, plan, busy = false, onCancel, onConfirm }: BulkResumeDialogProps) {
   const skippedByReason = new Map<string, number>();
   for (const { reason } of plan.skipped) {
     skippedByReason.set(reason, (skippedByReason.get(reason) ?? 0) + 1);
@@ -22,22 +24,24 @@ export function BulkResumeDialog({ total, plan, onCancel, onConfirm }: BulkResum
       title={`恢复 ${total} 个会话`}
       sub={
         <>
-          每个会话都会在新的 iTerm2 标签页中执行 <code>omp --resume</code>，互不影响。
+          每个会话都会在新的 iTerm2 标签页中执行 <code>omp --resume</code>，并逐个确认 omp 已启动；互不影响。
         </>
       }
-      onClose={onCancel}
+      onClose={busy ? () => {} : onCancel}
       footer={
         <>
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
             取消
           </button>
           <button
             type="button"
             className="btn btn-primary"
-            disabled={plan.open.length === 0}
+            disabled={busy || plan.open.length === 0}
             onClick={onConfirm}
           >
-            {`打开 ${plan.open.length} 个标签页`}
+            {busy
+              ? `启动中…（${plan.open.length} 个）`
+              : `打开 ${plan.open.length} 个标签页`}
           </button>
         </>
       }

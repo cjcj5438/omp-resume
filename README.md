@@ -2,10 +2,10 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.8.0-2f6feb)
+![version](https://img.shields.io/badge/version-0.9.1-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
-![tests](https://img.shields.io/badge/tests-2326%20passing-2ea043)
+![tests](https://img.shields.io/badge/tests-2384%20passing-2ea043)
 ![ui](https://img.shields.io/badge/UI-Chinese%20(zh--CN)-8b949e)
 
 > UI copy ships in Chinese today; this README is English. Screenshots are from the built-in demo backend, so no real session data is shown.
@@ -48,7 +48,7 @@ Global keys: **⌘K** command palette (search sessions, pages and actions), **�
 - **Sessions grouped by project**, with pinning, multi-select, title/`cwd`/first-message filtering and per-session badges (message count, size, in-use state, unsupported-format marker).
 - **Read-only conversation review** — assistant text, thinking blocks, tool calls, tool results, bash executions, usage, compaction boundaries. Nothing is replayed into a model.
 - **Conversation tree view** — the append-only parent/child graph, rendered as branches. Every node is inspectable.
-- **Resume in iTerm2** — opens a new tab and runs the real `omp --resume`. Never sends keystrokes after that.
+- **Resume in iTerm2** — opens a new tab and runs the real `omp --resume`. Success is only reported after the app observes an `omp --resume` process (or the session lease) attached to *that* new tab's tty, within 10 s; otherwise you get an error with the exact command and that tab's output, the tab stays open and nothing is retyped. After the command is typed once, no further keystrokes are sent.
 - **Fork from a chosen node** — appends a branch marker so `--resume` continues from that point, then hands you the CLI. Unavailable on the leaf node itself, on in-use sessions, and where the `cwd` is missing or the format unsupported.
 - **New session in any directory** — with a directory picker and model selector, launched in iTerm2.
 - **Permanent delete with an in-use guard** — flock-probed first; a session that omp currently holds is never deleted silently.
@@ -85,7 +85,13 @@ Three pages under the **Superagent** sidebar group:
 | **Sessions** | The orchestrator session plus each worker session, read-only conversation review |
 | **Service** | Enable/disable, restart, pid/uptime/restarts, resolved paths, daemon log tail |
 
-The daemon keeps its state under `<data_dir>/superagent` (sqlite store, session JSONL, work directories, prompts, generated plugin dir). The supervisor tracks six states (`disabled` / `starting` / `running` / `stopping` / `stopped` / `crashed`), probes readiness over the unix socket, restarts crashed daemons on backoff, and reclaims orphaned daemons left by a previous run. See `docs/CONTRACT.md` §26 for the hosting state machine, the five IPC commands (`superagent_status` / `superagent_set_enabled` / `superagent_restart` / `superagent_request` / `superagent_log_tail`) and the daemon HTTP API.
+The daemon keeps its state under `<data_dir>/superagent` (sqlite store, session JSONL, work directories, prompts, generated plugin dir); dev builds (`npm run tauri dev`) keep a separate `<data_dir>/superagent-dev` seeded once from the production database. The supervisor tracks seven states (`disabled` / `starting` / `running` / `stopping` / `stopped` / `crashed` / `incompatible`), probes readiness over the unix socket, restarts crashed daemons on backoff, and reclaims orphaned daemons left by a previous run. A state-schema mismatch is reported with the exact versions and a one-click 「改用新状态目录」 instead of a crash loop. See `docs/CONTRACT.md` §26 for the hosting state machine, the six IPC commands (`superagent_status` / `superagent_set_enabled` / `superagent_restart` / `superagent_request` / `superagent_log_tail` / `superagent_reset_state`) and the daemon HTTP API.
+
+### Supervisor restart policy
+
+The supervisor never leaves a dead daemon alone: a crash is restarted with the `[1,2,5,10,30,60]`-second backoff, and a `kill -9` is repaired twice over — the stale `daemon.pid` is cleared and the daemon restarted, and if the state-directory lock (`proper-lockfile`, `stale` 30 s) is still held by the dead process, the supervisor retries on `[2,5,10,15,30,60,60,60,60,60]` seconds until the lock expires (≈32 s worst case) or the budget runs out. A foreign daemon that answers on the socket is never fought over: the supervisor only probes it every 60 s and takes over once it disappears. The **Service** page's *Restart* button resets that budget.
+
+Outside this app a second, independent layer lives at `~/my/omp-superagent-watchdog/` (`omp-superagent status|start|stop|restart|doctor|watch` + a LaunchAgent): it runs `GET /orchestrator/api/state` on the daemon socket every 30 s and relaunches either the app or the daemon directly when nothing answers, so a force-quit or a wedged supervisor still ends with a live service.
 
 ### Environment and configuration
 
@@ -140,7 +146,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.8.0_aarch64.dmg — macOS arm64
+# omp-resume_0.9.1_aarch64.dmg — macOS arm64
 ```
 
 The bundle is ad-hoc signed (no Developer ID, not notarized), so a browser-downloaded copy is quarantined and Gatekeeper blocks the first launch. Either open **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag once:
@@ -176,7 +182,7 @@ npm run check        # typecheck + vitest (app) + typecheck + vitest (superagent
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
 ```
 
-The mock backend is a dev-only import that simulates all 86 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=update_model_config,update_model_spec`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships. The Superagent panel is transport-driven and unusable under the mock (every `superagent_request` returns `SUPERAGENT_UNAVAILABLE`); only the service state machine is simulated.
+The mock backend is a dev-only import that simulates all 87 IPC commands with stateful fixtures — including failures (`?fail=<command>`), conflicts (`?conflict=update_model_config,update_model_spec`), latency (`?latency=<ms>`) and stage scenarios (`?stage=live|review|many|empty`). CI greps the production bundle to prove the mock never ships. The Superagent panel is transport-driven and unusable under the mock (every `superagent_request` returns `SUPERAGENT_UNAVAILABLE`); only the service state machine is simulated.
 
 ### Release
 
@@ -184,7 +190,7 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.8.0 && git push origin v0.8.0
+git tag v0.9.1 && git push origin v0.9.1
 ```
 
 Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle (including `superagent/dist`, built first via the workspace script) and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets.
@@ -201,7 +207,7 @@ Three layers of commands meet in this repo. They are verified differently — do
 |---|---|---|---|
 | **omp slash commands** | 91 entries in the cheat sheet: 88 in built-in groups (incl. `/seance`) + 3 bundled extensions; `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` (unified registry) + `seance.ts`, composed in `builtin-registry.ts` | `src/ompCommands.test.ts` (count, existence, aliases, example rules) + upstream diff |
 | **omp terminal subcommands** | 51 entries (`omp <name>`) in the cheat sheet | `omp --help` COMMANDS on 18.16.0 | `src/ompCommands.test.ts` (count, uniqueness, alphabetical order, example shape) + `omp --help` diff |
-| **omp-resume IPC commands** | 86 Tauri commands in `generate_handler!` that the UI calls (§4.2–§4.80 with §4.1 deleted plus unnumbered tray/panel/history/meta commands) | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
+| **omp-resume IPC commands** | 87 Tauri commands in `generate_handler!` that the UI calls (§4.2–§4.81 with §4.1 deleted plus unnumbered tray/panel/history/meta commands) | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
 
 Rules that follow from this:
 
@@ -223,7 +229,7 @@ flowchart LR
     end
 
     subgraph app["omp-resume"]
-        RS["Rust core<br/>86 IPC commands"]
+        RS["Rust core<br/>87 IPC commands"]
         UI["React UI<br/>shell pages · stage · panel"]
         MB["menu bar poller<br/>flock + JSONL tail"]
         SA["Superagent daemon<br/>omp run · unix socket"]
@@ -252,11 +258,11 @@ flowchart LR
 ### Repo layout
 
 ```
-src/                 React front end (81 test files, 727 tests)
+src/                 React front end (81 test files, 731 tests)
 src/stage/           Agent Stage: sprites, layout, scene, timeline
 src/components/      Views: sessions, stage, config, tools, settings, superagent
 src/ompCommands.ts   Cheat sheet: slash registry pinned to omp 18.16.0
-src-tauri/src/       Rust core (503 tests, 86 IPC commands)
+src-tauri/src/       Rust core (523 tests, 87 IPC commands)
   sessions/          JSONL scan, tree building, conversation parsing
   stage/             Incremental cursors + actor state machine
   usage/             Per-session usage, redaction, caching
@@ -264,14 +270,14 @@ src-tauri/src/       Rust core (503 tests, 86 IPC commands)
   menubar/           Tray poller, classifier, notifications
   ops/               Delete, iTerm2, branch markers
   superagent/        Daemon supervisor: spawn, readiness, restart, proxy
-superagent/          Orchestrator package: daemon + embeddable panel (1096 tests)
+superagent/          Orchestrator package: daemon + embeddable panel (1130 tests)
   src/app/           Runtime, settings, HTTP API
   src/core/          Engine
   src/omp/           omp --mode rpc sessions + plugin generation
   src/sources/       GitHub + Feishu watchers
   prompts/ skills/ plugin/  Bundled prompt pack, skill manuals, plugin template
 docs/CONTRACT.md     Authoritative spec: formats, commands, semantics, error codes
-docs/DECISIONS.md    Frozen D1–D9 log of measured evidence behind past choices
+docs/DECISIONS.md    Frozen D1–D13 log of measured evidence behind past choices
 ```
 
 `docs/CONTRACT.md` is the source of truth: for any command, the contract, `model.rs`, `types.ts` and `api.ts` must agree, and the contract wins.
@@ -288,7 +294,7 @@ Everything is resolved from omp's own defaults; every path can be overridden for
 | Prompt history | `~/.omp/agent/history.db` | `OMP_RESUME_HISTORY_DB` |
 | Daily model stats | `~/.omp/agent/agent.db` (`model_perf` table, read-only) | `OMP_RESUME_AGENT_DB` |
 | Memory banks | `~/.omp/agent/memories/mnemopi/banks` | `OMP_RESUME_MEMORY_DIR` |
-| Superagent state | `<app data>/superagent` | `OMP_RESUME_DATA_DIR` (parent) |
+| Superagent state | `<app data>/superagent` (release) or `<app data>/superagent-dev` (debug) | `OMP_RESUME_SUPERAGENT_STATE_DIR` (absolute path); `OMP_RESUME_DATA_DIR` changes the parent |
 | Superagent assets | bundled `Resources/superagent` (dev: `superagent/`) | `OMP_RESUME_SUPERAGENT_DIR` |
 | App data (`meta.json`, `settings.json`, bench records, backups) | `~/Library/Application Support/omp-resume` | `OMP_RESUME_DATA_DIR` |
 

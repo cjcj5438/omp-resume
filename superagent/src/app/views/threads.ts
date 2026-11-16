@@ -1,25 +1,33 @@
 /** Thread list, timeline detail, cross-entity search, and decision list views. */
 import { threadKey, type Thread, type Ticket, type Trigger } from '../../core/index.ts'
+import { githubRepo } from '../../sources/github-trigger.ts'
 import type { ThreadFilter } from '../api.ts'
 import type { TextCache } from '../cache.ts'
 import { awaitingEval, channelLink, dayAgo, decisionView, newestFirst, page, snapshot, threadSummary, threadTitle, ticketLine,
   ticketSummary, triggerView, type ViewHost } from './records.ts'
 import { attribute } from './text.ts'
 
-export function threadList(host: ViewHost, filter: ThreadFilter, offset: number, limit: number) {
+export function threadList(host: ViewHost, filter: ThreadFilter, offset: number, limit: number, project?: string) {
   const { store } = host
   const view = snapshot(host)
   const since = dayAgo()
   const open = new Set(store.tickets.open().map(ticket => ticket.id))
   const live = (thread: Thread) => thread.subscriptions.some(id => open.has(id))
   const lastAt = (thread: Thread) => thread.lastAt ?? thread.createdAt
-  const kept = (thread: Thread) => filter === 'recent' ? lastAt(thread) >= since
-    : filter === 'all' || (filter === 'subscribed' ? live(thread) : !!thread.evaluating || awaitingEval(view, thread).length > 0)
-  const candidates = filter === 'subscribed' ? store.read.subscribedThreads()
+  const prefixes = project === undefined ? undefined : projectPrefixes(store, project)
+  const inProject = (thread: Thread) => !prefixes || prefixes.some(prefix => thread.key.startsWith(prefix))
+  const kept = (thread: Thread) => inProject(thread) && (filter === 'recent' ? lastAt(thread) >= since
+    : filter === 'all' || (filter === 'subscribed' ? live(thread) : !!thread.evaluating || awaitingEval(view, thread).length > 0))
+  const candidates = prefixes ? store.threads.list() : filter === 'subscribed' ? store.read.subscribedThreads()
     : filter === 'evaluating' ? store.threads.active() : store.threads.list()
   const threads = candidates.filter(kept).sort((a, b) => lastAt(b).localeCompare(lastAt(a)))
   const result = page(threads, offset, limit)
   return { ...result, items: result.items.map(thread => threadSummary(view, thread)) }
+}
+/** Thread key prefixes of one project: its lowercase GitHub repository plus each of its Feishu chats; unknown projects match nothing. */
+function projectPrefixes(store: ViewHost['store'], project: string): string[] {
+  const found = store.settings().projects.find(item => item.id === project)
+  return found ? [`github:${githubRepo(found.repository)}#`, ...found.chats.map(chat => `feishu:${chat.chatId}:`)] : ['\0']
 }
 export type ThreadListView = ReturnType<typeof threadList>
 /**
@@ -61,7 +69,7 @@ export function search(host: ViewHost, query: string, links: Pick<TextCache, 'en
   const value = query.trim()
   if (!value) return { tickets: [], items: [], threads: [] }
   const view = snapshot(host)
-  const named = sources.find(value)
+  const named = sources.find(value, host.deployment)
   const terms = new Set([value, ...named.terms])
   for (const [name, url] of links.entries()) if (url === value) terms.add(name.split(':').at(-1)!)
   const found = new Map<string, Trigger>()

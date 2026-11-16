@@ -30,14 +30,18 @@ export function directionAllowed(value: unknown): value is AdmissionDirection {
 export interface Assessment {
   decision: 'accept' | 'ignore' | 'unavailable'; rule_assessments: RuleAssessment[]; direction: unknown
   title: string; scope: string; reason: string; intent_evidence?: string | null; acknowledgement?: string | null; worktree_name?: string
+  project?: string
 }
 /**
  * Validate an assessment against enabled rules and convert it into an engine `AssessmentOutcome`.
  * Acceptance requires a settled direction, at least one matched enabled rule, and `intent_evidence`, and accepts an
  * inferred candidate only in `auto` mode (otherwise recording it as `would_accept`).
+ * An accept carries no project: the caller resolves it (see `chooseProject`) and spreads it in.
  * @throws when `rule_assessments` does not cover every enabled rule exactly once, or an accept omits `intent_evidence`.
  */
-export function assessmentOutcome(assessment: Assessment, settings: Pick<Settings, 'policy' | 'eval'>, strength: Strength): AssessmentOutcome {
+export type PendingAssessmentOutcome = Exclude<AssessmentOutcome, { kind: 'accept' }>
+  | Omit<Extract<AssessmentOutcome, { kind: 'accept' }>, 'project'>
+export function assessmentOutcome(assessment: Assessment, settings: Pick<Settings, 'policy' | 'eval'>, strength: Strength): PendingAssessmentOutcome {
   const enabled = settings.policy.rules.filter(rule => rule.enabled)
   const judged = assessment.rule_assessments
   const ids = new Set(judged.map(item => item.rule_id))
@@ -51,9 +55,9 @@ export function assessmentOutcome(assessment: Assessment, settings: Pick<Setting
   if (!directionAllowed(assessment.direction)) return { kind: 'ignore', audit, reason: { code: 'directionUnsettled' } }
   if (!matches.length) return { kind: 'ignore', audit, reason: { code: 'noRuleMatched' } }
   if (!assessment.intent_evidence) throw new Error('Acceptance requires intent_evidence')
-  const { title, scope, worktree_name: name } = assessment
+  const { title, scope, worktree_name: name, project } = assessment
   if (strength === 'inferred' && settings.eval.mode !== 'auto') {
-    const proposal = { title, scope, worktree_name: name }
+    const proposal = { title, scope, worktree_name: name, ...project === undefined ? {} : { project } }
     return { kind: 'ignore', audit: { ...audit, would_accept: true, proposal }, reason: { code: 'observed', values: { text: assessment.reason } } }
   }
   return { kind: 'accept', title, scope, reason: assessment.reason, ...(assessment.acknowledgement ? { acknowledgement: assessment.acknowledgement } : {}),
@@ -87,12 +91,27 @@ export const EvalConfigSchema = z.object({
 }).strict()
 const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => name !== '.' && name !== '..', 'Not a command name')
   .refine(name => !WORKER_COMMANDS.includes(name), `${WORKER_COMMANDS.join(', ')} cannot be blocked`)
-/** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, and blocked commands. */
+/** A project: the repository, chats, ticket directory, and prepare command that a trigger belongs to. */
+export const ProjectIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/)
+export const ProjectSchema = z.object({ id: ProjectIdSchema,
+  name: z.string().trim().min(1).max(LIMITS.projectName),
+  repository: z.string().trim().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'owner/name'),
+  chats: z.array(z.object({ chatId: z.string().regex(/^oc_[a-zA-Z0-9]+$/) }).strict()).default([]),
+  directory: z.string().trim().refine(p => p === '' || p.startsWith('/'), 'An absolute path, or empty for <stateDir>/work/<project id>').default(''),
+  prepare: z.string().max(LIMITS.prepareCommand).default('') }).strict()
+export type Project = z.infer<typeof ProjectSchema>
+export const ProjectsSchema = z.array(ProjectSchema).max(LIMITS.projects)
+  .refine(projects => new Set(projects.map(p => p.id)).size === projects.length, 'Duplicate project IDs')
+  .refine(projects => new Set(projects.map(p => p.repository.toLowerCase())).size === projects.length, 'Duplicate repositories')
+  .refine(projects => {
+    const seen = new Set<string>()
+    for (const p of projects) for (const chat of p.chats) { if (seen.has(chat.chatId)) return false; seen.add(chat.chatId) }
+    return true
+  }, 'A chat belongs to one project').default([])
+/** Executor settings: worker model, concurrency, and blocked commands. */
 export const ExecutorConfigSchema = z.object({
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
-  directory: z.string().trim().refine(path => path === '' || path.startsWith('/'), 'An absolute path, or empty for <stateDir>/work').default(''),
-  prepare: z.string().max(LIMITS.prepareCommand).default(''),
   blockedCommands: z.array(CommandNameSchema).default([]),
 }).strict()
 export const SourceInstanceSchema = z.object({ enabled: z.boolean().default(true), config: z.record(z.string(), z.unknown()).default({}) }).strict()
@@ -102,9 +121,10 @@ export const SettingsSchema = z.object({
   policy: PolicyConfigSchema.default(() => PolicyConfigSchema.parse({})),
   eval: EvalConfigSchema.default(() => EvalConfigSchema.parse({})),
   executor: ExecutorConfigSchema.default(() => ExecutorConfigSchema.parse({})),
+  projects: ProjectsSchema,
 }).strict()
 export type Settings = z.infer<typeof SettingsSchema>
-export type SettingsBlock = 'policy' | 'eval' | 'executor' | `source:${string}`
+export type SettingsBlock = 'policy' | 'eval' | 'executor' | 'projects' | `source:${string}`
 export type SettingsSave = SettingsBlock | 'pause'
 export type SettingsOrigin = 'panel' | 'tool' | 'sync'
 

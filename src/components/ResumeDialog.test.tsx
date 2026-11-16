@@ -74,4 +74,49 @@ describe("ResumeDialog", () => {
     await screen.findByText(/占用探测失败/);
     expect(screen.getByRole("button", { name: "打开标签页" })).toBeDisabled();
   });
+
+  it("确认中挂起不关闭；失败后留在框内可重试，重试成功只关闭并刷新一次", async () => {
+    const { promise: gate, reject: rejectOpen } = Promise.withResolvers<unknown>();
+    let opens = 0;
+    mockIPC((cmd) => {
+      if (cmd === "check_session") return { inUse: false, probeOk: true };
+      if (cmd === "open_in_iterm") {
+        opens += 1;
+        return opens === 1 ? gate : null;
+      }
+      return null;
+    });
+    const s1 = FIXTURE_SESSIONS[0].summary;
+    const onClose = vi.fn();
+    const onOpened = vi.fn();
+    const onToast = vi.fn();
+    render(<ResumeDialog session={s1} onClose={onClose} onOpened={onOpened} onToast={onToast} />);
+    const open = await screen.findByRole("button", { name: "打开标签页" });
+    await waitFor(() => expect(open).toBeEnabled());
+    fireEvent.click(open);
+
+    // 挂起期间：按钮禁用，取消也禁用，框不关闭。
+    await waitFor(() => expect(open).toBeDisabled());
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onOpened).not.toHaveBeenCalled();
+
+    // 后端确认失败：error toast、框保留、未刷新，按钮恢复可用。
+    rejectOpen({ code: "ITERM_FAILED", message: "未检测到 omp 启动该会话" });
+    await waitFor(() => expect(onToast).toHaveBeenCalledTimes(1));
+    expect(onToast.mock.calls[0][1]).toBe("error");
+    expect(String(onToast.mock.calls[0][0])).toContain("未检测到 omp 启动该会话");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onOpened).not.toHaveBeenCalled();
+    const retry = await screen.findByRole("button", { name: "打开标签页" });
+    await waitFor(() => expect(retry).toBeEnabled());
+
+    // 重试成功：只关闭一次、只刷新一次，toast 为 info。
+    fireEvent.click(retry);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(onOpened).toHaveBeenCalledTimes(1);
+    expect(onToast).toHaveBeenCalledTimes(2);
+    expect(onToast.mock.calls[1][1]).toBe("info");
+    expect(opens).toBe(2);
+  });
 });

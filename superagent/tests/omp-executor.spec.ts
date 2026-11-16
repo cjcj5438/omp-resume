@@ -122,9 +122,10 @@ it('runs the prepare command with the worker shims and the ticket variables', as
   const workerBin = `${h.directory}/worker-bin`
   // A prepare command that records the environment it ran with.
   const settings = h.store.settings()
-  h.store.saveSettings({ ...settings, executor: { ...settings.executor,
-    prepare: `echo "PATH=$PATH" > env.txt; echo "GIT=$GIT_CONFIG_GLOBAL" >> env.txt; echo "TICKET=$OMP_SUPERAGENT_TICKET" >> env.txt` } })
-  pendingTicket(h)
+  h.store.saveSettings({ ...settings, projects: [{ id: 'p', name: 'P', repository: 'acme/widgets',
+    prepare: `echo "PATH=$PATH" > env.txt; echo "GIT=$GIT_CONFIG_GLOBAL" >> env.txt; echo "TICKET=$OMP_SUPERAGENT_TICKET" >> env.txt` }] })
+  const ticket = pendingTicket(h)
+  h.store.tickets.save({ ...ticket, execution: { ...ticket.execution!, project: 'p' } })
   await launchWorker('t1')
   const envFile = join(h.directory, 'work', 'env.txt')
   expect(existsSync(envFile)).toBe(true)

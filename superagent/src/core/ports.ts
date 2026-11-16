@@ -40,9 +40,9 @@ export interface Candidate {
 export type AssessmentOutcome =
   | { kind: 'ignore'; reason: string | Reason; audit?: Record<string, unknown> }
   | { kind: 'unavailable'; reason: string | Reason; audit?: Record<string, unknown> }
-  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, and `note` a routing note for its worker. */
-  | { kind: 'accept'; title: string; scope: string; reason: string | Reason; acknowledgement?: string; rules?: string[]; audit?: Record<string, unknown>;
-    name?: string; note?: string }
+  /** An accept: `rules` the assessment matched, `name` the ticket's requested short name, `note` a routing note for its worker, and `project` the id of the project the ticket belongs to. */
+  | { kind: 'accept'; title: string; scope: string; project: string; reason: string | Reason; acknowledgement?: string; rules?: string[];
+    audit?: Record<string, unknown>; name?: string; note?: string }
   | { kind: 'stop'; ticketId: string; reason: string | Reason; audit?: Record<string, unknown> }
 
 /** Semantic judgement. `request` queues the assessment, idempotently per `evalId`; the outcome returns through `Engine.decide`. */

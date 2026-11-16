@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Store } from '../src/app/store.ts'
-import { Prompts, builtInBase, composePrompt, defaultPrompts, policySection, promptParts, type PromptConfig } from '../src/app/prompts.ts'
+import { Prompts, builtInBase, builtInParts, composePrompt, defaultPrompts, policySection, projectsSection, promptParts,
+  type PromptConfig } from '../src/app/prompts.ts'
 import { USER_ERRORS, UserError } from '../src/core/index.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema, policyVersion } from '../src/policy.ts'
@@ -85,8 +86,39 @@ it.each(['orchestrator', 'worker'] as const)('ends the %s prompt with the fixed 
     expect(preview[role]).toContain(`${handoffPolicy(role)}\n\nExecution environment`)
     if (role === 'worker') expect(preview[role].endsWith(ENVIRONMENT_LINE)).toBe(true)
     // Nothing follows the main Session's Policy section, so a Policy change leaves the rest of its prompt as it was.
-    else expect(preview[role].endsWith(`${ENVIRONMENT_LINE}\n\n${policySection(store.settings()).text}`)).toBe(true)
+    else expect(preview[role].endsWith(`${projectsSection(store.settings()).text}\n\n${policySection(store.settings()).text}`)).toBe(true)
     expect(preview.parts[role].at(-1)!.name).toBe(role === 'orchestrator' ? 'runtime/policy' : 'runtime/environment')
+  })
+})
+it('lists each project with its repository and Feishu chats in the main Session\'s Projects section, before its Policy', () => {
+  withStore(store => {
+    const prompts = promptsOf(store)
+    const settings = SettingsSchema.parse({ projects: [
+      { id: 'a', name: 'A', repository: 'acme/widgets', chats: [{ chatId: 'oc_team' }] },
+      { id: 'b', name: 'B', repository: 'acme/gadgets', chats: [] },
+    ] })
+    store.saveSettings(settings)
+    store.set(KV.sources.labels('feishu'), { oc_team: 'Team chat' })
+    // The built-in template the section fills.
+    expect(builtInParts()['runtime/projects']).toMatchObject({ roles: ['orchestrator'], placeholders: ['{projects}'] })
+    expect(builtInParts()['runtime/projects'].text).toContain('A GitHub trigger belongs to the project of its repository')
+    const section = projectsSection(store.settings(), { oc_team: 'Team chat' })
+    expect(section).toEqual({ key: 'runtime/projects', text: expect.stringContaining('- a (A): repository acme/widgets; Feishu chats: Team chat') })
+    expect(section.text).toContain('- b (B): repository acme/gadgets; Feishu chats: none')
+    expect(section.text).toContain('With one project, it is always used.')
+    // Unknown chats read as their id; an override keeps its placeholder.
+    expect(projectsSection(store.settings(), {}).text).toContain('Feishu chats: oc_team')
+    expect(() => prompts.validate({ ...defaultPrompts(), overrides: { 'runtime/projects': { text: 'Projects, ours.' } } }))
+      .toThrow(new UserError('promptPlaceholders', { part: 'runtime/projects', placeholders: '{projects}' }))
+    const preview = prompts.preview(defaultPrompts())
+    expect(preview.parts.orchestrator.map(part => part.name)).toEqual(expect.arrayContaining(['runtime/projects', 'runtime/policy']))
+    expect(preview.parts.orchestrator.at(-2)).toMatchObject({ name: 'runtime/projects', kind: 'generated', key: 'runtime/projects' })
+    expect(preview.parts.orchestrator.at(-1)!.name).toBe('runtime/policy')
+    expect(preview.parts.worker.map(part => part.name)).not.toContain('runtime/projects')
+    expect(preview.orchestrator).toContain('- a (A): repository acme/widgets; Feishu chats: Team chat')
+    expect(preview.orchestrator).toContain('- b (B): repository acme/gadgets; Feishu chats: none')
+    expect(preview.orchestrator).toBe(prompts.compose(defaultPrompts(), 'orchestrator'))
+    expect(preview.worker).not.toContain('Feishu chats:')
   })
 })
 

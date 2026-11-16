@@ -20,7 +20,7 @@ it('delivers the relays, subscription changes and notifications that a version b
   const steered = h.deliveries.mock.calls.map(([call]) => call).filter(call => call.mode === 'steer')
     .map(call => JSON.parse(call.text) as Record<string, unknown>)
   expect(steered).toEqual([{ kind: 'worker_report', ticket_id: 't1', state: 'ready' }])
-  expect(notices(h)).toEqual(expect.arrayContaining([{ subscription_changes: [{ thread: 'github:7', removed: true }] },
+  expect(notices(h)).toEqual(expect.arrayContaining([{ subscription_changes: [{ thread: 'github:acme/widgets#7', removed: true }] },
     { prompt_config_saved: 3, effect: 'next-request', read: 'prompts/3' }, { settings_saved: true, read: 'settings' }]))
   for (const name of ['relay-queue', 'subscription-results', 'prompt-notification', 'settings-notification']) expect(h.runtime.store.get(name)).toBeUndefined()
   expect(h.runtime.effects.pending('relay') || h.runtime.effects.pending('notice')).toBe(false)
