@@ -2592,7 +2592,8 @@ worker 会话 id 为 `worker-<ticketId>`。
   没有时 `EmptyState`“该会话还没有记录”。`target.seq` 变化即选中。
 - 服务页：状态面板（`StatePill` + pid/启动时间/重启次数/`lastError` +
   启用 `Switch` + 重启按钮，仅启用时可用）；路径面板（`stateDir`/`socketPath`/
-  `logPath`/`assetsDir`/`ompBin`，文件行带「在 Finder 中显示」走 `reveal_file`）；
+  `logPath`/`assetsDir`/`ompBin`；socket 行只显示路径不带按钮——`reveal_file`
+  只接受普通文件，绑定的 unix socket 不是——日志与 omp 行带「在 Finder 中显示」走 `reveal_file`）；
   日志面板（`superagent_log_tail(200)` + 刷新按钮）。状态同样 3 秒轮询。
 - transport（`src/components/superagent/transport.ts`）：`invokeTransport`
   把面板请求经 `superagent_request` 代理出去；`SUPERAGENT_UNAVAILABLE`

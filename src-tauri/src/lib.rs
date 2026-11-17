@@ -390,6 +390,9 @@ pub fn run() {
                 supervisor.start_if_enabled();
             }
             let initial = menubar::menu::build_model(Vec::new(), &settings);
+            // 托盘图标必须显式创建：没有状态项时应用退到 Accessory 后没有任何入口。
+            // 句柄不必长期持有——`build` 已把图标注册进资源表（`tray_by_id` 可取回）。
+            let _tray = menubar::tray::create_tray(app, &initial)?;
             menubar::tray::register_click_handler(app.handle())?;
             menubar::tray::apply_badge(app.handle(), &initial);
             #[cfg(target_os = "macos")]

@@ -1,4 +1,4 @@
-/** SuperagentServiceView：开关/重启门禁、Finder 按钮只在文件行、日志刷新。 */
+/** SuperagentServiceView：开关/重启门禁、Finder 按钮只在日志与 omp 行、日志刷新。 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { SuperagentStatus } from "../../types";
@@ -44,6 +44,13 @@ beforeEach(() => {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
 });
 
+function rowOf(label: string): HTMLElement {
+  const dt = [...document.querySelectorAll("dt")].find((el) => el.textContent === label);
+  const row = dt?.closest(".detail-row");
+  if (!(row instanceof HTMLElement)) throw new Error(`找不到「${label}」路径行`);
+  return row;
+}
+
 describe("SuperagentServiceView", () => {
   it("开关调用 superagentSetEnabled 并 toast 成功", async () => {
     statusMock.mockResolvedValue(statusOf(false));
@@ -74,21 +81,39 @@ describe("SuperagentServiceView", () => {
     expect(restartMock).toHaveBeenCalledTimes(1);
   });
 
-  it("只有文件行带 Finder 按钮；点击透传完整路径", async () => {
+  it("socket 行只显示路径无按钮；日志与 omp 行带 Finder 按钮并透传完整路径", async () => {
     statusMock.mockResolvedValue(statusOf(true));
     revealMock.mockResolvedValue(undefined);
     render(<SuperagentServiceView onToast={() => {}} />);
-    const buttons = await screen.findAllByRole("button", { name: "在 Finder 中显示" });
-    // socket / 日志 / omp 三个文件行；状态目录与资源目录是目录行，无按钮。
-    expect(buttons.length).toBe(3);
-    const logRow = buttons[1].closest(".detail-row");
-    expect(logRow?.textContent).toContain("日志文件");
-    fireEvent.click(buttons[1]);
+    await screen.findByRole("switch", { name: "启用 Superagent" });
+
+    const socketRow = rowOf("socket");
+    expect(socketRow.textContent).toContain("/mock/superagent/daemon.sock");
+    expect(socketRow.querySelector("button")).toBeNull();
+
+    const logRow = rowOf("日志文件");
+    const logButton = logRow.querySelector("button");
+    expect(logButton).not.toBeNull();
+    fireEvent.click(logButton as HTMLButtonElement);
     expect(revealMock).toHaveBeenCalledWith("/mock/superagent/logs/daemon.log");
-    // 目录行确实没有按钮。
-    const rows = document.querySelectorAll(".detail-row");
-    const dirRow = [...rows].find((r) => r.textContent?.includes("状态目录"));
-    expect(dirRow?.querySelector("button")).toBeNull();
+
+    const ompRow = rowOf("omp 可执行文件");
+    const ompButton = ompRow.querySelector("button");
+    expect(ompButton).not.toBeNull();
+    fireEvent.click(ompButton as HTMLButtonElement);
+    expect(revealMock).toHaveBeenCalledWith("/mock/omp");
+
+    expect(rowOf("状态目录").querySelector("button")).toBeNull();
+    expect(rowOf("资源目录").querySelector("button")).toBeNull();
+  });
+
+  it("ompBin 为 null 时 omp 行无 Finder 按钮", async () => {
+    statusMock.mockResolvedValue({ ...statusOf(true), ompBin: null });
+    render(<SuperagentServiceView onToast={() => {}} />);
+    await screen.findByRole("switch", { name: "启用 Superagent" });
+    const ompRow = rowOf("omp 可执行文件");
+    expect(ompRow.textContent).toContain("—");
+    expect(ompRow.querySelector("button")).toBeNull();
   });
 
   it("日志面板显示 tail 结果；刷新重新拉取", async () => {

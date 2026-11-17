@@ -121,7 +121,7 @@ export function SuperagentServiceView({ onToast }: SuperagentServiceViewProps) {
   const pill = status !== null ? PILL[status.state] : null;
   const paths: PathRow[] = [
     { key: "stateDir", label: "状态目录", value: status?.stateDir ?? null, isFile: false },
-    { key: "socketPath", label: "socket", value: status?.socketPath ?? null, isFile: true },
+    { key: "socketPath", label: "socket", value: status?.socketPath ?? null, isFile: false },
     { key: "logPath", label: "日志文件", value: status?.logPath ?? null, isFile: true },
     { key: "assetsDir", label: "资源目录", value: status?.assetsDir ?? null, isFile: false },
     { key: "ompBin", label: "omp 可执行文件", value: status?.ompBin ?? null, isFile: true },

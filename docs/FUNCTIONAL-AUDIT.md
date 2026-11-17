@@ -2,6 +2,7 @@
 
 > 调查日期：2026-11-15 · 仓库 `/Users/chenjing/my/omp-resume`
 > 本文只记录缺陷与覆盖证据。本轮不改代码、不新增永久测试（BUG-001 的验证用了已删除的 throwaway 测试）、不发版、不改 README。
+> 2026-11-16 修复轮：BUG-001 已修；Dock 症状的根因（托盘图标从未创建）已定位并在工作树修复，安装版待重新构建后才生效；见 §10。
 
 ## 1. 结论
 
@@ -20,6 +21,10 @@
 |---|---|---|---|---|
 | BUG-001 | P2 | 已确认：工作区真实实现隔离复现 + 已安装 0.9.1 UI 复现 | 服务页 socket 行的 Finder 按钮 100% 报「文件不存在」 | 工作树与安装版 0.9.1 均复现 |
 | BUG-002 | 优先排查（严重度待定） | 用户报告；原生侧现场取样未复现 | Dock 图标开关无用户可感知效果 | 用户报告来自已安装版；发生条件本轮未定位 |
+
+> 后续状态见 §10（BUG-001 已修复；BUG-002 的根因是托盘图标从未创建，工作树已修复，安装版待重新构建）。
+>
+> 2026-11-16 复核：用户原话是「现在 Dock 显示图标也不显示了」；上表「开关无用户可感知效果」是当时的概括，真正的用户可见故障是「隐藏主窗口后图标消失且无处找回」，见 §10.2。
 
 ### BUG-001（P2）Superagent 服务页 socket 行「在 Finder 中显示」必然失败
 
@@ -365,3 +370,129 @@ CONTRACT §17.9 已把 Dock 右键菜单的注入失败（`class_addMethod` 返�
 | Dock 状态转换实测与恢复记录 | `local://functional-native-final-state.md` |
 | iTerm 续聊历史验证（非本轮） | `local://resume-verification.md`、`local://review-followups-evidence.md` |
 | 演示层结果 | 本文 §5.1 |
+
+## 10. 修复轮（2026-11-16）
+
+本轮为**后续修复**，与 §1–§9 的 2026-11-15 快照不同：本轮改了代码、新增了永久回归测试。上文历史结论原样保留，本节记录发生变化的部分；两处冲突时以本节为准。本轮的改动**只存在于工作树**：已安装的 `/Applications/omp-resume.app` 0.9.1 早于这些改动，用户在新构建安装前看到的仍是旧行为（BUG-002 尤其如此）。
+
+自上一轮到本轮的版本变化：`docs/cli-reference` 基准仍为 `18.16.0`，但本机安装的 `omp` 已变为 **18.20.3**（`omp --help` 列 54 条），因此应用内的版本不匹配横幅属预期（见 §10.4）。
+
+### 10.1 BUG-001：已修复（socket 行不再渲染 Finder 按钮）
+
+**改动**：`src/components/superagent/SuperagentServiceView.tsx` 中 `socketPath` 行改为 `isFile: false`。socket 路径**仍然照常显示**，只是该行不再渲染「在 Finder 中显示」按钮。后端未改：`src-tauri/src/ops/commands.rs` 的 `reveal_file_impl` 仍只接受普通文件（绝对路径、无控制字符、`is_file()`），即门禁本身是对的，错的是前端把 socket 当成文件。
+
+**契约**：`docs/CONTRACT.md §26.4` 补充了 socket 行例外，明确该行不提供文件 reveal 入口。
+
+**测试**：`src/components/superagent/SuperagentServiceView.test.tsx` 重写为逐行断言（原先「正好 3 个按钮」的错误期望已删除）：
+
+| 行 | 断言 |
+|---|---|
+| socket | 路径文本可见，**无**按钮 |
+| 日志文件 | 有按钮，点击时 `revealFile` 收到日志路径 |
+| omp 可执行文件 | 有按钮，点击时 `revealFile` 收到 omp 路径 |
+| 状态目录 / 资源目录 | 无按钮 |
+| `ompBin: null` | 无按钮 |
+
+**验证**：
+
+| 命令 | 结果 |
+|---|---|
+| `npx vitest run src/components/superagent/SuperagentServiceView.test.tsx` | 9 passed |
+| `npx vitest run src/components/superagent/SuperagentView.test.tsx` | 8 passed |
+| `npx tsc --noEmit` | 0 错误 |
+| 临时把 `isFile` 改回 `true` | 新测试在 socket 行按钮断言处失败（证明测试有约束力），随后已还原 |
+
+### 10.2 BUG-002：用户可见的「Dock 图标消失」根因是托盘图标从未创建（工作树已修，安装版待重新构建）
+
+**两类症状必须分开**：
+
+- （i）**图标消失且无法找回** —— 用户原话「现在 Dock 显示图标也不显示了」指的是这一类：隐藏主窗口后既无 Dock tile 也无菜单栏入口。根因即托盘从未创建，已定位，**修复只存在于工作树**。
+- （ii）**窗口可见时切换无即时效果 / 冷启动不应用持久化策略** —— 这是既有行为，本轮**未改**，仍属契约内设计（见本节的「顺带观察到的既有行为」）。用户「开关好像没用」的印象由这两条既有行为解释，而不等同于（i）的消失缺陷。
+
+**与 §2 的关系**：§2 记录的「`showDockIcon: false` + 隐藏窗口 → Accessory 且无 Dock tile」这一状态机行为本身与源码设计一致，**不是**用户所见的那个缺陷。用户可见缺陷的成因另有其因，本轮已定位并在工作树修复（安装版未变）。§2 表格里的「Dock 图标开关无用户可感知效果」是当时的概括，用户原话是「现在 Dock 显示图标也不显示了」——描述的是消失，不是开关失效，已在上方补注。
+
+**当前配置证据（2026-11-16 复核）**：用户真实数据目录 `/Users/chenjing/Library/Application Support/omp-resume` 内**没有 `settings.json`**，当前只有 `superagent/`、`superagent-dev/`、`superagent.lock/` 三项。因此菜单栏设置全部按默认值加载，而 `showDockIcon` 默认即 **false**（`src-tauri/src/menubar/settings.rs`：`#[serde(default)] show_dock_icon: bool`，`impl Default for Settings` 中 `show_dock_icon: false`）。配合缺失的托盘图标，隐藏主窗口后应用进入 `UIElement`，既无 Dock tile 也无菜单栏入口——与用户字面症状一致。
+
+**根因**：提交 `d3faf09` 从 `src-tauri/src/lib.rs` 的 `setup` 中删除了 `let _tray = menubar::tray::create_tray(app, &initial)?;`，且仓库内没有其它地方创建托盘。于是安装版与 dev 实例都**没有任何状态项**：
+
+- `AXExtrasMenuBar` 不存在（同时用一个对照应用验证 AX 通道本身可用）；
+- 属于 omp-resume 的 layer-25 窗口数量为 0。
+
+**后果链**：`showDockIcon: false` 下点主窗口关闭按钮 → 应用变 `UIElement`，既无 Dock tile 也无菜单栏入口，应用内没有回到窗口的路径。
+
+**修复（仅工作树，尚未交付给用户）**：把该行在**原位置**恢复。句柄有意不保存（`let _tray`），`build` 会把图标注册进资源表（运行时已验证）。另加回归测试 `setup_creates_tray_icon_once`（`src-tauri/tests/contract.rs`）：源码扫描 `.setup(` 到 `.on_menu_event(` 之间必须恰好出现一次 `menubar::tray::create_tray(`；删掉该行测试即失败。
+
+**安装版状态**：`/Applications/omp-resume.app` 仍是 0.9.1，构建早于本修复，**仍然不创建任何托盘图标**，因此用户在当前安装版上会继续撞上该缺陷，直到重新构建并安装新包。本节所有「已修」结论只对工作树成立。
+
+**运行时验证（隔离 dev 实例，`showDockIcon: false`）**：
+
+| 场景 | 观察 |
+|---|---|
+| 存在性 | 状态项存在：`AXExtrasMenuBar` count=1、layer-25 窗口存在、System Events 菜单栏计数 2 |
+| 左键（`clickAction: "panel"`） | 356×620 托盘面板开/关切换，激活策略与 Dock tile 均不变 |
+| 隐藏主窗口 | `ApplicationType=UIElement`、无 Dock tile，状态项**存活** |
+| 面板「主窗口」 | 恢复 `Foreground`、窗口与 Dock tile 回来 |
+
+隔离性：安装版进程 60445 与用户守护进程均未触碰，所有写入都落在独立的 `/tmp` 数据目录。
+
+**顺带观察到的既有行为（记录，非缺陷）**：
+
+- 冷启动时即使已持久化 `showDockIcon: false`，应用仍以 `Regular` 启动并带 Dock tile，直到第一次隐藏窗口才应用该策略（启动路径不应用持久化策略，`Info.plist` 无 `LSUIElement`）。
+- 主窗口可见时切换该开关，只改变持久化文件，无即时 UI 效果——两个 UI 入口（设置页复选框与托盘菜单项）都是这个行为。
+
+### 10.3 R-03：已核验，决定不改
+
+在**从未启动过**的隔离状态目录下，「日志文件」行仍提供按钮，而 `logs/daemon.log` 不存在。点击得到逐字 toast：
+
+```
+在 Finder 中显示失败：文件不存在：<logPath>
+```
+
+且不会打开 Finder 窗口。创建该文件后，同一次点击无 toast，并打开了日志所在目录。
+
+**决定：保持现状。** 理由：reveal 一个不存在的路径本来就该报错；日志面板本身已经显示「暂无日志」；真要消除这个错误需要状态负载新增一个「文件是否存在」的信号，成本与收益不成比例。
+
+### 10.4 R-01：已定论为版本漂移，不是缺口
+
+| 项 | 事实 |
+|---|---|
+| 51 条表对应的版本 | omp `v18.16.0`（克隆上游 tag 核对） |
+| `v18.16.0` 注册表 | 注册 53 条 / 可见 51 条 |
+| `v18.16.0` 的 `docs/cli-reference.md` | 同样没有 `bash`/`sh`/`zsh` |
+| 三条命令出现版本 | `v18.17.0`（注册 56 / 可见 54；18.16.0 无 `commands/native-shell.ts`） |
+| 本机 `omp` | 18.20.3，54 条命令 |
+
+结论：表内命令集在 18.16.0 上是完整的，缺 `bash`/`sh`/`zsh` 是上游 18.17.0 才加的能力，属版本漂移。页面计数仍为派生静态值。由于本机已是 18.20.3，应用内版本不匹配横幅属预期行为，不是回归。
+
+### 10.5 R-02：产品无改动，补了回归测试
+
+新增 `user_image_block_keeps_placeholder`（`src-tauri/tests/backend.rs`）：用户消息为 `[text, image]` 时，`joined_text` 结果必须为 `看图\n[图片]`。
+
+| 检查 | 结果 |
+|---|---|
+| 正常情况 | 通过 |
+| 把 `joined_text` 的 image 分支改成空串 | 失败，exit 101，`left: "看图\n"` |
+| 变更还原 | 已还原 |
+
+助手侧 image 块仍按设计与契约跳过；真正渲染图片是另一个尚未实现的需求，不在本轮范围。
+
+### 10.6 仍未验证（保持为限制，不算失败）
+
+- 原生托盘菜单内容与 `ITEM_TOGGLE_DOCK` 菜单项：状态项已存在，但其菜单无法打开用于检查（AX 拒绝），本轮改用左键面板路径验证。
+- 托盘面板 blur 自动隐藏。
+- Dock 右键菜单。
+- 多显示器。
+- 睡眠/唤醒。
+- §4 中需要真实 iTerm、付费模型调用、GitHub/Feishu 真实工单、updater 安装、Superagent 重启的各项。
+
+### 10.7 全量套件确认
+
+上一节记录的疑似 flaky 已定论：**一次性时间性抖动，不是回归**。
+
+| 项 | 结果 |
+|---|---|
+| 早前单次 `cargo test --offline --lib` | `455 passed; 1 failed`，失败项 `superagent::supervisor::tests::exit3_reclaims_holder_despite_strict_mismatch` |
+| 全量 `cargo test --offline` | **exit 0**；lib **456 passed / 0 failed / 6 ignored**；全部集成二进制通过：backend 12/0/1、contract 2/0/0、ops 10/0/1、safety 26/0/0 等；零警告；该测试在其中通过 |
+| `npm run check` | **exit 0**；vitest 81 files / **733 tests**；superagent vitest 53 files / **1130 tests**；两处 `tsc`（`--noEmit` 与 `-p tsconfig.node.json`）均干净 |
+
+判定依据：该测试在不含任何改动的路径上也曾单独通过，其失败不可复现；本轮**没有改动任何测试代码，也没有调整任何计时/等待参数**，所以这一抖动不是本轮引入、也不是靠放宽断言掩盖的。

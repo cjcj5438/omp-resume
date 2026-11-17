@@ -655,6 +655,29 @@ fn entry_kinds_from_appendix_shapes() {
     }
 }
 
+#[test]
+fn user_image_block_keeps_placeholder() {
+    // CONTRACT §4.3：user 消息的 image 块同样记为 `[图片]`（toolResult 之外的一侧）。
+    let (_t, proj, _) = fixture_root();
+    let dir = _t.path().join("sessions").join("-ui");
+    let lines = vec![
+        header("ui-1", proj.to_str().unwrap()),
+        msg(
+            "u1",
+            None,
+            json!({"role":"user","content":[{"type":"text","text":"看图"},{"type":"image","data":"blob:sha256:abc","mimeType":"image/png","detail":"original"}],"attribution":"user"}),
+        ),
+    ];
+    let p = write_lines(&dir, "ui.jsonl", &lines);
+    let conv = sessions::conversation::get_conversation(&p, None).unwrap();
+    assert_eq!(conv.items.len(), 1);
+    if let omp_resume_lib::model::ConversationItem::User(u) = &conv.items[0] {
+        assert_eq!(u.text, "看图\n[图片]");
+    } else {
+        panic!("items[0] 应为 user");
+    }
+}
+
 /// 真实数据只读验证（`cargo test -- --ignored` 手动跑）：list + tree +
 /// conversation 全量过一遍，打印统计与耗时。永不写 `~/.omp`。
 #[test]
