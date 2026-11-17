@@ -2,7 +2,7 @@
 
 **The native macOS cockpit for [omp](https://github.com/can1357/oh-my-pi) sessions — browse, inspect, fork and resume, without ever leaving the real CLI.**
 
-![version](https://img.shields.io/badge/version-0.9.1-2f6feb)
+![version](https://img.shields.io/badge/version-0.9.2-2f6feb)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-111111)
 ![stack](https://img.shields.io/badge/Tauri%202-React%2019%20·%20TypeScript%20·%20Rust-24c8db)
 ![tests](https://img.shields.io/badge/tests-2384%20passing-2ea043)
@@ -146,7 +146,7 @@ System / light / dark theme, six accent colors, all stored locally. The dark the
 Download the latest DMG from [Releases](https://github.com/cjcj5438/omp-resume/releases/latest):
 
 ```sh
-# omp-resume_0.9.1_aarch64.dmg — macOS arm64
+# omp-resume_0.9.2_aarch64.dmg — macOS arm64
 ```
 
 The bundle is ad-hoc signed (no Developer ID, not notarized), so a browser-downloaded copy is quarantined and Gatekeeper blocks the first launch. Either open **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag once:
@@ -190,7 +190,7 @@ The version must agree in three places (`package.json`, `src-tauri/tauri.conf.js
 
 ```sh
 node scripts/check-versions.mjs
-git tag v0.9.1 && git push origin v0.9.1
+git tag v0.9.2 && git push origin v0.9.2
 ```
 
 Pushing a `v*` tag runs [.github/workflows/release.yml](.github/workflows/release.yml), which builds the macOS arm64 bundle (including `superagent/dist`, built first via the workspace script) and creates a **draft** release with updater artifacts. The release notes are auto-generated from `feat|fix|perf|style` commit subjects since the previous tag (shown in the update dialog via `latest.json`). Publish it manually after verifying the assets.

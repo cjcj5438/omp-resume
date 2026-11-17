@@ -8,11 +8,20 @@
 //!   测试注入桩断言精确命令串而不启动 iTerm；成功判定见
 //!   [`open_tracked_and_confirm`]（必须有绑定本次 tty 的启动证据）。
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::config::{self, Config};
 use crate::model::{AppError, AppendBranchMarkerResult, DeleteResult, ErrorCode};
 use crate::sessions;
+
+/// iTerm 标签页打开器：命令串 → 本次新标签页的 `(session id, tty)`。
+/// 生产传 [`super::iterm::open_tab_tracked`]，测试注入桩断言精确命令串。
+type ItermOpener<'a> = &'a dyn Fn(&str) -> Result<(String, String), AppError>;
+
+/// 启动证据判定：`(session id, session 路径, 标签页 tty, 打开前的 `ps` 快照)`。
+/// 生产传 [`started_evidence`]。
+type StartEvidence<'a> = &'a dyn Fn(&str, &str, &str, &HashSet<u32>) -> bool;
 
 // ---------------------------------------------------------------------------
 // delete_sessions（CONTRACT §4.6）
@@ -204,7 +213,7 @@ fn resume_target(cfg: &Config, path: &str) -> Result<ResumeTarget, AppError> {
 pub fn open_in_iterm_impl(
     cfg: &Config,
     path: &str,
-    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+    opener: ItermOpener<'_>,
 ) -> Result<(), AppError> {
     open_in_iterm_impl_observed(
         cfg,
@@ -230,15 +239,10 @@ pub fn open_in_iterm_impl(
 pub fn open_in_iterm_impl_observed(
     cfg: &Config,
     path: &str,
-    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+    opener: ItermOpener<'_>,
     timeout: std::time::Duration,
     snapshot: &dyn Fn(&str) -> Result<std::collections::HashSet<u32>, String>,
-    evidence: &dyn Fn(
-        &str,
-        &str,
-        &str,
-        &std::collections::HashSet<u32>,
-    ) -> bool,
+    evidence: StartEvidence<'_>,
     diagnostic: &dyn Fn(&str) -> String,
 ) -> Result<(), AppError> {
     let target = resume_target(cfg, path)?;
@@ -280,7 +284,7 @@ pub fn open_in_iterm_impl_observed(
 pub fn open_tracked_and_confirm(
     command: &str,
     timeout: std::time::Duration,
-    opener: &dyn Fn(&str) -> Result<(String, String), AppError>,
+    opener: ItermOpener<'_>,
     evidence: &dyn Fn(&str) -> bool,
     diagnostic: &dyn Fn(&str) -> String,
 ) -> Result<(), AppError> {
@@ -294,11 +298,10 @@ pub fn open_tracked_and_confirm(
             ),
         ));
     }
-    let started = super::iterm::wait_until_started(
-        timeout,
-        super::iterm::RESUME_CONFIRM_INTERVAL,
-        || evidence(&tty),
-    );
+    let started =
+        super::iterm::wait_until_started(timeout, super::iterm::RESUME_CONFIRM_INTERVAL, || {
+            evidence(&tty)
+        });
     if started {
         return Ok(());
     }
@@ -533,4 +536,3 @@ pub fn focus_iterm_tab_impl(
     crate::menubar::iterm::focus_tty(&tty, run)
         .map_err(|e| AppError::new(ErrorCode::ItermFailed, e.message()))
 }
-

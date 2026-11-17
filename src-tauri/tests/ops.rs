@@ -407,7 +407,12 @@ fn iterm_resume_requires_tracked_evidence() {
     assert_eq!(calls.get(), 1, "未确认不得自动重发命令");
 
     // wrongTTY：证据闭包拿到的 tty 与进程 tty 不一致（别的终端抢占）→ 失败。
-    let w = branch_session(&proj, "wrongtty.jsonl", "sess-wrong", &cwd.display().to_string());
+    let w = branch_session(
+        &proj,
+        "wrongtty.jsonl",
+        "sess-wrong",
+        &cwd.display().to_string(),
+    );
     let calls = Cell::new(0);
     let opener = |_: &str| -> Result<(String, String), AppError> {
         calls.set(calls.get() + 1);
@@ -452,7 +457,12 @@ fn iterm_resume_requires_tracked_evidence() {
     assert_eq!(calls.get(), 0, "快照失败必须早于 opener");
 
     // opener 自身失败：错误上抛、不进入确认阶段（不会被误报成功）。
-    let s = branch_session(&proj, "noiterm.jsonl", "sess-noiterm", &cwd.display().to_string());
+    let s = branch_session(
+        &proj,
+        "noiterm.jsonl",
+        "sess-noiterm",
+        &cwd.display().to_string(),
+    );
     let opener = |_: &str| -> Result<(String, String), AppError> {
         Err(AppError::new(ErrorCode::ItermFailed, "osascript 退出码 1"))
     };
@@ -470,10 +480,14 @@ fn iterm_resume_requires_tracked_evidence() {
     assert!(e.message.contains("退出码 1"), "{e:?}");
 
     // 拿不到 tty（身份不完整）：不猜，直接失败。
-    let u = branch_session(&proj, "notty.jsonl", "sess-notty", &cwd.display().to_string());
-    let opener = |_: &str| -> Result<(String, String), AppError> {
-        Ok(("tab-4".to_owned(), String::new()))
-    };
+    let u = branch_session(
+        &proj,
+        "notty.jsonl",
+        "sess-notty",
+        &cwd.display().to_string(),
+    );
+    let opener =
+        |_: &str| -> Result<(String, String), AppError> { Ok(("tab-4".to_owned(), String::new())) };
     let e = ops_cmds::open_in_iterm_impl_observed(
         &c,
         &u.display().to_string(),

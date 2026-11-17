@@ -173,10 +173,8 @@ async fn open_in_iterm(
     path: String,
 ) -> Result<(), model::AppError> {
     let cfg = cfg.inner().clone();
-    blocking(move || {
-        ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab_tracked)
-    })
-    .await
+    blocking(move || ops::commands::open_in_iterm_impl(&cfg, &path, &ops::iterm::open_tab_tracked))
+        .await
 }
 
 /// 聚焦占用会话的 iTerm 标签（在用恢复确认框用；只 activate+select）。

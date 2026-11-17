@@ -1249,7 +1249,9 @@ impl Supervisor {
         let _ = std::thread::Builder::new()
             .name("superagent-conflict-retry".to_string())
             .spawn(move || {
-                std::thread::sleep(conflict_retry_duration(u32::try_from(index).unwrap_or(u32::MAX)));
+                std::thread::sleep(conflict_retry_duration(
+                    u32::try_from(index).unwrap_or(u32::MAX),
+                ));
                 {
                     let inner = supervisor.lock();
                     if inner.generation != generation

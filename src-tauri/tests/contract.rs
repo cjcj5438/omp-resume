@@ -80,7 +80,9 @@ fn tauri_commands_match_api_wrappers() {
 #[test]
 fn setup_creates_tray_icon_once() {
     let lib_rs = read_manifest_dir_file("src/lib.rs");
-    let setup_start = lib_rs.find(".setup(move |app| {").expect("lib.rs 缺少 setup");
+    let setup_start = lib_rs
+        .find(".setup(move |app| {")
+        .expect("lib.rs 缺少 setup");
     let rest = &lib_rs[setup_start..];
     let setup_end = rest.find(".on_menu_event(").expect("setup 缺少结束边界");
     let setup = &rest[..setup_end];

@@ -199,9 +199,7 @@ fn is_env_assignment(token: &str) -> bool {
     };
     !key.is_empty()
         && !key.starts_with(|c: char| c.is_ascii_digit())
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// 逐行产出 `ps -axo pid=,args=` 中形如 `omp --resume <session_path>` 的 pid。
@@ -513,8 +511,6 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn osascript_failure_mapping() {
         let err = map_osascript_failure("boom", Some(1));
@@ -547,12 +543,12 @@ mod tests {
             p
         ));
         // 路径含空格。
-        assert!(is_omp_resume_args("omp --resume /s/a b.jsonl", "/s/a b.jsonl"));
-        // 后续还有 argv（ps 以单空格拼接）。
         assert!(is_omp_resume_args(
-            "omp --resume /s/a.jsonl --verbose",
-            p
+            "omp --resume /s/a b.jsonl",
+            "/s/a b.jsonl"
         ));
+        // 后续还有 argv（ps 以单空格拼接）。
+        assert!(is_omp_resume_args("omp --resume /s/a.jsonl --verbose", p));
     }
 
     #[test]
@@ -567,7 +563,10 @@ mod tests {
         assert!(!is_omp_resume_args("omp --continue /s/a.jsonl", p));
         // --resume 前面的 token 不是 omp。
         assert!(!is_omp_resume_args("grep --resume /s/a.jsonl", p));
-        assert!(!is_omp_resume_args("/usr/bin/grep -e omp --resume /s/a.jsonl", p));
+        assert!(!is_omp_resume_args(
+            "/usr/bin/grep -e omp --resume /s/a.jsonl",
+            p
+        ));
         // 空 session_path 永不匹配。
         assert!(!is_omp_resume_args("omp --resume /s/a.jsonl", ""));
         // `--resume` 出现在行首/无前置 token。
@@ -727,10 +726,11 @@ mod tests {
         assert_eq!(tail, "line1\n[31mboom");
         // 采集失败 → 空串（不把「没读到」当成别的信号）。
         assert_eq!(
-            diagnostic_tail_for_session_with("TAB-9", || true, |_| Err(AppError::new(
-                ErrorCode::ItermFailed,
-                "osascript 失败"
-            ))),
+            diagnostic_tail_for_session_with(
+                "TAB-9",
+                || true,
+                |_| Err(AppError::new(ErrorCode::ItermFailed, "osascript 失败"))
+            ),
             ""
         );
     }
@@ -765,7 +765,6 @@ mod tests {
         assert_eq!(parse_tracked_output("\n"), None);
         assert_eq!(parse_tracked_output("\t/dev/ttys003"), None);
     }
-
 
     /// 真机冒烟：开一个 tab 跑 `echo`，读回内容验证，再按 tty 只关该 tab。
     ///
@@ -1031,7 +1030,10 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&root);
 
-        assert!(result.is_ok(), "恢复未被确认：{result:?}（跟踪标签页 {tracked:?}）");
+        assert!(
+            result.is_ok(),
+            "恢复未被确认：{result:?}（跟踪标签页 {tracked:?}）"
+        );
         let (_, tty) = tracked.into_inner().expect("应读回标签页身份");
         assert!(
             observed
