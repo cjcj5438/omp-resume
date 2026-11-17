@@ -496,3 +496,22 @@ CONTRACT §17.9 已把 Dock 右键菜单的注入失败（`class_addMethod` 返�
 | `npm run check` | **exit 0**；vitest 81 files / **733 tests**；superagent vitest 53 files / **1130 tests**；两处 `tsc`（`--noEmit` 与 `-p tsconfig.node.json`）均干净 |
 
 判定依据：该测试在不含任何改动的路径上也曾单独通过，其失败不可复现；本轮**没有改动任何测试代码，也没有调整任何计时/等待参数**，所以这一抖动不是本轮引入、也不是靠放宽断言掩盖的。
+
+### 10.8 release 包复核（2026-11-16）
+
+对 HEAD `3115886` 构建出的 release 包 `/Users/chenjing/my/omp-resume/src-tauri/target/release/bundle/macos/omp-resume.app`，用隔离的 `OMP_RESUME_DATA_DIR` 启动后做了与 debug 路径对照的复核。包体事实：二进制 mtime `2026-11-16 17:57:35`、`10599376` 字节、sha256 `4525918801863838…`；ad-hoc 签名 + hardened runtime；arm64；`Info.plist` 无 `LSUIElement`。
+
+| 检查项 | 观察结果 |
+|---|---|
+| `lsappinfo` | `ApplicationType=Foreground` |
+| `AXExtrasMenuBar` | `count=1`；`AXMenuBarItem` 位于 `(825,0)`、`36×24` |
+| 窗口层 | `layer=25 ... name="Item-0" ... onscreen=1` |
+| 截屏 | 菜单栏该位置确有模板图标 |
+
+结论：release 构建同样会创建状态项，debug→release 无差异。
+
+托盘「点击→面板」这一步在 release 上**未复现**：本轮合成指针输入被真实鼠标抢占（对照点击 Apple 菜单/其它状态项同样无效），`AXPress` 返回 0 但面板未显示，`AXShowMenu` 返回 `-25206`。该路径此前仅在 debug 实例上验证过，因此 release 的点击路径标记为**未验证**，不是失败。
+
+启动期间未触碰安装版（pid `60445` 保持 Foreground）与用户守护进程；真实数据目录仍无 `settings.json`。唯一副作用：隔离启动在 `~/Library/Saved Application State/com.chenjing.omp-resume.savedState/` 写下 `data.data`、`windows.plist`（AppKit 正常恢复状态），属已知无害写入。
+
+构建产物完整（`.app` 10.97 MiB、`.dmg` 5.47 MiB 且 `hdiutil verify` VALID、`.app.tar.gz` 5.44 MiB），但 `npm run tauri build` 退出码为 1：`tauri.conf.json` 配了 updater 公钥而未提供 `TAURI_SIGNING_PRIVATE_KEY`，无法生成 `.app.tar.gz.sig`，与编译无关。
