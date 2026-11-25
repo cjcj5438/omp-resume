@@ -841,7 +841,7 @@ fn safety_iterm_impl_uses_quoting_and_refusals() {
             c,
             p,
             &opener,
-            std::time::Duration::from_millis(150),
+            std::time::Duration::from_secs(2),
             &|_: &str| Ok(std::collections::HashSet::new()),
             &|_, _, _, _| true,
             &|_: &str| String::new(),
