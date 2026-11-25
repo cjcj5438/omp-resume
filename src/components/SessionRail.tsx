@@ -10,6 +10,7 @@ import { buildGroupMenu, buildSessionMenu, type CopyKind, type SessionMenuAction
 import { popupMenu, type MenuSpec } from "../nativeMenu";
 import { EmptyState, Ico } from "./ui";
 import { ErrorBanner, SearchInput } from "./page";
+import { SessionGroupToggle } from "./SessionGroupToggle";
 import { ChevronDown, Folder, Pin, Plus, SearchX } from "lucide-react";
 import { copyText } from "../clipboard";
 import {
@@ -38,7 +39,7 @@ interface SessionRailProps {
   onNewSession: () => void;
   onNewSessionIn: (cwd: string) => void;
   collapsed: ReadonlySet<string>;
-  onCollapsedChange: (next: Set<string>) => void;
+  onSetGroupsOpen: (cwds: readonly string[], open: boolean) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
   meta: MetaSnapshot | null;
@@ -60,7 +61,7 @@ export function SessionRail({
   onNewSession,
   onNewSessionIn,
   collapsed,
-  onCollapsedChange,
+  onSetGroupsOpen,
   pins,
   onTogglePin,
   meta,
@@ -182,8 +183,8 @@ export function SessionRail({
       onRequestDelete(live);
     },
     selectGroup: () => {},
-    collapseAll: () => onCollapsedChange(new Set(groups.map((g) => g.cwd))),
-    expandAll: () => onCollapsedChange(new Set()),
+    collapseAll: () => onSetGroupsOpen(groups.map((g) => g.cwd), false),
+    expandAll: () => onSetGroupsOpen(groups.map((g) => g.cwd), true),
   };
 
   function openMenu(key: string, specs: MenuSpec[]): void {
@@ -207,14 +208,6 @@ export function SessionRail({
     );
   }
 
-  function toggleCollapsed(key: string): void {
-    const next = new Set(collapsed);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    onCollapsedChange(next);
-  }
-
-  const forceOpen = query.trim().length > 0;
   return (
     <aside className="ws-rail" aria-label="会话列表">
       <div className="ws-rail-head">
@@ -227,6 +220,12 @@ export function SessionRail({
             onChange={onQuery}
           />
         </div>
+        <SessionGroupToggle
+          groups={groups}
+          collapsed={collapsed}
+          onSetGroupsOpen={onSetGroupsOpen}
+          className="icon-btn ws-group-toggle"
+        />
         <button
           type="button"
           className="icon-btn ws-new-btn"
@@ -245,7 +244,7 @@ export function SessionRail({
           </EmptyState>
         ) : null}
         {groups.map((g) => {
-          const open = forceOpen || !collapsed.has(g.cwd);
+          const open = !collapsed.has(g.cwd);
           const name = g.cwd.split("/").filter(Boolean).pop() ?? g.cwd;
           const dirMissing =
             g.sessions.length > 0 && g.sessions.every((s) => !s.cwdExists);
@@ -255,7 +254,7 @@ export function SessionRail({
                 type="button"
                 className="ws-group-label"
                 aria-expanded={open}
-                onClick={() => toggleCollapsed(g.cwd)}
+                onClick={() => onSetGroupsOpen([g.cwd], !open)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   e.stopPropagation();

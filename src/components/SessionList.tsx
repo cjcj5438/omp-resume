@@ -50,7 +50,7 @@ interface SessionListProps {
   onBulkResume: (targets: SessionSummary[]) => void;
   /** 折叠集（App 持有，列表页与工作台左栏共享）。 */
   collapsed: ReadonlySet<string>;
-  onCollapsedChange: (next: Set<string>) => void;
+  onSetGroupsOpen: (cwds: readonly string[], open: boolean) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
   onNewSessionIn: (cwd: string) => void;
@@ -84,7 +84,7 @@ export function SessionList({
   onOpenMeta,
   onBulkResume,
   collapsed,
-  onCollapsedChange,
+  onSetGroupsOpen,
   pins,
   onTogglePin,
   onNewSessionIn,
@@ -97,12 +97,6 @@ export function SessionList({
   onRequestDelete,
   onMetaSnapshot,
 }: SessionListProps) {
-  const toggleCollapsed = (key: string) => {
-    const next = new Set(collapsed);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    onCollapsedChange(next);
-  };
   // 右键菜单的目标（行 path / 组 cwd / 置顶区键）：仅用于画出当前菜单归属。
   const [menuTarget, setMenuTarget] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -303,8 +297,8 @@ export function SessionList({
       // 同上：勾选即进入选择态，无需再开 multiMode。
       onToggleChecks(paths, true);
     },
-    collapseAll: () => onCollapsedChange(new Set(groups.map((g) => g.cwd))),
-    expandAll: () => onCollapsedChange(new Set()),
+    collapseAll: () => onSetGroupsOpen(groups.map((g) => g.cwd), false),
+    expandAll: () => onSetGroupsOpen(groups.map((g) => g.cwd), true),
   };
 
   /** 右键一行：勾选中的行（≥2 个勾选）走批量菜单，否则单会话菜单。右键不改选中态。 */
@@ -533,7 +527,7 @@ export function SessionList({
                   type="button"
                   className={open ? "project-head" : "project-head is-collapsed"}
                   aria-expanded={open}
-                  onClick={() => toggleCollapsed(g.cwd)}
+                  onClick={() => onSetGroupsOpen([g.cwd], !open)}
                 >
                   <span className="project-chevron" aria-hidden="true">
                     <Ico icon={ChevronDown} size={12} />

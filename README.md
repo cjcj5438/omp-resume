@@ -46,6 +46,7 @@ Global keys: **⌘K** command palette (search sessions, pages and actions), **�
 ### Browse and resume
 
 - **Sessions grouped by project**, with pinning, multi-select, title/`cwd`/first-message filtering and per-session badges (message count, size, in-use state, unsupported-format marker).
+- **Collapse or expand every visible project** from the session list or workspace rail. By default, only projects with a running session are open; filters open matching projects without changing the unfiltered view.
 - **Read-only conversation review** — assistant text, thinking blocks, tool calls, tool results, bash executions, usage, compaction boundaries. Nothing is replayed into a model.
 - **Conversation tree view** — the append-only parent/child graph, rendered as branches. Every node is inspectable.
 - **Resume in iTerm2** — opens a new tab and runs the real `omp --resume`. Success is only reported after the app observes an `omp --resume` process (or the session lease) attached to *that* new tab's tty, within 10 s; otherwise you get an error with the exact command and that tab's output, the tab stays open and nothing is retyped. After the command is typed once, no further keystrokes are sent.

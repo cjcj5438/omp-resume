@@ -6,6 +6,7 @@ import type { SessionFilter, TagCount } from "../listUtils";
 import type { ToastFn } from "./useOmpOp";
 import { EmptyState } from "./ui";
 import { PageHeader, SearchInput } from "./page";
+import { SessionGroupToggle } from "./SessionGroupToggle";
 import { SessionList } from "./SessionList";
 import { ListChecks, Plus, RefreshCw, SearchX } from "lucide-react";
 import "./SessionsPage.css";
@@ -37,7 +38,7 @@ interface SessionsPageProps {
   onOpenMeta: (path: string) => void;
   onBulkResume: (targets: SessionSummary[]) => void;
   collapsed: ReadonlySet<string>;
-  onCollapsedChange: (next: Set<string>) => void;
+  onSetGroupsOpen: (cwds: readonly string[], open: boolean) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
   onNewSessionIn: (cwd: string) => void;
@@ -76,7 +77,7 @@ export function SessionsPage({
   onOpenMeta,
   onBulkResume,
   collapsed,
-  onCollapsedChange,
+  onSetGroupsOpen,
   pins,
   onTogglePin,
   onNewSessionIn,
@@ -153,6 +154,12 @@ export function SessionsPage({
         ))}
         <span className="spacer" />
         <span className="muted sessions-sort">{`按最近使用排序 · 共 ${visibleCount} 个`}</span>
+        <SessionGroupToggle
+          groups={groups}
+          collapsed={collapsed}
+          onSetGroupsOpen={onSetGroupsOpen}
+          className="btn icon-btn"
+        />
         <button
           type="button"
           className="btn icon-btn icon-btn-multi"
@@ -192,7 +199,7 @@ export function SessionsPage({
           onOpenMeta={onOpenMeta}
           onBulkResume={onBulkResume}
           collapsed={collapsed}
-          onCollapsedChange={onCollapsedChange}
+          onSetGroupsOpen={onSetGroupsOpen}
           pins={pins}
           onTogglePin={onTogglePin}
           onNewSessionIn={onNewSessionIn}

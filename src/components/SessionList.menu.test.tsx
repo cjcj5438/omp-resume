@@ -82,7 +82,7 @@ function renderSidebar(over: {
     onOpenMeta: noop,
     onBulkResume: noop,
     collapsed: new Set<string>(),
-    onCollapsedChange: noop,
+    onSetGroupsOpen: noop,
     pins: { projects: [], sessions: [] },
     onTogglePin: noop,
     onNewSessionIn: noop,

@@ -74,7 +74,11 @@ function App() {
   const [listError, setListError] = useState<AppError | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<SessionFilter>("all");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [groupOpenOverrides, setGroupOpenOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const [filteredGroupOpenOverrides, setFilteredGroupOpenOverrides] = useState<{
+    key: string;
+    values: ReadonlyMap<string, boolean>;
+  } | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   // 工作台 tab（T7 上提：面包屑显示 tab 名；按 selectedPath 重置为概览）。
@@ -361,6 +365,43 @@ function App() {
       ),
     [pinnedGroups, activeTags, statusFilter, pins, query, meta],
   );
+  const filterQuery = query.trim().toLowerCase();
+  const filterKey = filterQuery || statusFilter !== "all" || activeTags.length > 0
+    ? JSON.stringify([filterQuery, statusFilter, activeTags])
+    : null;
+
+  useEffect(() => {
+    setFilteredGroupOpenOverrides((prev) => (prev?.key === filterKey ? prev : null));
+  }, [filterKey]);
+
+  const collapsed = useMemo<ReadonlySet<string>>(() => {
+    const overrides = filterKey === null
+      ? groupOpenOverrides
+      : filteredGroupOpenOverrides?.key === filterKey ? filteredGroupOpenOverrides.values : undefined;
+    const next = new Set<string>();
+    for (const group of groups) {
+      const open = overrides?.get(group.cwd) ?? (filterKey !== null || group.sessions.some((s) => s.inUse));
+      if (!open) next.add(group.cwd);
+    }
+    return next;
+  }, [groups, filterKey, groupOpenOverrides, filteredGroupOpenOverrides]);
+
+  const onSetGroupsOpen = useCallback((cwds: readonly string[], open: boolean) => {
+    if (cwds.length === 0) return;
+    const withOverrides = (previous?: ReadonlyMap<string, boolean>) => {
+      const next = new Map(previous);
+      for (const cwd of cwds) next.set(cwd, open);
+      return next;
+    };
+    if (filterKey === null) {
+      setGroupOpenOverrides(withOverrides);
+    } else {
+      setFilteredGroupOpenOverrides((prev) => ({
+        key: filterKey,
+        values: withOverrides(prev?.key === filterKey ? prev.values : undefined),
+      }));
+    }
+  }, [filterKey]);
   const totalCount = useMemo(
     () =>
       (list?.groups ?? []).reduce((n, g) => n + g.sessions.length, 0),
@@ -718,7 +759,7 @@ function App() {
         onNewSession={() => handleNewSession(null)}
         onNewSessionIn={(cwd) => handleNewSession(cwd)}
         collapsed={collapsed}
-        onCollapsedChange={(next) => setCollapsed(next)}
+        onSetGroupsOpen={onSetGroupsOpen}
         pins={pins}
         onTogglePin={handleTogglePin}
         meta={meta}
@@ -817,7 +858,7 @@ function App() {
         onOpenMeta={handleOpenMeta}
         onBulkResume={(targets) => setBulkTargets(targets)}
         collapsed={collapsed}
-        onCollapsedChange={(next) => setCollapsed(next)}
+        onSetGroupsOpen={onSetGroupsOpen}
         pins={pins}
         onTogglePin={handleTogglePin}
         onNewSessionIn={(cwd) => handleNewSession(cwd)}

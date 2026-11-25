@@ -18,7 +18,7 @@ interface SessionWorkspaceProps {
   onNewSession: () => void;
   onNewSessionIn: (cwd: string) => void;
   collapsed: ReadonlySet<string>;
-  onCollapsedChange: (next: Set<string>) => void;
+  onSetGroupsOpen: (cwds: readonly string[], open: boolean) => void;
   pins: Pins;
   onTogglePin: (kind: PinKind, key: string) => void;
   meta: MetaSnapshot | null;
@@ -55,7 +55,7 @@ export function SessionWorkspace({
   onNewSession,
   onNewSessionIn,
   collapsed,
-  onCollapsedChange,
+  onSetGroupsOpen,
   pins,
   onTogglePin,
   meta,
@@ -92,7 +92,7 @@ export function SessionWorkspace({
         onNewSession={onNewSession}
         onNewSessionIn={onNewSessionIn}
         collapsed={collapsed}
-        onCollapsedChange={onCollapsedChange}
+        onSetGroupsOpen={onSetGroupsOpen}
         pins={pins}
         onTogglePin={onTogglePin}
         meta={meta}

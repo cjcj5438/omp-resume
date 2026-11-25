@@ -20,7 +20,7 @@ function renderSidebar(over: {
   onClearChecks?: () => void;
   onTogglePin?: (kind: string, key: string) => void;
   collapsed?: Set<string>;
-  onCollapsedChange?: (next: Set<string>) => void;
+  onSetGroupsOpen?: (cwds: readonly string[], open: boolean) => void;
   multiMode?: boolean;
 }) {
   const onToggleChecks = over.onToggleChecks ?? vi.fn();
@@ -40,7 +40,7 @@ function renderSidebar(over: {
       onOpenMeta={noop}
       onBulkResume={noop}
       collapsed={over.collapsed ?? new Set<string>()}
-      onCollapsedChange={over.onCollapsedChange ?? noop}
+      onSetGroupsOpen={over.onSetGroupsOpen ?? noop}
       pins={{ projects: [], sessions: over.pinnedIds ?? [] }}
       onTogglePin={over.onTogglePin ?? noop}
       onNewSessionIn={noop}

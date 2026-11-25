@@ -35,6 +35,108 @@ beforeEach(() => {
 });
 
 describe("列表：过滤与跨刷新保持", () => {
+  it("只默认展开运行中项目，批量折叠状态在列表与工作台共享", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S2);
+
+    expect(projectHead("omp-resume")).toHaveAttribute("aria-expanded", "true");
+    expect(rowOf(S1)).toBeInTheDocument();
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "false");
+    expect(projectHead("secret-project")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(S4)).not.toBeInTheDocument();
+    expect(screen.queryByText(S7)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠全部" }));
+    expect(projectHead("omp-resume")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(S2)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开全部" }));
+    const names = groupNames();
+    for (const name of names) expect(projectHead(name)).toHaveAttribute("aria-expanded", "true");
+    expect(rowOf(S7)).toBeInTheDocument();
+    fireEvent.click(rowOf(S4));
+
+    const rail = within(screen.getByRole("complementary", { name: "会话列表" }));
+    const railGroup = (name: string) => rail.getByRole("button", { name: new RegExp(`^${name}\\s*\\d+$`) });
+    for (const name of names) expect(railGroup(name)).toHaveAttribute("aria-expanded", "true");
+    expect(rail.getByRole("button", { name: `打开会话：${S4}` })).toHaveAttribute("aria-current", "true");
+
+    fireEvent.click(rail.getByRole("button", { name: "折叠全部" }));
+    for (const name of names) expect(railGroup(name)).toHaveAttribute("aria-expanded", "false");
+    expect(rail.queryByRole("button", { name: /^打开会话/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: S4 })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^会话列表/ }));
+    for (const name of names) expect(projectHead(name)).toHaveAttribute("aria-expanded", "false");
+    openProject("notes-app");
+    expect(rowOf(S4)).toHaveClass("is-active");
+    expect(projectHead("omp-resume")).toHaveAttribute("aria-expanded", "false");
+    expect(projectHead("secret-project")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("搜索默认展开命中组；临时折叠不影响普通浏览或下一次筛选", async () => {
+    await installMockBackend();
+    render(<App />);
+    await screen.findByText(S2);
+
+    const input = screen.getByRole("searchbox", { name: "搜索会话" });
+    const search = (value: string) => fireEvent.change(input, { target: { value } });
+    search("demo3");
+    expect(rowOf(S4)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "折叠全部" }));
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(S4)).not.toBeInTheDocument();
+    search(" DEMO3 ");
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "false");
+
+    search("notes");
+    expect(rowOf(S4)).toBeInTheDocument();
+    search("demo3");
+    expect(rowOf(S4)).toBeInTheDocument();
+    search("");
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "false");
+    expect(rowOf(S2)).toBeInTheDocument();
+
+    search("无结果-093");
+    expect(screen.getByText("没有匹配的会话")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开全部" })).toBeDisabled();
+  });
+
+  it("重扫后仅未手动设置的项目随运行状态开合", async () => {
+    const snapshot = (...running: string[]) => buildListResult(FIXTURE_SESSIONS.map((fixture) => ({
+      ...fixture,
+      summary: { ...fixture.summary, inUse: running.includes(fixture.summary.title) },
+    })));
+    let list = snapshot();
+    mockIPC((cmd) => cmd === "list_sessions" ? list : null);
+    render(<App />);
+    const expand = await screen.findByRole("button", { name: "展开全部" });
+    await waitFor(() => expect(expand).toBeEnabled());
+    const names = groupNames();
+    for (const name of names) expect(projectHead(name)).toHaveAttribute("aria-expanded", "false");
+
+    openProject("secret-project");
+    openProject("omp-resume");
+    fireEvent.click(projectHead("omp-resume"));
+    const rescan = screen.getByRole("button", { name: "重新扫描" });
+
+    list = snapshot(S2, S4);
+    fireEvent.click(rescan);
+    await waitFor(() => expect(rescan).toBeEnabled());
+    expect(projectHead("omp-resume")).toHaveAttribute("aria-expanded", "false");
+    expect(projectHead("secret-project")).toHaveAttribute("aria-expanded", "true");
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "true");
+    expect(rowOf(S4)).toBeInTheDocument();
+
+    list = snapshot(S2);
+    fireEvent.click(rescan);
+    await waitFor(() => expect(rescan).toBeEnabled());
+    expect(projectHead("notes-app")).toHaveAttribute("aria-expanded", "false");
+    expect(projectHead("omp-resume")).toHaveAttribute("aria-expanded", "false");
+    expect(projectHead("secret-project")).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("过滤框按标题/cwd/首条用户消息匹配，空组隐藏", async () => {
     await installMockBackend();
     render(<App />);
@@ -127,6 +229,7 @@ describe("删除流程", () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
+    openProject("secret-project");
     // s9 探测失败：后端返回 PROBE_FAILED
     fireEvent.click(checkOf(S9));
     fireEvent.click(checkOf(S10));
@@ -160,6 +263,7 @@ describe("从节点分叉", () => {
     render(<App />);
     await screen.findByText(S1);
 
+    openProject("notes-app");
     fireEvent.click(rowOf(S5));
     fireEvent.click(screen.getByRole("button", { name: "树" }));
     // 初始选中 = leaf（bx-L facts 面板出现）；选中由被动 effect 落定后按钮才可用。
@@ -218,6 +322,7 @@ describe("缺 cwd 会话", () => {
     render(<App />);
     await screen.findByText(S1);
 
+    openProject("secret-project");
     expect(within(rowOf(S7)).getByText("目录不存在")).toBeInTheDocument();
     expect(within(rowOf(S1)).queryByText("目录不存在")).toBeNull();
   });
@@ -227,6 +332,7 @@ describe("缺 cwd 会话", () => {
     render(<App />);
     await screen.findByText(S1);
 
+    openProject("secret-project");
     fireEvent.click(rowOf(S7));
     const itermBtn = screen.getByRole("button", { name: "在 iTerm2 恢复" });
     expect(itermBtn).toBeDisabled();
@@ -337,6 +443,17 @@ function groupByName(name: string): HTMLElement {
   throw new Error(`未找到项目组：${name}`);
 }
 
+function projectHead(name: string): HTMLButtonElement {
+  const button = groupByName(name).querySelector<HTMLButtonElement>("button.project-head");
+  if (!button) throw new Error(`未找到项目组头：${name}`);
+  return button;
+}
+
+function openProject(name: string): void {
+  const button = groupByName(name).querySelector('button.project-head[aria-expanded="false"]');
+  if (button) fireEvent.click(button);
+}
+
 describe("置顶", () => {
   it("置顶项目排到最前，重新挂载后顺序保持", async () => {
     await installMockBackend();
@@ -377,7 +494,9 @@ describe("置顶", () => {
     render(<App />);
     await screen.findByText(S1);
 
+    openProject("notes-app");
     fireEvent.click(screen.getByRole("button", { name: `置顶 ${S4}` }));
+    fireEvent.click(projectHead("notes-app"));
     fireEvent.click(screen.getByRole("button", { name: `置顶 ${S1}` }));
     fireEvent.click(screen.getByRole("button", { name: "状态筛选：已置顶" }));
 
@@ -448,6 +567,7 @@ describe("置顶", () => {
     render(<App />);
     await screen.findByText(S1);
 
+    openProject("secret-project");
     // s9 探测失败：后端返回 PROBE_FAILED，删除不成功。
     fireEvent.click(screen.getByRole("button", { name: `置顶 ${S9}` }));
     fireEvent.click(checkOf(S9));
@@ -513,6 +633,8 @@ describe("批量选择", () => {
     await installMockBackend();
     render(<App />);
     await screen.findByText(S1);
+    openProject("notes-app");
+    openProject("secret-project");
     fireEvent.click(screen.getByRole("button", { name: `置顶 ${S4}` }));
     fireEvent.click(checkOf(S4));
     expect(document.querySelector(".selection-bar")?.textContent).toContain("已选择 1 个会话");
