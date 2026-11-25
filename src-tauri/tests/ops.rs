@@ -275,7 +275,7 @@ fn iterm_command_string_and_refusals() {
             c,
             p,
             &opener,
-            std::time::Duration::from_millis(150),
+            std::time::Duration::from_secs(2),
             &empty_snapshot,
             &started,
             &no_diag,

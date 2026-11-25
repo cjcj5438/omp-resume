@@ -607,27 +607,15 @@ mod tests {
 
     #[test]
     fn wait_until_started_times_out_before_deadline_tick() {
-        use std::cell::Cell;
-        let calls = Cell::new(0);
-        let timeout = std::time::Duration::from_millis(60);
-        let start = std::time::Instant::now();
-        // tick 一旦被调用就记录当时是否已过 deadline；恒返回 false。
-        let saw_late_tick = Cell::new(false);
-        let ok = wait_until_started(timeout, std::time::Duration::from_millis(10), || {
-            calls.set(calls.get() + 1);
-            if start.elapsed() >= timeout {
-                saw_late_tick.set(true);
-            }
+        let timeout = std::time::Duration::from_millis(30);
+        let mut calls = 0;
+        // 首次等待已用完预算；不应在 deadline 后再轮询。
+        let ok = wait_until_started(timeout, timeout * 2, || {
+            calls += 1;
             false
         });
         assert!(!ok);
-        assert!(!saw_late_tick.get(), "deadline 之后不得再调用 tick");
-        assert!(calls.get() >= 1);
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(2),
-            "耗时 {:?} 过长（不应依赖调度精度）",
-            start.elapsed()
-        );
+        assert_eq!(calls, 0, "deadline 之后不得再调用 tick");
     }
 
     #[test]
