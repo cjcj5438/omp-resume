@@ -1,7 +1,9 @@
 /**
  * omp 终端子命令速查数据（手写静态表，单一分组、按 name 字母序）。
  *
- * 基准：omp 18.16.0 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
+ * 基准：上游 v19.1.1 的 `omp --help` COMMANDS 清单（不含顶层 flags）。
+ * https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/cli-commands.ts
+ * 说明对照同一标签的 `packages/coding-agent/src/cli/command-help.ts`。
  * 复核方法：
  * 1. `omp --help` 的 COMMANDS 段落给出全部子命令与一行英文说明；
  * 2. 逐条 `omp <name> --help` 核对参数与 flag，示例只用那里真实出现的形式；
@@ -68,6 +70,13 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
     examples: ["omp auth-gateway serve", "omp auth-gateway serve --bind=127.0.0.1:4000", "omp auth-gateway status"],
   },
   {
+    name: "bash",
+    args: "[ARGS...]",
+    zh: "使用内置 Shell 引擎运行 Bash 5.3，原样传递参数",
+    tag: "项目",
+    examples: ["omp bash", "omp bash -c 'echo hello'"],
+  },
+  {
     name: "bench",
     args: "MODELS...",
     zh: "基准测试模型：TTFT/预填充对解码吞吐的 p50/p95，覆盖对话、预填充、生成与提示缓存负载",
@@ -80,10 +89,10 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
   },
   {
     name: "browser-relay",
-    args: "[serve|install]",
-    zh: "运行本地 CDP relay，让 browser 预置驱动你自己的 Chrome 标签页",
+    args: "install|sync|native-host",
+    zh: "安装或同步 omp Chrome 扩展；Chrome 启动的原生宿主提供中继",
     tag: "扩展",
-    examples: ["omp browser-relay install", "omp browser-relay -p 9333 --token s3cret"],
+    examples: ["omp browser-relay --help", "omp browser-relay sync"],
   },
   {
     name: "cleanse",
@@ -300,6 +309,13 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
     examples: ["omp setup", "omp setup --check", "omp setup speech"],
   },
   {
+    name: "sh",
+    args: "[ARGS...]",
+    zh: "使用内置 Shell 引擎运行 POSIX sh，原样传递参数",
+    tag: "项目",
+    examples: ["omp sh", "omp sh -c 'echo hello'"],
+  },
+  {
     name: "share",
     args: "SESSION",
     zh: "通过加密链接分享已保存的会话（同 /share）",
@@ -386,8 +402,15 @@ export const OMP_CLI_COMMANDS: OmpCliCommand[] = [
   {
     name: "worktree",
     args: "[list|clear|add] [PATH] [COMMIT]",
-    zh: "添加、列出或清理 git worktree",
+    zh: "列出或清理托管的 Git 和 ovnfs worktree，或在指定路径新建 Git worktree",
     tag: "项目",
     examples: ["omp worktree", "omp worktree add <路径> <commit> -b <分支>", "omp worktree clear -n"],
+  },
+  {
+    name: "zsh",
+    args: "[ARGS...]",
+    zh: "使用内置 Shell 引擎运行 Zsh 5.9，原样传递参数",
+    tag: "项目",
+    examples: ["omp zsh", "omp zsh -c 'echo hello'"],
   },
 ];

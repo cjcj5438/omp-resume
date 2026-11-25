@@ -122,7 +122,7 @@ Model **specs** are editable row by row in `models.yml`, with value-shape valida
 
 ### Cheat sheet
 
-A searchable reference pinned to **omp 18.16.0** (see [Command manual](#command-manual) for how it is verified): 91 entries — 88 in the built-in groups (including the `/seance` consult command) plus 3 bundled extension commands (`/review` / `/green` / `/annotate`); `/skill:*` and local custom commands are intentionally not listed — plus 51 terminal subcommands, 6 learning paths and 12 multi-step recipes. If your installed omp differs, the dialog says so.
+A searchable reference pinned to **omp 19.1.1** (see [Command manual](#command-manual) for how it is verified): 92 slash commands (89 built-in and 3 bundled extensions), 54 terminal subcommands, 6 learning paths, and 12 multi-step recipes. `/skill:*` and local custom commands are intentionally unlisted. The page warns when the installed omp version differs.
 
 ![Cheat sheet](docs/media/cheatsheet.jpg)
 
@@ -206,13 +206,13 @@ Three layers of commands meet in this repo. They are verified differently — do
 
 | Layer | What | Source of truth | Verified by |
 |---|---|---|---|
-| **omp slash commands** | 91 entries in the cheat sheet: 88 in built-in groups (incl. `/seance`) + 3 bundled extensions; `/skill:*`/custom intentionally unlisted | Upstream `v18.16.0` tag, `packages/coding-agent/src/slash-commands/builtin-*.ts` (unified registry) + `seance.ts`, composed in `builtin-registry.ts` | `src/ompCommands.test.ts` (count, existence, aliases, example rules) + upstream diff |
-| **omp terminal subcommands** | 51 entries (`omp <name>`) in the cheat sheet | `omp --help` COMMANDS on 18.16.0 | `src/ompCommands.test.ts` (count, uniqueness, alphabetical order, example shape) + `omp --help` diff |
+| **omp slash commands** | 92 entries in the cheat sheet: 89 built-in + 3 bundled extensions (`/review`, `/green`, `/annotate`) | The [`v19.1.1` slash command registry](https://github.com/can1357/oh-my-pi/tree/v19.1.1/packages/coding-agent/src/slash-commands) | `src/ompCommands.test.ts` (count, existence, aliases, example rules) + upstream diff |
+| **omp terminal subcommands** | 54 entries (`omp <name>`) in the cheat sheet | The [`v19.1.1` CLI registry](https://github.com/can1357/oh-my-pi/blob/v19.1.1/packages/coding-agent/src/cli-commands.ts) and `omp --help` | `src/ompCommands.test.ts` (count, uniqueness, alphabetical order, example shape) + upstream diff |
 | **omp-resume IPC commands** | 87 Tauri commands in `generate_handler!` that the UI calls (§4.2–§4.81 with §4.1 deleted plus unnumbered tray/panel/history/meta commands) | `docs/CONTRACT.md` §4 + `src-tauri/src/lib.rs` `generate_handler!` | `cargo test` + `vitest run` + mock coverage test |
 
 Rules that follow from this:
 
-- **Cheat sheet entries are static data, refreshed per omp release.** To refresh: diff the upstream `builtin-*.ts` top-level `name:` entries between tags, diff the RPC `available_commands_update` hints/aliases against the table (RPC covers 52 non-`skill:` commands: 45 built-ins + `/review` `/green` `/annotate`, plus `autoresearch` `init` `use-xiaofeiji` which are extension/file/custom-sourced and not in the unified registry), diff `omp --help` COMMANDS against `src/ompCliCommands.ts`, then bump `OMP_VERSION` and this README together. The 18.13.3 → 18.16.0 refresh, for example, changed only three entries: `/prewalk` args (`[into] | restart [from] [into] | off`), `omp session` (new `lease` action), `/modelpreset` arg order (RPC hint lists `list` first).
+- **Cheat sheet entries are static data, refreshed per omp release.** Compare the built-in slash registry and CLI registry between upstream tags. Use the TUI, RPC `available_commands_update` (a subset of slash commands), and CLI command help to check spelling, aliases, and arguments. Update `OMP_VERSION`, affected reference data and tests, and this README together.
 - **IPC commands follow the contract first.** `docs/CONTRACT.md` §0: every new command changes the contract, `model.rs`, `types.ts`, `api.ts`, and the `generate_handler!` registration together. The contract wins on any disagreement.
 - **Superagent daemon HTTP paths are not IPC commands.** The panel talks to the daemon over `/orchestrator/api/*` through the single `superagent_request` proxy; daemon endpoints are specified in `superagent/src/app/api.ts` and `docs/CONTRACT.md` §26.2, not in §4.
 
@@ -262,7 +262,7 @@ flowchart LR
 src/                 React front end (81 test files, 731 tests)
 src/stage/           Agent Stage: sprites, layout, scene, timeline
 src/components/      Views: sessions, stage, config, tools, settings, superagent
-src/ompCommands.ts   Cheat sheet: slash registry pinned to omp 18.16.0
+src/ompCommands.ts   Cheat sheet: slash registry pinned to omp 19.1.1
 src-tauri/src/       Rust core (523 tests, 87 IPC commands)
   sessions/          JSONL scan, tree building, conversation parsing
   stage/             Incremental cursors + actor state machine

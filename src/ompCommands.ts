@@ -1,26 +1,13 @@
 /**
  * omp 内置斜杠命令速查数据（手写静态表）。
  *
- * 基准：omp 18.16.0 编译产物内嵌的统一内置注册表（88 条内置命令）。
- * 复核方法：
- * 1. `echo '{"id":"c1","type":"get_available_commands"}' | omp --mode rpc`
- *    返回启动帧 `available_commands_update` 与命令回包中机器可读的
- *    [{name, description, input.hint, aliases, subcommands}]，但只覆盖可在
- *    RPC 下执行的子集（18.16.0 实测 52 条非 skill 命令；/autoresearch 的 source
- *    为 extension，/init 与本机自定义命令为 file，/annotate、/green、/review 为
- *    custom，均不在统一内置注册表内，其中随包发布的 review/green/annotate 单列
- *    「扩展命令」分组，/skill:* 与本机自定义命令仍不收录）。
- * 2. TUI 补全列表覆盖全部内置命令：输入 `/` 后按前缀滚动，可从每行的名称、
- *    图标与英文说明核对；再对每条命令按 Tab，用输入行的参数提示（ghost hint）
- *    校对 args。
- * 3. 上游源码 tag v18.16.0 的 `packages/coding-agent/src/slash-commands/builtin-*.ts`
- *    即统一内置注册表本身：v18.13.3 → v18.16.0 无内置命令新增/更名/移除，
- *    仅 `/prewalk` 参数扩展（可指定交接目标与 restart 来源模型）与
- *    `/modelpreset` 提示词顺序调整（TUI inlineHint 仍为旧序，RPC hint 为新序，
- *    本表跟 RPC）；另 `omp session` 新增 `lease` 动作（见 ompCliCommands.ts）。
- * 改动本表后请用这几种方式抽查名称拼写、参数提示与别名。
+ * 基准：上游 v19.1.1 的统一内置注册表（89 条内置命令）。
+ * https://github.com/can1357/oh-my-pi/tree/v19.1.1/packages/coding-agent/src/slash-commands
+ * 对照该标签的 builtin-registry.ts 和 builtin-*.ts 校对名称、参数及别名。
+ * TUI 的 `/` 补全可核对完整条目；RPC `get_available_commands` 只覆盖 RPC 可用的子集。
+ * 随包发布的 /review、/green、/annotate 单列「扩展命令」，不收录 /skill:* 或本机自定义命令。
  */
-export const OMP_VERSION = "18.16.0";
+export const OMP_VERSION = "19.1.1";
 
 export interface OmpCommand {
   /** 不带前导 `/` 的命令名，如 "compact"。 */
@@ -55,6 +42,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "delete", aliases: [], args: "", zh: "删除当前会话并开始新会话", tag: "会话", examples: ["/delete"] },
       { name: "resume", aliases: [], args: "[session id|@claude|@codex]", zh: "恢复另一个会话，可按编号选择", tag: "核心", examples: ["/resume", "/resume 01a0285c", "/resume @claude"] },
       { name: "pin", aliases: [], args: "[session id]", zh: "把会话置顶到恢复列表顶部（再执行一次取消置顶）", tag: "会话", examples: ["/pin", "/pin 01a0285c"] },
+      { name: "unpin", aliases: [], args: "[session id]", zh: "把会话从恢复列表顶部取消置顶", tag: "会话", examples: ["/unpin", "/unpin 01a0285c"] },
       { name: "rename", aliases: [], args: "[title]", zh: "重命名当前会话，缺省自动生成", tag: "会话", examples: ["/rename", "/rename <新标题>"] },
       { name: "move", aliases: [], args: "[<path>]", zh: "把当前会话搬到另一目录", tag: "会话", examples: ["/move", "/move <目标目录>"] },
       { name: "branch", aliases: ["rewind"], args: "", zh: "回退到某条消息，原路径保留为分支", tag: "会话", examples: ["/branch", "/rewind"] },
@@ -67,7 +55,6 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "open", aliases: [], args: "", zh: "在浏览器打开对话中最近的链接（多条时先用 /copy 挑选）", tag: "会话", examples: ["/open"] },
       { name: "export", aliases: [], args: "[--themes] [path]", zh: "导出会话为 HTML 文件", tag: "会话", examples: ["/export", "/export <输出路径>", "/export --themes"] },
       { name: "dump", aliases: [], args: "[all|anon]", zh: "复制会话记录到剪贴板，并写出 LLM 请求 JSON（all/anon 打包含子 agent 的 zip）", tag: "会话", examples: ["/dump", "/dump all", "/dump anon"] },
-      { name: "seance", aliases: [], args: "[session id|path] [--model selector]", zh: "只读咨询另一个已保存的会话，不恢复它", tag: "会话", examples: ["/seance", "/seance 01a0285c", "/seance <会话路径> --model <provider/model>"] },
       { name: "local", aliases: [], args: "[name]", zh: "在编辑器中打开本会话的 local:// 文件，不带名称时先列出供挑选", tag: "会话", examples: ["/local", "/local <文件名>"] },
     ],
   },
@@ -76,9 +63,9 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
     commands: [
       { name: "clear", aliases: [], args: "", zh: "就地清空上下文，会话保留", tag: "上下文", examples: ["/clear"] },
       { name: "fresh", aliases: [], args: "", zh: "重置模型连接状态，不改动本地记录", tag: "上下文", examples: ["/fresh"] },
-      { name: "compact", aliases: [], args: "[soft|remote|snapcompact] [focus]", zh: "手动压缩会话上下文", tag: "上下文", examples: ["/compact", "/compact 保留接口签名", "/compact remote 保留接口签名"] },
+      { name: "compact", aliases: [], args: "[soft|remote|snapcompact|handoff] [focus]", zh: "手动压缩会话上下文", tag: "上下文", examples: ["/compact", "/compact remote 保留接口签名", "/compact handoff 保留交接要点"] },
       { name: "shake", aliases: [], args: "[elide|images|thinking]", zh: "丢弃工具结果等臃肿内容", tag: "上下文", examples: ["/shake", "/shake images", "/shake thinking"] },
-      { name: "handoff", aliases: [], args: "[focus instructions]", zh: "生成交接摘要并就地压缩", tag: "上下文", examples: ["/handoff", "/handoff 保留失败排查过程"] },
+      { name: "handoff", aliases: [], args: "[focus instructions]", zh: "在后台生成交接摘要并原地压缩（同 /compact handoff）", tag: "上下文", examples: ["/handoff", "/handoff 保留失败排查过程"] },
       { name: "context", aliases: [], args: "", zh: "查看上下文占用明细", tag: "上下文", examples: ["/context"] },
     ],
   },
@@ -133,6 +120,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "remove-dir", aliases: [], args: "<path>", zh: "从会话移除工作目录", tag: "项目", examples: ["/remove-dir <目录路径>"] },
       { name: "dirs", aliases: [], args: "", zh: "列出会话的工作目录", tag: "项目", examples: ["/dirs"] },
       { name: "git", aliases: [], args: "[revision]", zh: "打开可视化 git 界面", tag: "项目", examples: ["/git", "/git <revision>"] },
+      { name: "commit", aliases: [], args: "[instructions]", zh: "只提交当前 agent 及其子 agent 的改动", tag: "项目", examples: ["/commit", "/commit 只提交当前修复"] },
     ],
   },
   {
@@ -151,7 +139,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
       { name: "plugins", aliases: ["plugin"], args: "[list|enable|disable]", zh: "查看管理已装插件", tag: "扩展", examples: ["/plugins", "/plugins list", "/plugin list"] },
       { name: "reload-plugins", aliases: [], args: "", zh: "重载全部插件（技能、命令、钩子、工具、agent、MCP）", tag: "扩展", examples: ["/reload-plugins"] },
       { name: "skills", aliases: [], args: "[search|install|installed|update]", zh: "搜索、安装、更新注册表中的技能", tag: "扩展", examples: ["/skills search <关键词>", "/skills installed"] },
-      { name: "mcp", aliases: [], args: "<add|list|remove|test|reauth|unauth|enable|disable|smithery-search|smithery-login|smithery-logout|reconnect|reload|resources|prompts|notifications|help>", zh: "管理 MCP 服务：增删、测试、重连", tag: "扩展", examples: ["/mcp list", "/mcp test <服务名>", "/mcp add <服务名>"] },
+      { name: "mcp", aliases: [], args: "<add|list|remove|test|reauth|unauth|enable|disable|reconnect|reload|resources|prompts|notifications|help>", zh: "管理 MCP 服务：增删、测试、重连", tag: "扩展", examples: ["/mcp list", "/mcp test <服务名>", "/mcp add <服务名>"] },
       { name: "skillful", aliases: [], args: "[on|off|status]", zh: "开关系统提示中的技能列表", tag: "扩展", examples: ["/skillful", "/skillful status"] },
       { name: "extensions", aliases: ["status"], args: "", zh: "打开扩展控制中心", tag: "扩展", examples: ["/extensions", "/status"] },
     ],
@@ -212,7 +200,7 @@ export const OMP_COMMANDS: OmpCommandGroup[] = [
   {
     group: "应用",
     commands: [
-      { name: "restart", aliases: [], args: "", zh: "以相同参数重启并恢复会话", tag: "应用", examples: ["/restart"] },
+      { name: "restart", aliases: [], args: "", zh: "以相同参数重启，恢复会话和仍在运行的子 agent", tag: "应用", examples: ["/restart"] },
       { name: "exit", aliases: [], args: "", zh: "退出应用", tag: "应用", examples: ["/exit"] },
       { name: "quit", aliases: ["q"], args: "", zh: "退出应用", tag: "应用", examples: ["/quit", "/q"] },
       { name: "hotkeys", aliases: [], args: "", zh: "查看全部快捷键", tag: "应用", examples: ["/hotkeys"] },

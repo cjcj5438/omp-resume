@@ -1,6 +1,6 @@
 /**
  * 命令速查单测：过滤行为、版本提示、组合引用的命令必须真实存在。
- * 不锁中文文案与数据条数。
+ * 名称和数量以固定上游版本为准，不锁中文文案。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -100,7 +100,7 @@ describe("版本提示", () => {
   });
 
   it("OMP_VERSION 固定为速查基准版本", () => {
-    expect(OMP_VERSION).toBe("18.16.0");
+    expect(OMP_VERSION).toBe("19.1.1");
   });
 });
 
@@ -156,14 +156,22 @@ describe("使用示例", () => {
   it("内置命令表本身不含扩展命令（扩展命令只在扩展分组里）", () => {
     const builtin = OMP_COMMANDS.filter((g) => g.group !== "扩展命令");
     const names = builtin.flatMap((g) => g.commands.map((c) => c.name));
-    expect(names).toHaveLength(88);
+    expect(names).toHaveLength(89);
     for (const n of ["review", "green", "annotate"]) expect(names).not.toContain(n);
+  });
+
+  it("v19.1.1 登记 /commit 和 /unpin，不再登记 /seance", () => {
+    expect(findOmpCommand("/commit")?.name).toBe("commit");
+    expect(findOmpCommand("/unpin")?.name).toBe("unpin");
+    expect(findOmpCommand("seance")).toBeUndefined();
   });
 });
 
 describe("终端子命令", () => {
-  it("名称唯一、按字母序、示例以 omp 开头", () => {
+  it("54 个子命令按字母序排列，名称唯一且示例指向该子命令", () => {
     const names = OMP_CLI_COMMANDS.map((c) => c.name);
+    expect(names).toHaveLength(54);
+    expect(names).toEqual(expect.arrayContaining(["bash", "sh", "shell", "zsh"]));
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual([...names].sort());
     for (const c of OMP_CLI_COMMANDS) {

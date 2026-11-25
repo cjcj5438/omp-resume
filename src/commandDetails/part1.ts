@@ -18,14 +18,19 @@ export const PART_1: Record<string, OmpCommandDetail> = {
       { token: "@claude", zh: "恢复一个 Claude Code 导出的会话。" },
       { token: "@codex", zh: "恢复一个 Codex 导出的会话。" },
     ],
-    related: ["seance", "pin", "new"],
+    related: ["unpin", "pin", "new"],
   },
   pin: {
     when: "有几个常用会话、希望它们一直排在恢复列表顶部时用；对已置顶的会话再执行一次即取消置顶。",
     params: [
       { token: "session id", zh: "要置顶/取消置顶的会话编号，缺省为当前会话。" },
     ],
-    related: ["resume", "session", "rename"],
+    related: ["unpin", "resume", "session", "rename"],
+  },
+  unpin: {
+    when: "某个会话不需要再排在恢复列表顶部时用；不会删除会话。",
+    params: [{ token: "session id", zh: "要取消置顶的会话编号，缺省为当前会话。" }],
+    related: ["pin", "resume"],
   },
   rename: {
     when: "自动生成的会话标题看不出内容、想给当前会话起个好认的名字时用。",
@@ -101,16 +106,6 @@ export const PART_1: Record<string, OmpCommandDetail> = {
     cautions: ["会把会话内容写入剪贴板和本地文件，含敏感信息，分享前先检查。"],
     related: ["export", "debug", "trace"],
   },
-  seance: {
-    when: "只想问问另一个旧会话里记了什么、不想真的切过去时用；以只读方式咨询，不会打乱当前会话。",
-    params: [
-      { token: "session id", zh: "要咨询的已保存会话的编号。" },
-      { token: "path", zh: "要咨询的会话文件的路径。" },
-      { token: "--model", zh: "指定回答这次咨询用的模型。" },
-      { token: "selector", zh: "模型选择器，形如 provider/model。" },
-    ],
-    related: ["resume", "memory", "btw"],
-  },
   local: {
     when: "agent 把计划、报告等写进了会话的 local:// 文件，想直接在自己的编辑器里查看或修改时用。",
     params: [{ token: "name", zh: "local:// 下的文件名；缺省先弹出选择列表。" }],
@@ -126,14 +121,15 @@ export const PART_1: Record<string, OmpCommandDetail> = {
     related: ["clear", "retry", "model"],
   },
   compact: {
-    when: "上下文快满了、但还不想结束当前话题时用；手动触发一次压缩，把历史压成摘要腾出空间。",
+    when: "上下文快满了但还想继续当前话题时，手动压缩历史以腾出空间。",
     params: [
-      { token: "soft", zh: "轻量压缩，保留更多原文细节。" },
-      { token: "remote", zh: "用远端模型做压缩，本地不占推理。" },
-      { token: "snapcompact", zh: "快照式压缩，先留快照再压。" },
+      { token: "soft", zh: "在本地用当前模型生成摘要。" },
+      { token: "remote", zh: "优先尝试服务端压缩，不可用时回退到 soft。" },
+      { token: "snapcompact", zh: "把会话历史归档为图片，不调用 LLM，也不接受 focus。" },
+      { token: "handoff", zh: "在后台生成交接摘要，然后原地压缩。" },
       { token: "focus", zh: "告诉压缩过程要重点保留哪些内容。" },
     ],
-    cautions: ["压缩是有损的，部分细节会被摘要替代，关键结论建议先让模型复述确认。"],
+    cautions: ["摘要式压缩会用摘要替换部分细节，关键结论建议先让模型复述确认。"],
     related: ["clear", "shake", "handoff"],
   },
   shake: {
@@ -147,7 +143,7 @@ export const PART_1: Record<string, OmpCommandDetail> = {
     related: ["compact", "clear", "context"],
   },
   handoff: {
-    when: "想把当前进度交接给下一个会话（或换人/换模型接手）时用；会生成一份交接摘要并就地压缩。",
+    when: "想把当前进度交给另一个会话或模型时用；与 /compact handoff 相同，在后台生成交接摘要并原地压缩。",
     params: [{ token: "focus instructions", zh: "交代摘要里必须保留的重点，例如保留失败排查过程。" }],
     cautions: ["交接后当前上下文会被压缩，没写进摘要的细节会丢失，交代重点时尽量具体。"],
     related: ["compact", "clear", "export"],

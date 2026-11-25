@@ -73,7 +73,23 @@ describe("复制", () => {
     fireEvent.change(screen.getByLabelText("过滤命令"), { target: { value: "compact" } });
     fireEvent.click(screen.getByRole("button", { name: "复制 /compact 的含参数模板" }));
     await act(async () => {});
-    expect(writeText).toHaveBeenCalledWith("/compact [soft|remote|snapcompact] [focus]");
+    expect(writeText).toHaveBeenCalledWith("/compact [soft|remote|snapcompact|handoff] [focus]");
+  });
+
+  it("新命令可搜索并复制 /unpin 参数模板，zsh 出现在终端段", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    renderDialog();
+
+    const filter = screen.getByLabelText("过滤命令");
+    fireEvent.change(filter, { target: { value: "/unpin" } });
+    fireEvent.click(screen.getByRole("button", { name: "复制 /unpin 的含参数模板" }));
+    await act(async () => {});
+    expect(writeText).toHaveBeenCalledWith("/unpin [session id]");
+
+    fireEvent.click(screen.getByRole("button", { name: "终端子命令" }));
+    fireEvent.change(filter, { target: { value: "zsh" } });
+    expect(screen.getByRole("button", { name: "复制 omp zsh" })).toBeInTheDocument();
   });
 
   it("复制失败显示可见提示而不是已复制", async () => {

@@ -102,8 +102,8 @@ export const PART_4: Record<string, OmpCommandDetail> = {
     related: ["review", "copy"],
   },
   restart: {
-    when: "应用状态不对（连接卡死、界面异常）且 fresh 救不回来时用它，会重启进程并恢复会话。",
-    cautions: ["会重启整个进程，正在跑的后台任务与实时协作会被中断。"],
+    when: "应用状态异常且 /fresh 无法恢复时用；以相同参数重启，恢复当前会话和仍在运行的子 agent。",
+    cautions: ["会重启整个 omp 进程。"],
     related: ["fresh", "exit"],
   },
   exit: {

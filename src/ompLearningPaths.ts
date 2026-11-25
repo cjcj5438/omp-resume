@@ -96,12 +96,11 @@ export const OMP_LEARNING_PATHS: LearningPath[] = [
   {
     id: "shared-handoff",
     title: "交接与协作：把会话交给别人或另一台机器",
-    goal: "能把工作原样交出去，也能只读地请教别人的会话。",
+    goal: "能把会话交接给他人或在不同机器上继续协作。",
     after: "context-budget",
     steps: [
       { cmd: "handoff", why: "先写好交接摘要，接手方不用重读全文。", tryIt: "/handoff 保留未完成的改动清单" },
       { cmd: "export", why: "把会话导成 HTML，便于归档或贴给别人。", tryIt: "/export <输出路径>" },
-      { cmd: "seance", why: "只读咨询另一个已存的会话，不会修改它。", tryIt: "/seance <会话路径>" },
       { cmd: "share", why: "生成加密链接分享会话（链接可访问，注意内容）。", tryIt: "/share" },
       { cmd: "collab", why: "需要实时一起看同一会话时才用中继协作。", tryIt: "/collab start" },
     ],

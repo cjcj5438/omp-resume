@@ -28,6 +28,12 @@ export const PART_3: Record<string, OmpCommandDetail> = {
     params: [{ token: "revision", zh: "打开时定位到的提交、分支或标签；省略则打开默认视图。" }],
     related: ["wt", "move"],
   },
+  commit: {
+    when: "只想提交当前 agent 及其子 agent 的改动，而不纳入工作区里其他改动时用。",
+    params: [{ token: "instructions", zh: "可选的提交说明，例如要提交的范围。" }],
+    cautions: ["需要启用 eval，并打开 commit.enabled。"],
+    related: ["git", "cleanse"],
+  },
   share: {
     when: "想把当前会话发给别人看（比如请同事帮忙看一次排查过程）时；对方通过链接打开只读副本。",
     cautions: ["会生成一条加密链接，拿到链接的人可打开这次会话的内容；确认不含密钥、Token 等敏感信息再分享。"],

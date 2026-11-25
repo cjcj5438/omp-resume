@@ -111,7 +111,7 @@ export const OMP_COMBOS: OmpCombo[] = [
     title: "把工作交接出去",
     when: "要换会话继续、或把成果发给别人时。",
     steps: [
-      { cmd: "/handoff <要保留的要点>", note: "生成交接摘要并就地压缩，供新会话接着干。" },
+      { cmd: "/handoff <要保留的要点>", note: "在后台生成交接摘要并原地压缩，供新会话接着干。" },
       { cmd: "/dump all", note: "打包完整记录（含子 agent）留档。" },
       { cmd: "/share", note: "需要发给别人时，生成加密链接分享会话。" },
     ],
